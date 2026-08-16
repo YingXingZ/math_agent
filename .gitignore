@@ -1,0 +1,34 @@
+# 数据库（体积大/含运行数据，不入库；结构已转储 db_schema/）
+*.db
+*.sqlite
+*.sqlite3
+*.bak
+*.bak_*
+
+# Python
+__pycache__/
+*.pyc
+.deps/
+.venv/
+venv/
+*.egg-info/
+
+# 依赖/构建
+node_modules/
+
+# 密钥/环境变量
+.env
+*.pem
+*.key
+id_rsa
+id_ed25519
+
+# 大二进制资产（教材/答案 PDF、裁切图，不入库，路径见 ENVIRONMENT.md）
+*.pdf
+extract_img/
+
+# 运行时产物
+data/uploads/**/*.png
+data/uploads/**/*.pdf
+qwen_pages/
+.pytest_cache/

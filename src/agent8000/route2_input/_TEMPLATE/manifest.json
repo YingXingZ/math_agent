@@ -1,0 +1,26 @@
+{
+  "chapter_title": "第X章 第Y节 章节标题",
+  "knowledge_pts": ["知识点A", "知识点B"],
+  "problems": {
+    "X.Y-1.png": {
+      "problem_no": "1",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "knowledge_pts": ["知识点A"],
+      "content_text": "",
+      "grading_steps": "",
+      "std_answer": ""
+    },
+    "X.Y-2-1.png": {
+      "problem_no": "2",
+      "sub_no": "1",
+      "ptype": "proof",
+      "difficulty": 3,
+      "knowledge_pts": ["知识点B"],
+      "content_text": "",
+      "grading_steps": "",
+      "std_answer": ""
+    }
+  }
+}

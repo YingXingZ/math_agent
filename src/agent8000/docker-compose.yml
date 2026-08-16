@@ -1,0 +1,29 @@
+services:
+  api:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment: { DATABASE_PATH: /srv/data/homework.db, UPLOAD_DIR: /srv/data/uploads }
+    volumes: [homework_data:/srv/data]
+    ports: ["127.0.0.1:8000:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/reports/summary')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  scheduler:
+    build: .
+    restart: unless-stopped
+    command: ["python", "-m", "app.scheduler"]
+    env_file: .env
+    environment: { DATABASE_PATH: /srv/data/homework.db, UPLOAD_DIR: /srv/data/uploads }
+    volumes: [homework_data:/srv/data]
+  worker:
+    build: .
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    env_file: .env
+    environment: { DATABASE_PATH: /srv/data/homework.db, UPLOAD_DIR: /srv/data/uploads }
+    volumes: [homework_data:/srv/data]
+volumes:
+  homework_data:

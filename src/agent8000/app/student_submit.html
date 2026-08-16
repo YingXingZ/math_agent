@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>提交高数作业</title>
+<style>body{margin:0;background:#f6f8fc;font:16px "Microsoft YaHei",sans-serif;color:#102a43}.box{max-width:620px;margin:9vh auto;background:#fff;border:1px solid #e4ebf3;border-radius:18px;padding:30px;box-shadow:0 12px 35px #102a4312}h1{margin-top:0}p{color:#60758a;line-height:1.7}label{display:block;font-weight:700;margin-top:15px}input{width:100%;box-sizing:border-box;margin-top:6px;padding:10px;border:1px solid #cdd9e6;border-radius:8px;font:inherit}button{margin-top:22px;padding:11px 16px;border:0;border-radius:9px;background:#2563eb;color:#fff;font-weight:700;cursor:pointer}.note{margin-top:15px;padding:12px;background:#eef6ff;border-radius:10px;line-height:1.6}.err{background:#fff1f0;border-color:#ffccc7;color:#cf1322}</style>
+<main class="box"><h1>提交高数作业</h1><p id="assignment">正在读取作业信息…</p><form id="form"><label>姓名<input name="student_name" required></label><label>学号<input name="student_no" required placeholder="仅限字母、数字、下划线" pattern="[A-Za-z0-9_]{1,32}"></label><label>作业图片或 PDF<input name="file" type="file" accept="image/png,image/jpeg,application/pdf" required></label><button id="btn" type="submit">提交并开始智能初评</button></form><div class="note" id="result">图片和 PDF 都支持。PDF 会自动逐页转为图片，再交给智能体识别。单个文件不超过 30MB。</div></main>
+<script>
+const id=new URLSearchParams(location.search).get('assignment_id');
+const result=document.getElementById('result');
+const btn=document.getElementById('btn');
+const form=document.getElementById('form');
+const MAX=30*1024*1024;
+function setMsg(text, isErr){ result.textContent=text; result.className='note'+(isErr?' err':''); }
+if(!id){ setMsg('缺少作业编号，请从老师发送的链接进入。', true); form.style.display='none'; }
+else {
+  fetch('/api/assignments').then(r=>r.json()).then(rows=>{
+    let a=rows.find(x=>String(x.id)===id);
+    document.getElementById('assignment').textContent = a ? `${a.title}｜截止：${new Date(a.due_at).toLocaleString()}` : '作业编号：'+id;
+  });
+  form.onsubmit=async e=>{
+    e.preventDefault();
+    const file=form.file.files[0];
+    if(!file){ setMsg('请先选择文件', true); return; }
+    if(file.size>MAX){ setMsg(`文件 ${(file.size/1048576).toFixed(1)}MB 超过 30MB 上限，请压缩后重试`, true); return; }
+    const fd=new FormData(form);
+    btn.disabled=true; btn.textContent='上传中…'; setMsg('正在上传，提交后将自动进入智能初评…', false);
+    try{
+      let r=await fetch(`/api/assignments/${id}/submissions`,{method:'POST',body:fd});
+      let x=await r.json();
+      if(!r.ok) throw new Error(x.detail||'提交失败');
+      setMsg('提交成功。老师完成复核后会发布成绩与反馈。', false);
+      form.reset();
+    }catch(err){ setMsg(err.message, true); }
+    finally{ btn.disabled=false; btn.textContent='提交并开始智能初评'; }
+  };
+}
+</script></html>

@@ -1,0 +1,44 @@
+# 高数作业助手 —— Docker 部署（仅容器化 8000 智能体，依赖干净）
+# 8014 工作台与 VLM(18080) 作为既有服务，通过同一 docker 网络互通（见下方注释）。
+#
+# 用法:
+#   docker compose up -d --build
+#
+# 说明:
+#   - 8000 通过 requirements.txt 安装全部依赖（含可选 OCR 包，可精简）。
+#   - DATABASE_PATH 指向容器内 /data/homework.db，卷挂载到宿主机持久化。
+#   - 若要把 8014 也容器化：需把 run_workbench_8014.py、api.workbench.db、extract_img
+#     一并挂载进容器，并设置 WORKBENCH_DB / IMAGE_ROOT 环境变量（与 DEPLOY.md 第 2 节一致）。
+#   - VLM 在远程 GPU 机，8000 通过 http://222.211.217.7:18080 访问（确保容器能出网）。
+
+services:
+  agent:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: gaoshu-agent:1.0
+    container_name: gaoshu-agent
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_PATH: /data/homework.db
+    volumes:
+      - ../data:/data
+      - ../extract_img:/extract_img:ro   # 若 8014 同机，可共享裁切图
+    restart: always
+
+  # workbench (可选，取消注释并准备好挂载):
+  # workbench:
+  #   image: gaoshu-agent:1.0
+  #   container_name: gaoshu-workbench
+  #   command: python /app/run_workbench_8014.py
+  #   working_dir: /app
+  #   environment:
+  #     WORKBENCH_DB: /wb/api.workbench.db
+  #     IMAGE_ROOT: /extract_img
+  #   volumes:
+  #     - /opt/gaoshu/api.workbench.db:/wb/api.workbench.db
+  #     - /opt/gaoshu/extract_img:/extract_img:ro
+  #     - /opt/gaoshu/run_workbench_8014.py:/app/run_workbench_8014.py:ro
+  #   ports: ["8014:8014"]
+  #   restart: always

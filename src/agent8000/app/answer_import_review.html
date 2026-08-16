@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>答案导入审核</title>
+<style>
+:root{--ink:#17233d;--muted:#64748b;--blue:#2563eb;--green:#16a34a;--red:#dc2626;--bg:#f5f8fc;--line:#dbe5f0}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);font:16px 'Microsoft YaHei',sans-serif;color:var(--ink)}
+main{max-width:1180px;margin:36px auto;background:#fff;padding:34px;border-radius:18px;box-shadow:0 8px 28px #1e3a5f12}
+textarea,input{width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:9px;padding:10px;font:14px ui-monospace,Consolas}
+textarea{height:170px;resize:vertical}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.item{border:1px solid var(--line);border-radius:13px;padding:17px;margin:14px 0}
+.item.approved{background:#f0fdf4;border-color:#bbf7d0}
+.item.rejected{background:#fef2f2;border-color:#fecaca}
+.item.bad{background:#fff7ed;border-color:#fed7aa}
+.muted{color:var(--muted);font-size:14px}
+.badge{display:inline-block;padding:3px 9px;border-radius:99px;font-size:12px;font-weight:700;background:#e2e8f0;color:#475569}
+.badge.approved{background:#dcfce7;color:#166534}.badge.rejected{background:#fee2e2;color:#991b1b}.badge.pending{background:#fef9c3;color:#854d0e}
+button{border:0;border-radius:9px;padding:10px 15px;background:var(--blue);color:#fff;font-weight:700;cursor:pointer}
+button.alt{background:#64748b}button.danger{background:var(--red)}button.success{background:var(--green)}
+button:disabled{opacity:.55;cursor:not-allowed}
+.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:16px 0}
+.summary .cell{background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:12px;text-align:center}
+.summary .num{font-size:26px;font-weight:800;color:var(--blue)}
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0;align-items:center}
+.log-entry{padding:10px 0;border-bottom:1px solid var(--line);font-size:14px}
+.log-entry:last-child{border-bottom:0}
+code{background:#f1f5f9;padding:2px 6px;border-radius:5px;font-size:13px}
+.crop{max-width:420px;max-height:280px;border:1px solid var(--line);border-radius:8px}
+</style>
+<main>
+  <h1>答案导入审核</h1>
+  <p class="muted">导入 MinerU 生成的 <code>answer_book_staged.json</code> 内容。此页先建立本地审核队列；只有点击“确认并写回 8014”才会修改正式答案库。</p>
+
+  <textarea id="json" placeholder="粘贴 answer_book_staged.json 的完整内容"></textarea>
+  <div class="toolbar">
+    <button onclick="start()">建立审核队列</button>
+    <input id="sid" style="width:160px" placeholder="审核批次 ID">
+    <button class="alt" onclick="loadItems()">打开批次</button>
+    <button class="success" onclick="syncSession()" id="syncBtn" disabled>同步已确认章节到本地缓存</button>
+    <button class="alt" onclick="toggleAudit()">查看操作日志</button>
+  </div>
+
+  <div id="notice"></div>
+
+  <section id="summary" class="summary hidden">
+    <div class="cell"><div class="num" id="sTotal">0</div><div class="muted">总数</div></div>
+    <div class="cell"><div class="num" id="sApproved">0</div><div class="muted">已确认</div></div>
+    <div class="cell"><div class="num" id="sRejected">0</div><div class="muted">已拒绝</div></div>
+    <div class="cell"><div class="num" id="sPending">0</div><div class="muted">待审核</div></div>
+  </section>
+
+  <section id="audit" class="hidden" style="margin-top:18px"></section>
+  <section id="items"></section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+async function api(url,opt={}){
+  let r=await fetch(url,opt);
+  let x=await r.json().catch(()=>({detail:'返回不是 JSON'}));
+  if(!r.ok)throw Error(x.detail||'操作失败');
+  return x;
+}
+function esc(s){let d=document.createElement('div');d.textContent=s??'';return d.innerHTML}
+function setNotice(msg,type=''){$('notice').innerHTML=msg?`<div style="padding:12px 14px;border-radius:10px;margin:10px 0;background:${type==='error'?'#fee2e2':type==='success'?'#dcfce7':'#eef6ff'}">${esc(msg)}</div>`:''}
+
+async function start(){
+  try{
+    let x=await api('/api/mineru/review-sessions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({answer_book:JSON.parse($('json').value)})});
+    $('sid').value=x.session_id;
+    setNotice(`已建立审核队列：${x.item_count} 条，精确匹配 8014 原题 ${x.matched_count} 条。`);
+    loadItems();
+  }catch(e){setNotice(e.message,'error')}
+}
+
+async function loadSession(){
+  let sid=$('sid').value;
+  if(!sid)return;
+  try{
+    let x=await api('/api/mineru/review-sessions/'+sid);
+    $('summary').classList.remove('hidden');
+    $('sTotal').textContent=x.summary.total;
+    $('sApproved').textContent=x.summary.approved;
+    $('sRejected').textContent=x.summary.rejected;
+    $('sPending').textContent=x.summary.pending;
+    $('syncBtn').disabled = x.summary.approved === 0;
+    return x;
+  }catch(e){setNotice(e.message,'error')}
+}
+
+async function loadItems(){
+  let sid=$('sid').value;
+  if(!sid){setNotice('请先输入审核批次 ID','error');return;}
+  try{
+    let [rows,session]=await Promise.all([api('/api/mineru/review-sessions/'+sid+'/items'),loadSession()]);
+    $('items').innerHTML=rows.map(x=>{
+      let crop=x.evidence.question_crop_image_path;
+      let img=crop?`<p><b>8014 原题截图</b><br><img class="crop" src="http://127.0.0.1:8014/api/images/${encodeURI(crop)}"></p>`:'';
+      let badge = x.status==='approved'?'<span class="badge approved">已确认</span>':x.status==='rejected'?'<span class="badge rejected">已拒绝</span>':'<span class="badge pending">待审核</span>';
+      let disabled = x.source_problem_id?'':'';
+      return `<article class="item ${x.status||''} ${x.source_problem_id?'':'bad'}">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+          <b>${esc(x.section_no)}/${esc(x.question_no)}${x.subquestion_no?'('+esc(x.subquestion_no)+')':''}</b>
+          <span>${badge} <span class="muted">${x.source_problem_id?'已匹配 8014 #'+esc(x.source_problem_id):'未匹配，禁止写回'} · 置信度 ${x.confidence}</span></span>
+        </div>
+        ${img}
+        <p><b>MinerU 候选文本</b><br>${esc(x.candidate_text)}</p>
+        <div class="row">
+          <label>标准答案（确认后写回）<textarea id="a${x.id}">${esc(x.status==='approved'?x.candidate_text:'')}</textarea></label>
+          <label>完整解答（可选）<textarea id="s${x.id}"></textarea></label>
+        </div>
+        <p><input id="n${x.id}" placeholder="审核备注（可选）" value="${esc(x.review_note||'')}"></p>
+        <div class="toolbar">
+          <button ${x.source_problem_id&&x.status!=='approved'?'':'disabled'} onclick="approve(${x.id})">确认并写回 8014</button>
+          <button class="danger" ${x.status!=='approved'?'':'disabled'} onclick="reject(${x.id})">拒绝</button>
+        </div>
+      </article>`;
+    }).join('');
+  }catch(e){setNotice(e.message,'error')}
+}
+
+async function approve(id){
+  try{
+    let x=await api('/api/mineru/review-items/'+id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'approve',std_answer:$('a'+id).value,full_solution:$('s'+id).value,note:$('n'+id).value})});
+    setNotice(`第 ${id} 条已确认并写回 8014。当前批次：已确认 ${x.session_summary.approved}，待审核 ${x.session_summary.pending}。本地缓存：${x.cache_sync.updated?'已更新':'无需更新/'+esc(x.cache_sync.reason)}`,'success');
+    loadItems();
+  }catch(e){setNotice('写回失败（本地状态未变更，可重试）：'+e.message,'error')}
+}
+
+async function reject(id){
+  try{
+    let x=await api('/api/mineru/review-items/'+id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'reject',note:$('n'+id).value})});
+    setNotice(`第 ${id} 条已拒绝。当前批次：已拒绝 ${x.session_summary.rejected}，待审核 ${x.session_summary.pending}`);
+    loadItems();
+  }catch(e){setNotice(e.message,'error')}
+}
+
+async function syncSession(){
+  let sid=$('sid').value;
+  if(!sid)return;
+  if(!confirm('这将把本批次所有“已确认”章节同步到本地缓存，供组卷/批改使用。继续？'))return;
+  try{
+    let x=await api('/api/mineru/review-sessions/'+sid+'/sync',{method:'POST'});
+    let ok=x.sections_synced;
+    let details=x.results.map(r=>`${esc(r.section_no)}: 同步 ${r.sync.synced_count} 道`).join('；');
+    let errs=x.errors.length?'<br>失败: '+x.errors.map(e=>`${esc(e.section_no)} (${esc(e.error)})`).join('；'):'';
+    setNotice(`已同步 ${ok} 个章节。${details}${errs}`, errs?'error':'success');
+    loadSession();
+  }catch(e){setNotice(e.message,'error')}
+}
+
+let auditVisible=false;
+async function toggleAudit(){
+  let sid=$('sid').value;
+  if(!sid){setNotice('请先输入审核批次 ID','error');return;}
+  auditVisible=!auditVisible;
+  let el=$('audit');
+  if(!auditVisible){el.classList.add('hidden');return;}
+  try{
+    let x=await api('/api/mineru/review-sessions/'+sid+'/audit');
+    el.classList.remove('hidden');
+    el.innerHTML='<h3>操作日志</h3>'+(x.entries.length?x.entries.map(e=>`<div class="log-entry"><span class="badge ${e.action==='approve'?'approved':'rejected'}">${e.action==='approve'?'确认':'拒绝'}</span> 条目 #${e.item_id} · ${e.created_at}${e.note?' · 备注：'+esc(e.note):''}</div>`).join(''):'<p class="muted">暂无记录</p>');
+  }catch(e){setNotice(e.message,'error')}
+}
+
+// Auto-load if ?session_id=... is provided
+let params=new URLSearchParams(location.search);
+if(params.has('session_id')){$('sid').value=params.get('session_id');loadItems();}
+</script></html>
