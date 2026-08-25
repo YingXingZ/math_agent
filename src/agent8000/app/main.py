@@ -84,6 +84,7 @@ from .ai_stem_review import (
     reject_candidate as reject_ai_stem_candidate,
     store_pending_candidate,
 )
+from .question_bank_review import _looks_corrupt, _scan_looks_corrupt
 
 
 @asynccontextmanager
@@ -754,6 +755,7 @@ def update_question(question_id: int, payload: QuestionUpdateIn):
 # Deployments can override the repository default with GARBLE_AUDIT_CSV.
 # Degrades gracefully if absent.
 _GARBLE_AUDIT_CSV = Path(settings.garble_audit_csv)
+_LEGACY_OCR_MARKERS = re.compile(r"[锟�叫咱呗]")
 
 # 8014 证据库（独立 SQLite）。本地 questions 通过 source_problem_id 指回它的
 # problems.id；人工订正时若 sync_8014=True，则把对应字段写回这里，保持证据源一致。
@@ -799,14 +801,74 @@ def _sync_to_8014(source_problem_id: object, fields: dict) -> dict:
 
 
 
+def _live_garble_reasons(question: dict) -> tuple[str, list[str]]:
+    """Classify current local text without writing or changing publication.
+
+    The historic CSV is only a snapshot. This deliberately conservative scan
+    combines the existing full-width/ASCII-salad rules with recurring OCR glyph
+    substitutions, so corrected questions drop out while suspicious text stays
+    visible for a teacher to check against the source image.
+    """
+    reasons: list[str] = []
+    high_risk = False
+    for label, key in (("题干", "content"), ("答案", "answer"), ("评分参考", "rubric")):
+        text = str(question.get(key) or "").strip()
+        if not text:
+            # A rubric is optional.  Its absence must not make an otherwise
+            # usable question appear to be corrupted.
+            if key != "rubric":
+                reasons.append(f"{label}为空")
+                high_risk = True
+            continue
+        if _looks_corrupt(text):
+            reasons.append(f"{label}含全角/替换字符")
+            high_risk = True
+        if len(_LEGACY_OCR_MARKERS.findall(text)) >= 3:
+            reasons.append(f"{label}含重复 OCR 代字")
+            high_risk = True
+        elif _scan_looks_corrupt(text):
+            reasons.append(f"{label}含可疑公式或字母序列")
+    return ("high" if high_risk else "medium"), reasons
+
+
+def _live_garble_queue(review_status: str | None = None) -> list[dict]:
+    with connection() as conn:
+        sql = "SELECT id, content, answer, rubric, review_status FROM questions"
+        args: list[str] = []
+        if review_status:
+            sql += " WHERE review_status=?"
+            args.append(review_status)
+        rows = [dict(row) for row in conn.execute(sql, args).fetchall()]
+    items = []
+    for row in rows:
+        risk, reasons = _live_garble_reasons(row)
+        if not reasons:
+            continue
+        items.append({
+            "question_id": row["id"],
+            "review_status": row["review_status"],
+            "risk": risk,
+            "garble_hint": "；".join(reasons),
+            "preview": (row["content"] or "")[:80],
+        })
+    return sorted(items, key=lambda item: (item["risk"] != "high", item["question_id"]))
+
+
 @app.get("/api/garble-queue")
-def garble_queue(review_status: str | None = None):
+def garble_queue(review_status: str | None = None, source: Literal["audit", "live"] = "audit"):
     """Return the OCR-audit queue, optionally using live local review status.
 
     The CSV is an immutable audit trail, so its status column can be stale after
     a teacher fixes an item. Filtering therefore consults ``questions`` rather
     than trusting the CSV snapshot.
     """
+    if source == "live":
+        items = _live_garble_queue(review_status)
+        high = sum(item["risk"] == "high" for item in items)
+        return {
+            "items": items,
+            "note": f"实时扫描：{len(items)} 道疑似问题（高风险 {high} 道）；仅供复核，不会自动修改状态",
+        }
     if not _GARBLE_AUDIT_CSV.exists():
         return {"items": [], "note": "未找到 garble_audit.csv（离线审计脚本未运行）"}
     items = []
