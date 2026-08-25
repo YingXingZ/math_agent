@@ -19,3 +19,10 @@ def test_operator_data_paths_can_be_overridden_by_environment(monkeypatch) -> No
 
     assert settings.garble_audit_csv == "E:/operator/garble_audit.csv"
     assert settings.workbench_db_path == "E:/operator/api.workbench.db"
+
+
+def test_garble_queue_accepts_multiple_question_ids() -> None:
+    portal = (REPOSITORY_ROOT / "src" / "agent8000" / "app" / "teacher_portal.html").read_text(encoding="utf-8")
+
+    assert '<textarea id="eqQueue"' in portal
+    assert '<input id="eqQueue"' not in portal

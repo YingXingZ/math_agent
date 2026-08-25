@@ -57,7 +57,7 @@ header{padding:18px max(5vw,24px);display:flex;justify-content:space-between;ali
     <div id="eqPrevRubric" class="eqprev"></div>
   </details>
   <details style="margin-top:18px"><summary>待修题号队列（来自 garble_audit.csv，可手动编辑）</summary>
-    <label>每行一个题号，可粘贴 CSV 的 question_id 列<input id="eqQueue" style="margin-top:6px"></label>
+    <label>每行一个题号，可粘贴 CSV 的 question_id 列<textarea id="eqQueue" rows="5" style="margin-top:6px;width:100%;font:inherit"></textarea></label>
     <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
       <button class="btn secondary" onclick="queuePrev()">← 上一条</button>
       <button class="btn secondary" onclick="queueNext()">下一条 →</button>

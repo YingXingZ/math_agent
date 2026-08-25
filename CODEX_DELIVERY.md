@@ -18,7 +18,7 @@
 1. **题目内容直接编辑面板（教师端）**
    - 后端新增：`GET /api/questions/{question_id}`（读单题，不限 review_status）、`PUT /api/questions/{question_id}`（PATCH 式可选字段，**不阻塞**数学校验、仅返回 `validation_warning`）、`GET /api/garble-queue`（读乱码待修队列，按被作业引用数排序）。
    - `PUT` 带 `sync_8014=true`（默认）时，按 `source_problem_id` 把 `content→content_text`、`answer→std_answer`、`rubric→full_solution` **写回 8014 证据库**并清空 `answer_invalid_reason`；8014 写失败**不影响**本地保存；无对应记录时返回 skipped 不报错。
-   - 前端 `teacher_portal.html` 新增常驻入口「✎ 题目直接编辑」与 `#editq` 分区（加载 / 保存 / 乱码队列导航 / 校验提示 / review_status 可改 blocked）。
+   - 前端 `teacher_portal.html` 新增常驻入口「✎ 题目直接编辑」与 `#editq` 分区（加载 / 保存 / 乱码队列导航 / 校验提示 / review_status 可改 blocked）；乱码队列使用多行文本控件，支持按顺序切换全部题号。
 
 2. **LaTeX 实时预览**：教师端页面引入 **MathJax 3**（tex-svg），编辑面板题干/答案/评分参考三个文本框**边输入边渲染**（仅渲染带 `$...$` 定界符的公式，与打印页语义一致）。
 
