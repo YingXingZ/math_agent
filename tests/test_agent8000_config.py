@@ -28,3 +28,4 @@ def test_garble_queue_accepts_multiple_question_ids() -> None:
     assert '<input id="eqQueue"' not in portal
     assert "'/garble-queue?source=live'" in portal
     assert "实时质量扫描队列" in portal
+    assert 'id="eqQueueRisk"' in portal
