@@ -42,10 +42,13 @@ EVIDENCE_DIR = os.environ.get(
     "EVIDENCE_DIR", r"D:\My File\大四\高数教材答案"
 )
 EVIDENCE_URL = os.environ.get("EVIDENCE_URL", "http://127.0.0.1:8014/api")
-# 远程 VLM 盒子（仅当 VLM 不在本机时使用 --push-remote 才需要）
-SSH_HOST, SSH_PORT, SSH_USER, SSH_PW = (
-    "222.211.217.7", 10022, "root", "8vFdXMt@&s8cXM9D"
-)
+# Remote VLM access is optional and must be supplied by the operator. Keep
+# this legacy importer free of embedded credentials; most local Route2 imports
+# only use ``MATH_VLM_URL`` and never need SSH at all.
+SSH_HOST = os.environ.get("VLM_SSH_HOST", "")
+SSH_PORT = int(os.environ.get("VLM_SSH_PORT", "22"))
+SSH_USER = os.environ.get("VLM_SSH_USER", "")
+SSH_PW = os.environ.get("VLM_SSH_PASSWORD", "")
 
 CROP_EXTS = {".png", ".jpg", ".jpeg"}
 
