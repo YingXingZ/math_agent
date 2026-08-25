@@ -1,0 +1,21 @@
+{
+  "schema_version": "ocr-repair-audit/v1",
+  "providers": [
+    {
+      "provider": "vlm",
+      "candidates": 28,
+      "avg_confidence": 0.8,
+      "min_confidence": 0.0,
+      "max_confidence": 0.9,
+      "risk_marked": 0
+    }
+  ],
+  "decisions": [
+    {
+      "decision": "NEEDS_TEACHER_REVIEW",
+      "count": 14
+    }
+  ],
+  "risk_marked_candidates": [],
+  "question_bank_written": false
+}

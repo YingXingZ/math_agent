@@ -66,7 +66,7 @@ def main() -> None:
             if result['status']=='completed':
                 usable.append(result)
                 conn.execute("""INSERT INTO ocr_repair_candidates(id,problem_id,anchor_id,provider,crop_path,latex_text,confidence,risks_json,result_json,status,created_at,updated_at)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(problem_id,anchor_id,provider,crop_path) DO UPDATE SET latex_text=excluded.latex_text,confidence=excluded.confidence,risks_json=excluded.risks_json,result_json=excluded.result_json,status='pending_teacher',updated_at=excluded.updated_at""",
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(problem_id,anchor_id,provider,crop_path) DO UPDATE SET latex_text=excluded.latex_text,confidence=excluded.confidence,risks_json=excluded.risks_json,result_json=excluded.result_json,status='pending_teacher',updated_at=excluded.updated_at""",
                    (uuid.uuid4().hex,row['problem_id'],row['anchor_id'],result['provider'],row['crop_path'],result['latex_text'],result['confidence'],json.dumps(result['risks'],ensure_ascii=False),json.dumps(result,ensure_ascii=False),'pending_teacher',now(),now()))
         recommendation=decide(usable)
         conn.execute("""INSERT INTO ocr_repair_decisions(problem_id,decision,decision_json,teacher_status,created_at,updated_at)
