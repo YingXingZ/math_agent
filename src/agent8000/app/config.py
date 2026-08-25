@@ -3,6 +3,7 @@ from pydantic_settings import BaseSettings
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+REPOSITORY_ROOT = PROJECT_ROOT.parents[1]
 
 
 class Settings(BaseSettings):
@@ -20,6 +21,11 @@ class Settings(BaseSettings):
     qwen_pdf_max_pages: int = 12
     qwen_pdf_render_dpi: int = 144
     pdf_renderer_path: str = ""
+    # Operator-managed evidence files used by the teacher editing workflow.
+    # Keep usable repository defaults while allowing deployments to place data
+    # outside the source tree.
+    garble_audit_csv: str = str(REPOSITORY_ROOT / "docs" / "garble_audit.csv")
+    workbench_db_path: str = str(REPOSITORY_ROOT / "api.workbench.db")
 
     class Config:
         env_file = ".env"

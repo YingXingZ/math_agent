@@ -77,7 +77,7 @@ docs/                    设计/诊断/复核清单（garble_audit.csv、QUESTIO
 
 ## 5. 已知问题 / 技术债（Codex 接手须知）
 
-1. **硬编码绝对路径仍是最大技术债**：`main.py` 的 `_GARBLE_AUDIT_CSV` 指向工作区 `D:/workbuddy/.../garble_audit.csv`（缺失时接口优雅降级为空队列；仓库内已附 `docs/garble_audit.csv` 可改常量指向）；`run_workbench_8014.py` 的 `WORKBENCH_DB`/`IMAGE_ROOT` 硬编码；`grading_pipeline` 的 poppler 路径。→ 建议按 CODEX_BRIEF §2 配置化。
+1. **硬编码绝对路径仍是最大技术债**：8000 教师编辑的 `GARBLE_AUDIT_CSV` 与 `WORKBENCH_DB_PATH` 已改为环境变量，默认分别指向仓库 `docs/garble_audit.csv` 与 `api.workbench.db`；`run_workbench_8014.py` 的 `WORKBENCH_DB`/`IMAGE_ROOT` 与 `grading_pipeline` 的 poppler 路径仍需继续配置化。→ 按 CODEX_BRIEF §2 逐项推进。
 2. **88 道乱码题无原图、解答在所有源均乱码**：VLM 也无法恢复 → 只能经「题目直接编辑」面板人工修订，或补教材源图后重 OCR。红线：**绝不向学生推送乱码**。
 3. **教师端「待修复题目」复核面板**：src 侧的 UI 改版未合入本次 portal（与 live 后端不一致），本次保留 live 版编辑面板；`question_bank_review.py` 模块已入库待接线。
 4. **未合入的备选改进**：src 侧未提交的同步两阶段并发（`RECOG_CONCURRENCY`）、`_vision_call` 重构等未合入（以本地补丁形式留存，含敏感信息，**勿直接入库**，需要时向作者索取）。

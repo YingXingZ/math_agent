@@ -36,9 +36,11 @@ qwen_grading_url=http://127.0.0.1:18080/grade-homework  # 指向远端 VLM
 qwen_pdf_max_pages=12
 qwen_pdf_render_dpi=144
 pdf_renderer_path=                                        # 见 §6 poppler
+GARBLE_AUDIT_CSV=                                          # 可选；默认仓库 docs/garble_audit.csv
+WORKBENCH_DB_PATH=                                         # 可选；默认仓库 api.workbench.db，供教师编辑回写 8014
 ```
 
-补充：`EVIDENCE_API_URL` 和 `QWEN_GRADING_URL` 是可用于容器/远程部署的等价大写环境变量；优先通过环境变量设置，不要把服务器地址或凭据写入源码。
+补充：`EVIDENCE_API_URL` 和 `QWEN_GRADING_URL` 是可用于容器/远程部署的等价大写环境变量；`GARBLE_AUDIT_CSV` 与 `WORKBENCH_DB_PATH` 可迁移教师编辑所用的离线审计清单及 8014 SQLite 文件。优先通过环境变量设置，不要把服务器地址、机器路径或凭据写入源码。
 
 ## 5. 8014 环境变量（固化在 `run_workbench_8014.py`）
 

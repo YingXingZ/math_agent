@@ -749,14 +749,16 @@ def update_question(question_id: int, payload: QuestionUpdateIn):
 
 
 # Teacher-facing OCR-garble backlog.  The CSV is produced by the offline audit
-# script (scan_garble_precise / fix_fullwidth_and_audit) and lives in the
-# operator's workspace; this endpoint simply surfaces it so the edit panel can
-# walk the backlog in priority order.  Degrades gracefully if absent.
-_GARBLE_AUDIT_CSV = Path(r"D:/workbuddy/2026-08-06-15-31-48/garble_audit.csv")
+# script (scan_garble_precise / fix_fullwidth_and_audit); this endpoint simply
+# surfaces it so the edit panel can walk the backlog in priority order.
+# Deployments can override the repository default with GARBLE_AUDIT_CSV.
+# Degrades gracefully if absent.
+_GARBLE_AUDIT_CSV = Path(settings.garble_audit_csv)
 
 # 8014 证据库（独立 SQLite）。本地 questions 通过 source_problem_id 指回它的
 # problems.id；人工订正时若 sync_8014=True，则把对应字段写回这里，保持证据源一致。
-_WORKBENCH_DB = Path(r"D:/My File/大四/高数教材答案/api.workbench.db")
+# Deployments can override this repository default with WORKBENCH_DB_PATH.
+_WORKBENCH_DB = Path(settings.workbench_db_path)
 
 
 def _sync_to_8014(source_problem_id: object, fields: dict) -> dict:
