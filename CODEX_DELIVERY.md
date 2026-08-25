@@ -33,6 +33,8 @@
 7. **安全修复**：`route2_chapter_importer.py` 的**硬编码 SSH 密码改为环境变量读取**（`VLM_SSH_HOST/VLM_SSH_PORT/VLM_SSH_USER/VLM_SSH_PASSWORD`）。
    > ⚠️ **注意**：旧 commit 历史中仍含该密码明文。**请尽快轮换该 SSH 密码**（若仓库非私有，强烈建议重写历史）。
 
+8. **批量 PDF 取证闭环（2026-08-25）**：新增 `build_live_pdf_evidence_plan.py`（只读生成当前 8000 疑似乱码题的来源清单）和 `render_pdf_evidence_pages.py`（显式 `--render` 才输出登记 PDF 页 PNG，绝不改题库）。只有已有单题裁切图的 `ready_for_teacher_review` 条目可交给已有 `stage_image_review_candidates.py` 暂存 VLM 候选；教师在 8000 候选复核中确认后才写回。当前实际库的 120 条候选均有 8014 绑定，但 `textbooks.pdf_path`、`problems.source_page` 和本地 `extract_img/` 均未提供可用来源，故全部停在 `needs_source_evidence`，未生成任何候选或题库写入。
+
 ---
 
 ## 2. 仓库结构
@@ -82,6 +84,7 @@ docs/                    设计/诊断/复核清单（garble_audit.csv、QUESTIO
 3. **教师端「待修复题目」复核面板**：src 侧的 UI 改版未合入本次 portal（与 live 后端不一致），本次保留 live 版编辑面板；`question_bank_review.py` 模块已入库待接线。
 4. **未合入的备选改进**：src 侧未提交的同步两阶段并发（`RECOG_CONCURRENCY`）、`_vision_call` 重构等未合入（以本地补丁形式留存，含敏感信息，**勿直接入库**，需要时向作者索取）。
 5. **`.db` / PDF / `extract_img/` 均不入库**（见 `.gitignore`）；`src/agent8000/data/homework.db` 为运行态本地缓存。
+6. **PDF 取证元数据尚未补齐**：当前 8014 的教材记录未登记 `pdf_path`，题目未登记 `source_page`，且仓库没有 `extract_img/`。本地虽有 PDF 文件，但不能可靠反推“某题对应哪一页/哪一块”。请提供教材/答案裁切图，或授权可追溯的 IMA 原页资料；VLM SSH 隧道配置完成后，才可对已取证的单题图批量生成 LaTeX 候选。
 
 ---
 
