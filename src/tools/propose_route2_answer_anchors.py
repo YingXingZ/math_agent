@@ -63,9 +63,14 @@ def page_sections(document: fitz.Document) -> dict[str, tuple[int, int]]:
 
 
 def numbered_blocks(document: fitz.Document, start: int, end: int) -> dict[int, tuple[int, list[float], str]]:
-    """Return the first numbered prompt block for each exercise number."""
+    """Return prompt blocks expanded only to the next question on the same page.
+
+    Cross-page continuations intentionally remain separate candidates: joining a
+    following page without an exact boundary risks capturing another question.
+    """
     found: dict[int, tuple[int, list[float], str]] = {}
     for page_index in range(start, end + 1):
+        numbered: list[tuple[int, tuple]] = []
         for block in document[page_index].get_text("blocks"):
             text = str(block[4]).strip()
             match = NUMBER_RE.match(text)
@@ -73,9 +78,16 @@ def numbered_blocks(document: fitz.Document, start: int, end: int) -> dict[int, 
                 continue
             token = match.group(1)
             number = 1 if token in {"l", "I"} else int(token)
+            numbered.append((number, block))
+        numbered.sort(key=lambda item: (float(item[1][1]), float(item[1][0])))
+        for index, (number, block) in enumerate(numbered):
+            next_top = float(numbered[index + 1][1][1]) if index + 1 < len(numbered) else float(block[3])
+            bottom = max(float(block[3]), next_top - 3)
+            bbox = [round(float(block[0]), 2), round(float(block[1]), 2),
+                    round(float(document[page_index].rect.width - 18), 2), round(bottom, 2)]
             # Keep the first block only: in a worked solution later enumerations
             # commonly begin with (1), but not with an exercise-number token.
-            found.setdefault(number, (page_index, [round(float(value), 2) for value in block[:4]], text))
+            found.setdefault(number, (page_index, bbox, str(block[4]).strip()))
     return found
 
 
@@ -131,9 +143,9 @@ def build_candidates(db_path: Path, pdf_path: Path) -> tuple[list[dict], list[di
                         "pdf_page_number": page_index + 1, "bbox": bbox,
                         "source_prompt_sha256": hashlib.sha256(source_text.encode("utf-8")).hexdigest(),
                         "stored_stem_sha256": stem_hash, "prompt_similarity": score,
-                        "resolution_method": "question_number_native_text",
+                        "resolution_method": "question_number_to_next_native_text",
                         "status": "candidate" if score >= 0.58 else "needs_teacher",
-                        "review_reason": "section_header+question_number+prompt_similarity" if score >= 0.58 else "question_number_found_but_prompt_similarity_below_gate"}
+                        "review_reason": "section_header+question_number+next_question_boundary+prompt_similarity" if score >= 0.58 else "question_number_found_but_prompt_similarity_below_gate"}
                 candidates.append(item)
         return candidates, blocked
     finally:

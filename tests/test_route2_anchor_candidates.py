@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from src.tools.propose_route2_answer_anchors import numbered_blocks, page_sections, similarity
 
 
 class FakePage:
+    rect = SimpleNamespace(width=500)
+
     def get_text(self, mode: str):
         if mode == "text":
             return "习题5.1\n1. 设向量 a = b，求解。\n2. 计算内积。"
@@ -27,6 +31,7 @@ def test_native_header_and_numbered_prompts_are_located() -> None:
     prompts = numbered_blocks(doc, 0, 0)
     assert set(prompts) == {1, 2}
     assert prompts[1][0] == 0
+    assert prompts[1][1] == [72.0, 72.0, 482.0, 97.0]
 
 
 def test_final_section_stops_at_total_exercises() -> None:

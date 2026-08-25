@@ -1,0 +1,222 @@
+{
+  "schema_version": "candidate-anchor-crop-materialization/v1",
+  "created_at": "2026-08-25T13:49:25.530165+00:00",
+  "mode": "apply",
+  "counts": {
+    "rendered": 14,
+    "blocked": 0,
+    "failed": 0
+  },
+  "results": [
+    {
+      "anchor_id": 1,
+      "problem_id": "5a5d7bf6-3ce8-4a05-93b5-7a8019a452cd",
+      "source_state": "ok",
+      "pdf_page_index": 26,
+      "status": "rendered",
+      "crop_path": "candidate_anchor_crops/anchor-1-p27.png",
+      "bbox_pdf_points": [
+        83.69999694824219,
+        597.0599975585938,
+        485.1000061035156,
+        610.02001953125
+      ],
+      "anchor_metadata_written": true
+    },
+    {
+      "anchor_id": 2,
+      "problem_id": "37237cce-b2c0-44db-b77e-7a0e7c686fae",
+      "source_state": "ok",
+      "pdf_page_index": 27,
+      "status": "rendered",
+      "crop_path": "candidate_anchor_crops/anchor-2-p28.png",
+      "bbox_pdf_points": [
+        87.66000366210938,
+        434.3299865722656,
+        485.1000061035156,
+        546.8900146484375
+      ],
+      "anchor_metadata_written": true
+    },
+    {
+      "anchor_id": 3,
+      "problem_id": "816fe29a-fef1-450c-8f2f-147f827aa27a",
+      "source_state": "ok",
+      "pdf_page_index": 27,
+      "status": "rendered",
+      "crop_path": "candidate_anchor_crops/anchor-3-p28.png",
+      "bbox_pdf_points": [
+        87.66000366210938,
+        549.8900146484375,
+        485.1000061035156,
+        584.6900024414062
+      ],
+      "anchor_metadata_written": true
+    },
+    {
+      "anchor_id": 4,
+      "problem_id": "d5cf7666-58f3-4524-9bed-5f13ec91790d",
+      "source_state": "ok",
+      "pdf_page_index": 27,
+      "status": "rendered",
+      "crop_path": "candidate_anchor_crops/anchor-4-p28.png",
+      "bbox_pdf_points": [
+        87.4800033569336,
+        587.6900024414062,
+        485.1000061035156,
+        666.9500122070312
+      ],
+      "anchor_metadata_written": true
+    },
+    {
+      "anchor_id": 5,
+      "problem_id": "b7b5ce07-ce6c-443d-9b04-2114a3b24e26",
+      "source_state": "ok",
+      "pdf_page_index": 27,
+      "status": "rendered",
+      "crop_path": "candidate_anchor_crops/anchor-5-p28.png",
+      "bbox_pdf_points": [
+        87.4800033569336,
+        669.9500122070312,
+        485.1000061035156,
+        684.0900268554688
+      ],
+      "anchor_metadata_written": true
+    },
+    {
+      "anchor_id": 6,
+      "problem_id": "4e1c7016-164c-478b-896a-f6f5dc284c96",
+      "source_state": "ok",
+      "pdf_page_index": 28,
+      "status": "rendered",
+      "crop_path": "candidate_anchor_crops/anchor-6-p29.png",
+      "bbox_pdf_points": [
+        85.5,
+        276.7699890136719,
+        485.1000061035156,
+        348.0
+      ],
+      "anchor_metadata_written": true
+    },
+    {
+      "anchor_id": 7,
+      "problem_id": "945e09cb-bb71-4f70-8536-ba8ab0657946",
+      "source_state": "ok",
+      "pdf_page_index": 29,
+      "status": "rendered",
+      "crop_path": "candidate_anchor_crops/anchor-7-p30.png",
+      "bbox_pdf_points": [
+        86.05000305175781,
+        62.9900016784668,
+        485.1000061035156,
+        336.69000244140625
+      ],
+      "anchor_metadata_written": true
+    },
+    {
+      "anchor_id": 8,
+      "problem_id": "5bffc20e-9a19-4114-97a4-b5c1b6aa019b",
+      "source_state": "ok",
+      "pdf_page_index": 35,
+      "status": "rendered",
+      "crop_path": "candidate_anchor_crops/anchor-8-p36.png",
+      "bbox_pdf_points": [
+        93.25,
+        626.489990234375,
+        485.1000061035156,
+        639.8300170898438
+      ],
+      "anchor_metadata_written": true
+    },
+    {
+      "anchor_id": 9,
+      "problem_id": "aeb21c02-e814-44b7-88f0-a4ff716754d5",
+      "source_state": "ok",
+      "pdf_page_index": 36,
+      "status": "rendered",
+      "crop_path": "candidate_anchor_crops/anchor-9-p37.png",
+      "bbox_pdf_points": [
+        79.55999755859375,
+        207.32000732421875,
+        485.1000061035156,
+        351.3800048828125
+      ],
+      "anchor_metadata_written": true
+    },
+    {
+      "anchor_id": 10,
+      "problem_id": "25682660-233e-4e35-864f-4ce3665f9a01",
+      "source_state": "ok",
+      "pdf_page_index": 36,
+      "status": "rendered",
+      "crop_path": "candidate_anchor_crops/anchor-10-p37.png",
+      "bbox_pdf_points": [
+        79.37999725341797,
+        484.9100036621094,
+        485.1000061035156,
+        510.7300109863281
+      ],
+      "anchor_metadata_written": true
+    },
+    {
+      "anchor_id": 11,
+      "problem_id": "2e03f9f0-2808-40a2-b25e-f2dd20456b60",
+      "source_state": "ok",
+      "pdf_page_index": 37,
+      "status": "rendered",
+      "crop_path": "candidate_anchor_crops/anchor-11-p38.png",
+      "bbox_pdf_points": [
+        92.16000366210938,
+        173.50999450683594,
+        485.1000061035156,
+        297.4200134277344
+      ],
+      "anchor_metadata_written": true
+    },
+    {
+      "anchor_id": 12,
+      "problem_id": "3f773633-65ba-40a5-a2ef-f3e5332db1bd",
+      "source_state": "ok",
+      "pdf_page_index": 38,
+      "status": "rendered",
+      "crop_path": "candidate_anchor_crops/anchor-12-p39.png",
+      "bbox_pdf_points": [
+        79.91999816894531,
+        555.8699951171875,
+        485.1000061035156,
+        569.739990234375
+      ],
+      "anchor_metadata_written": true
+    },
+    {
+      "anchor_id": 13,
+      "problem_id": "0ba7911d-aa85-4229-b267-9a724b3e6f96",
+      "source_state": "ok",
+      "pdf_page_index": 43,
+      "status": "rendered",
+      "crop_path": "candidate_anchor_crops/anchor-13-p44.png",
+      "bbox_pdf_points": [
+        86.22000122070312,
+        385.6700134277344,
+        485.1000061035156,
+        624.969970703125
+      ],
+      "anchor_metadata_written": true
+    },
+    {
+      "anchor_id": 14,
+      "problem_id": "2acd90e0-7983-4a05-b7a0-5d46b24335b3",
+      "source_state": "ok",
+      "pdf_page_index": 43,
+      "status": "rendered",
+      "crop_path": "candidate_anchor_crops/anchor-14-p44.png",
+      "bbox_pdf_points": [
+        86.4000015258789,
+        627.969970703125,
+        485.1000061035156,
+        647.3499755859375
+      ],
+      "anchor_metadata_written": true
+    }
+  ]
+}
