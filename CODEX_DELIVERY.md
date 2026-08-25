@@ -111,3 +111,9 @@ docs/                    设计/诊断/复核清单（garble_audit.csv、QUESTIO
 - Route2 §5.1–§5.6 已按用户确认映射到 `李继成高数-答案-下册-OCR.pdf`：303 页、295 页有原生文本、文本层比例 97.36%。上册教材为 329 页纯扫描 PDF。
 - 证据清单与操作说明见 `docs/textbook_document_registration.json`、`docs/SOURCE_EVIDENCE_FOUNDATION.md`；风险快照为 120 个 `RISK_CANDIDATE`（44 高、76 中），不等同于已确认错误。
 - 下一步 1B 仅对已有“页码/框选/来源图”的单题建立 `problem_source_anchors`，再输出教师确认的 LaTeX 候选；无证据时继续标注阻塞，禁止猜测数学内容。
+
+## 9. 2026-08-25 Milestone 1B：Route2 页锚点候选
+
+- 新增 `src/tools/propose_route2_answer_anchors.py`：只读取 PDF 原生文本块，通过“习题章节标题 + 题号 + 题干前缀相似度”建立来源坐标；不调用 OCR/VLM、不修改 `problems`，也不改任何复核或发布状态。
+- 通过三重门禁的 14 条记录已写入 `problem_source_anchors`，状态均为 `candidate`；34 条仍为 `needs_teacher`，17 条因没有可靠编号证据而阻塞。完整审计见 `docs/route2_anchor_reviews/2026-08-25-applied.json`。
+- PDF 的 §5.6 在“总习题五”前仅有前两题，代码显式截断该边界，避免把后续总习题的同号内容误锚定为 §5.6。

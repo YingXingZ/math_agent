@@ -38,4 +38,14 @@ python src/tools/snapshot_risk_queue.py --agent-db src/agent8000/data/homework.d
 
 ## 边界与下一步
 
-现有旧裁切图只能证明部分答案来源；缺失裁切图不能自动反推题页。Milestone 1B 应只对已取得页码/框选证据的单题建立 `problem_source_anchors`，再生成“教师确认的 LaTeX 候选”；仍不得由乱码推测数学内容。
+### 1B 已完成：Route2 原生文本页锚点
+
+`src/tools/propose_route2_answer_anchors.py` 对 Route2 答案 PDF 的原生文本块执行三重门禁：章节标题、题号和题干前缀相似度。只有三项均满足的题才会写入 `problem_source_anchors`，状态恒为 `candidate`；它不是 `published`，也不会改题目内容。
+
+```powershell
+python src/tools/propose_route2_answer_anchors.py --db api.workbench.db --pdf 'E:\xwechat_files\wxid_l7836vvhxpdh11_4125\msg\file\2026-08\李继成高数-答案-下册-OCR.pdf' --out docs/route2_anchor_reviews/current.json
+```
+
+加 `--apply` 才会写入通过门禁的 `candidate` 元数据。2026-08-25 的首次运行写入 14 条候选，34 条仍需教师核对，17 条无编号证据而阻塞。特别地，原 PDF 的 §5.6 在“总习题五”前只出现前两题；数据库中 §5.6 的其余题不得借用后续总习题的同号内容。
+
+现有旧裁切图只能证明部分答案来源；缺失裁切图不能自动反推题页。Milestone 1C 才可对已获得教师确认的锚点生成“教师确认的 LaTeX 候选”；仍不得由乱码推测数学内容。
