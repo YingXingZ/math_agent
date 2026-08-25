@@ -95,6 +95,25 @@ CREATE TABLE textbooks(
         id TEXT PRIMARY KEY, name TEXT, volume TEXT, edition TEXT,
         pdf_path TEXT, page_offset INT DEFAULT 0);
 
+CREATE TABLE textbook_documents(
+        id TEXT PRIMARY KEY, textbook_id TEXT NOT NULL, document_role TEXT NOT NULL,
+        filename TEXT NOT NULL, stored_path TEXT NOT NULL, sha256 TEXT NOT NULL,
+        file_size INTEGER NOT NULL, page_count INTEGER NOT NULL,
+        text_layer_type TEXT NOT NULL, text_layer_ratio REAL NOT NULL,
+        document_status TEXT NOT NULL DEFAULT 'registered',
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        UNIQUE(textbook_id, document_role, sha256));
+
+CREATE TABLE problem_source_anchors(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, problem_id TEXT NOT NULL,
+        document_id TEXT NOT NULL, pdf_page_index INTEGER NOT NULL CHECK(pdf_page_index >= 0),
+        printed_page_no TEXT, bbox_json TEXT NOT NULL DEFAULT '[]',
+        bbox_space TEXT NOT NULL DEFAULT 'pdf_points', segment_index INTEGER NOT NULL DEFAULT 0,
+        crop_path TEXT DEFAULT '', resolution_method TEXT NOT NULL,
+        confidence REAL, status TEXT NOT NULL DEFAULT 'candidate',
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        UNIQUE(problem_id, document_id, pdf_page_index, segment_index));
+
 CREATE TABLE vision_recognition_tasks(
         id TEXT PRIMARY KEY, candidate_id INTEGER UNIQUE, problem_id TEXT NOT NULL,
         task_type TEXT NOT NULL DEFAULT 'answer_pdf', status TEXT NOT NULL DEFAULT 'pending',

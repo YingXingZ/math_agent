@@ -1,0 +1,1686 @@
+{
+  "schema_version": "risk-snapshot/v1",
+  "snapshot_created_at": "2026-08-25T12:22:48.512398+00:00",
+  "counts": {
+    "total": 120,
+    "high": 44,
+    "medium": 76
+  },
+  "items": [
+    {
+      "local_question_id": 15,
+      "source_problem_id": "fd22661a-bf17-4e12-8bc0-4fa9e68f0758",
+      "section_no": "1.3",
+      "problem_no": "7",
+      "sub_no": "",
+      "current_stem_sha256": "3e853874d79f0393f4cc0343f5a2515e4baadee91ac64980a446cfc03efd8156",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 48,
+      "source_problem_id": "945e09cb-bb71-4f70-8536-ba8ab0657946",
+      "section_no": "5.1",
+      "problem_no": "13",
+      "sub_no": "",
+      "current_stem_sha256": "e932ff6b1c4e3af939dc5be4b8256f458f8c641d9bb278a921e31aebd88cbbb6",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 54,
+      "source_problem_id": "90b48da0-70c0-401d-a08d-baa6c4985f94",
+      "section_no": "5.1",
+      "problem_no": "3",
+      "sub_no": "",
+      "current_stem_sha256": "3435594c9a07b750c4bf82ea43949b7011e9e118f2cd3747588534044979f09c",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 55,
+      "source_problem_id": "5a5d7bf6-3ce8-4a05-93b5-7a8019a452cd",
+      "section_no": "5.1",
+      "problem_no": "4",
+      "sub_no": "",
+      "current_stem_sha256": "c1a25268d1dddd10b41f5ab1d97387f3e433d2833ca2bf1d434cd7efa1c86222",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 87,
+      "source_problem_id": "1e202eed-d5c1-4ee8-a957-ecf47392257a",
+      "section_no": "5.5",
+      "problem_no": "3",
+      "sub_no": "",
+      "current_stem_sha256": "1129cbdaf884fac850b8d2d63801402038bbd1653415ec834474819c059086ad",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列",
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 107,
+      "source_problem_id": "640ba69c-29bd-415d-ad07-39159f195f0f",
+      "section_no": "5.1",
+      "problem_no": "18",
+      "sub_no": "",
+      "current_stem_sha256": "c7b3f932d3eeeacb9942cb9bfaeffdc8485bf89db27fd516dd5aae4d22d56e35",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 120,
+      "source_problem_id": "5ad443c4-02bb-4de8-9943-fd688b7e4104",
+      "section_no": "3.9",
+      "problem_no": "5",
+      "sub_no": "",
+      "current_stem_sha256": "f5e36a1675bd3e2f74e3bd33f9a16430a3c146a9ca5eb508a47aee6c08b068bb",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 170,
+      "source_problem_id": "c3e10ed1-bbd8-4bee-a8ce-ae5523dfc735",
+      "section_no": "2.4",
+      "problem_no": "4",
+      "sub_no": "",
+      "current_stem_sha256": "fae36272a1e0041bdd66713c860ea8a6f90f014a1ccd79a1014a903030cfab4e",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 177,
+      "source_problem_id": "1b6f38aa-d17b-408a-bbd0-262a6be27337",
+      "section_no": "2.7",
+      "problem_no": "2",
+      "sub_no": "",
+      "current_stem_sha256": "43aa1e498c62bb2e3b4777c267e299d0118bc093bfc44222039a74ebb64f9ea2",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 185,
+      "source_problem_id": "dcb8b95a-7091-4086-8f87-20eccd3e6a4a",
+      "section_no": "2.10",
+      "problem_no": "7",
+      "sub_no": "",
+      "current_stem_sha256": "527ddc560c2d52575228d051f112f119c5644e901f5487588937fcac046fd7db",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 189,
+      "source_problem_id": "68564af0-6953-4421-8adb-7f498c8f17dd",
+      "section_no": "2.10",
+      "problem_no": "12",
+      "sub_no": "",
+      "current_stem_sha256": "ce890e2b0a345cc06e8b684f92784d1bac50371cbd66b59c6548611b2235e7a1",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 201,
+      "source_problem_id": "58dab891-c951-4f9a-82a4-2811de02d233",
+      "section_no": "3.7",
+      "problem_no": "2",
+      "sub_no": "",
+      "current_stem_sha256": "9da943da11be11d002fc5e07666771650019d330f7dcddd6cedd14b840d644ad",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 202,
+      "source_problem_id": "7acfc682-c633-49e0-8916-8e2ef2991126",
+      "section_no": "3.8",
+      "problem_no": "1",
+      "sub_no": "",
+      "current_stem_sha256": "7cea8eef6662f46ade52bf4722095e51d088b20004b94aceae14336abaff5fe4",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 204,
+      "source_problem_id": "d0b33265-4e35-4c85-be3e-eaed0ea24c37",
+      "section_no": "3.9",
+      "problem_no": "1",
+      "sub_no": "",
+      "current_stem_sha256": "f2fc2d0a865cfcbf1eab90f027afc0b6dfc7952ca66e9e9ed91fa229f5d79c81",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 205,
+      "source_problem_id": "4f959bf9-0dce-4090-b395-b11c333cc9c8",
+      "section_no": "3.10",
+      "problem_no": "1",
+      "sub_no": "",
+      "current_stem_sha256": "bf1ad2c895b1833d61ae7e5802e804500e565cebb62f4c5242aff89502189025",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 206,
+      "source_problem_id": "a966a42a-5629-4fda-8b55-d6c25fe6a728",
+      "section_no": "4.1",
+      "problem_no": "1",
+      "sub_no": "",
+      "current_stem_sha256": "d240acca2b9e98c2d07f876f545359461ef51148c5415739bab333ebf2dc4b7f",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 207,
+      "source_problem_id": "45dad767-2ca1-4db4-aee7-0c8d02f647cd",
+      "section_no": "4.1",
+      "problem_no": "2",
+      "sub_no": "",
+      "current_stem_sha256": "c816808571c27cd97efd2a44f8f04983c92e5ad2b2ee2ff1b7d37186b7d69711",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 208,
+      "source_problem_id": "18b05c38-e6b8-4502-87c9-dafba5f79d45",
+      "section_no": "4.1",
+      "problem_no": "3",
+      "sub_no": "",
+      "current_stem_sha256": "5e794fcd4f48280a3ca474f5affbd5b92ee6840881d5f0cc6293624961f5ef22",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 209,
+      "source_problem_id": "1f64923f-5b3e-4ed2-8e2f-eadfa57a5680",
+      "section_no": "4.1",
+      "problem_no": "4",
+      "sub_no": "",
+      "current_stem_sha256": "3505a6a51d99b0c68f227fb5329ad4646644bda279a8cdc7adee627dd9298adb",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 211,
+      "source_problem_id": "032bb90f-46f6-4932-8536-9b1da74137e3",
+      "section_no": "4.2",
+      "problem_no": "1",
+      "sub_no": "",
+      "current_stem_sha256": "29e8c55172bb5d89e8ab0baffd61fa8f4f62d8821cfb047f16ac322182f09cb6",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 212,
+      "source_problem_id": "a593af2c-e3d1-4d25-a30d-9960bda6b3d7",
+      "section_no": "4.2",
+      "problem_no": "2",
+      "sub_no": "",
+      "current_stem_sha256": "2aa0f0b3b0f4a2160de08201d3c20d60895de7eaaef072da4cff1443b69abdb4",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 213,
+      "source_problem_id": "693f04a6-2128-4d84-a417-a3d4d2dae28a",
+      "section_no": "4.2",
+      "problem_no": "4",
+      "sub_no": "",
+      "current_stem_sha256": "d926d0aa5f37d22be4c9729a396982b0333b8cd330bc89d96ec428441dea7b08",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 214,
+      "source_problem_id": "8dc0049e-b720-403e-be93-921fdddf943b",
+      "section_no": "4.2",
+      "problem_no": "5",
+      "sub_no": "",
+      "current_stem_sha256": "04dc05c05234f4d377d2e41d05c0cacea6e811cf4a50bf4db984c77f5432158c",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 219,
+      "source_problem_id": "766e8d90-a4c0-40e7-9255-2b1c240f3959",
+      "section_no": "4.4",
+      "problem_no": "2",
+      "sub_no": "",
+      "current_stem_sha256": "906b71593ba507ac73a52f0dfe8455be2b6b079476e3b556e3eb439a32489a22",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 220,
+      "source_problem_id": "86a5c5c6-26f2-4bf5-ac2f-8e68ed384cfa",
+      "section_no": "4.4",
+      "problem_no": "3",
+      "sub_no": "",
+      "current_stem_sha256": "6d73809ef8fc28802bab34d3473d59da89fc37e52b7c0de6072fa3766a7d7a55",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 221,
+      "source_problem_id": "7da7ab03-d014-48c0-952c-dc092997a198",
+      "section_no": "4.4",
+      "problem_no": "4",
+      "sub_no": "",
+      "current_stem_sha256": "bc27088f8ff96e30dd5fe5b551ec1050fa19b9c4d40ca9be79a39b5f0e62a7aa",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 223,
+      "source_problem_id": "c424643e-c7f2-4200-95d3-1970e9ddf9b5",
+      "section_no": "4.5",
+      "problem_no": "1",
+      "sub_no": "",
+      "current_stem_sha256": "29e8c55172bb5d89e8ab0baffd61fa8f4f62d8821cfb047f16ac322182f09cb6",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 224,
+      "source_problem_id": "09bd9554-f02d-4e29-a934-7f969dcf76d7",
+      "section_no": "4.5",
+      "problem_no": "2",
+      "sub_no": "",
+      "current_stem_sha256": "2aa0f0b3b0f4a2160de08201d3c20d60895de7eaaef072da4cff1443b69abdb4",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 226,
+      "source_problem_id": "e9e3bd1b-f0ee-4a4e-b4f9-4177af8c58c2",
+      "section_no": "4.5",
+      "problem_no": "4",
+      "sub_no": "",
+      "current_stem_sha256": "053673787ecc6df5ab452a8af93be876723836a376666db6232bd349dd98706e",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 227,
+      "source_problem_id": "d9997f54-53d0-4f99-b9b9-fdf8b8e4d9f4",
+      "section_no": "4.5",
+      "problem_no": "5",
+      "sub_no": "",
+      "current_stem_sha256": "93c615319d7e36647afa6c13a7be8d150eacd2a084ae1eb532218b249725c46b",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 228,
+      "source_problem_id": "b0eb711f-bd5b-43d8-804d-a5ef7255bac1",
+      "section_no": "4.6",
+      "problem_no": "1",
+      "sub_no": "",
+      "current_stem_sha256": "7921caabb12fd928fb9d5263ee8a7bdd4f974efd9798e034b14dbd03e602d88c",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 230,
+      "source_problem_id": "f093ff7e-3fdf-481d-a82e-a6804f3f9e36",
+      "section_no": "4.6",
+      "problem_no": "3",
+      "sub_no": "",
+      "current_stem_sha256": "73fb1572b57634bd9b5683d44161cc6e2e454d827353017d07ecca95497a06fa",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 236,
+      "source_problem_id": "8a1afafd-a9c9-4548-8fcd-93ca6aea80c5",
+      "section_no": "1.4",
+      "problem_no": "4",
+      "sub_no": "",
+      "current_stem_sha256": "be445334fc95af6f90642d6093f2ad7ea259d1fd882cba32de54376c50c02e7f",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 251,
+      "source_problem_id": "57fe729e-bb72-4bd9-8b13-7294d0892ac9",
+      "section_no": "2.5",
+      "problem_no": "10",
+      "sub_no": "",
+      "current_stem_sha256": "d07fe3fd0e4bb1a3a03b00a303af3ca94a440f4cdd1a7c143409afa3172fb0ab",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 255,
+      "source_problem_id": "2e3f57d0-d7b7-4b94-b95d-812e7eb3f769",
+      "section_no": "2.8",
+      "problem_no": "2",
+      "sub_no": "",
+      "current_stem_sha256": "83fe4ed1e7b65cbe99110b6f815050c26b57190182e1ae473efbd4c282394bbd",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 256,
+      "source_problem_id": "35ca265e-21a0-4fe0-9428-863ee0880f36",
+      "section_no": "2.8",
+      "problem_no": "3",
+      "sub_no": "",
+      "current_stem_sha256": "6beaabd8be8d274c5bb254f59f41832f3ca720fe209e39208f50c29d55d6ff23",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "题干含全角/替换字符",
+        "题干含可疑公式或字母序列",
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 260,
+      "source_problem_id": "a9d4b621-9c37-43a0-9009-0631d6daf59c",
+      "section_no": "2.9",
+      "problem_no": "6",
+      "sub_no": "",
+      "current_stem_sha256": "808f8c72f4f26a16d8dd9de8bcd76bed15696a36df395ed1b79e7ae815328fc5",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 261,
+      "source_problem_id": "07063ee5-daed-4903-b944-31bbead1b127",
+      "section_no": "2.9",
+      "problem_no": "7",
+      "sub_no": "",
+      "current_stem_sha256": "99b1cc7bcee34533e7d74b3d86f51d22b570da9a931218e47dbaf23e0dc53992",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 262,
+      "source_problem_id": "ec7f56cb-abcf-4205-b109-f1b0d05b5d41",
+      "section_no": "2.9",
+      "problem_no": "8",
+      "sub_no": "",
+      "current_stem_sha256": "bb665d930f8a78607ee0c7cef717a3279903bcc9beeb40fc5e67de3b26ce841a",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列",
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 264,
+      "source_problem_id": "c84e8230-0a3f-4b59-9dbe-ba5d2204d2a4",
+      "section_no": "3.10",
+      "problem_no": "3",
+      "sub_no": "",
+      "current_stem_sha256": "17a6ac09927a148fe16af89ce881a94d719a50889734e6ee884e60c6dee4b100",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 265,
+      "source_problem_id": "6ed7750b-2092-4fe7-9dab-1ef2c7ee090d",
+      "section_no": "3.3",
+      "problem_no": "3",
+      "sub_no": "",
+      "current_stem_sha256": "31ccc83d805408b558acfb62f78cae5c338e311eab423a5590dceabde9f9edc6",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列",
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 266,
+      "source_problem_id": "992054b6-bae8-4cea-9aed-c48e2ddbe872",
+      "section_no": "3.4",
+      "problem_no": "7",
+      "sub_no": "",
+      "current_stem_sha256": "b5c20d7c49d352220b25724fa184b83b1773af56bb65ccb3332ac8c53fca9406",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列",
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 269,
+      "source_problem_id": "91f2e3fb-97d8-4542-8a1e-bcf5b261a497",
+      "section_no": "3.4",
+      "problem_no": "11",
+      "sub_no": "",
+      "current_stem_sha256": "73497cf8dff058fa5e9ffe07fb1d8ec2b1f7513a3c79ccb0958ec301aa62d085",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 270,
+      "source_problem_id": "afca8d97-9a98-4607-adb0-183f36f5cd0a",
+      "section_no": "3.5",
+      "problem_no": "5",
+      "sub_no": "",
+      "current_stem_sha256": "f0e4f108decd31176aca9730cdbcf7fba0ec43422608adeb042e7a5ee0aa53d8",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "题干含全角/替换字符",
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 271,
+      "source_problem_id": "a7eaf0f5-0042-403e-ab73-2c853252ffb1",
+      "section_no": "3.6",
+      "problem_no": "3",
+      "sub_no": "",
+      "current_stem_sha256": "b9ac502b0bc923d1da4384f1c0c05f00989cf7cf86d3956742bd729c9afeb3f0",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 272,
+      "source_problem_id": "8a4fa2fe-5417-49b1-9a91-b5254637a4ef",
+      "section_no": "3.6",
+      "problem_no": "7",
+      "sub_no": "",
+      "current_stem_sha256": "2256499f2d5935455f65f1160c5e79dc2a6813e94cb4631ba90fe02670b71e96",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "题干含全角/替换字符",
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 273,
+      "source_problem_id": "bc6c14a5-6731-40b6-9a96-eb82019cbf70",
+      "section_no": "3.8",
+      "problem_no": "3",
+      "sub_no": "",
+      "current_stem_sha256": "27ed926e2fe8dd23f23c4714de6931dfe03f3b0430291ef1deca73fa56933d52",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 274,
+      "source_problem_id": "63c1d43c-8f2a-4034-a14b-a402a5d3f536",
+      "section_no": "3.8",
+      "problem_no": "5",
+      "sub_no": "",
+      "current_stem_sha256": "fde8c409aca4c34be7c3b869a0d90edfe9a83278da2912955d12e3916f83758c",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 276,
+      "source_problem_id": "d61a2896-ca87-403a-a683-9da78de8fede",
+      "section_no": "3.8",
+      "problem_no": "7",
+      "sub_no": "",
+      "current_stem_sha256": "49a9b8619e5b94df5597b6785b8d47489715f256683cbd523e56c55e9358c138",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "题干含重复 OCR 代字",
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 277,
+      "source_problem_id": "4fe2b0d0-6bea-45d7-bc59-f12d0449bf7f",
+      "section_no": "3.9",
+      "problem_no": "2",
+      "sub_no": "",
+      "current_stem_sha256": "093366bdd381cf574de170245d326c3565a7d6317882810e3b9784441b74c66d",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列",
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 278,
+      "source_problem_id": "9d837f10-2426-4201-920d-9792815bab25",
+      "section_no": "3.9",
+      "problem_no": "4",
+      "sub_no": "",
+      "current_stem_sha256": "b901780b9b64094c00d1b221ac95bf13e9c6ed3e9a3e920832477555238057d6",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 279,
+      "source_problem_id": "8c835661-a8a3-461f-930a-82474bd00dad",
+      "section_no": "4.2",
+      "problem_no": "3",
+      "sub_no": "",
+      "current_stem_sha256": "5d3c0369a598d5a975bc7614b1567ffe2465ffff55a08ae44ce09296e8ba3c88",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列",
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 280,
+      "source_problem_id": "7abd2ae4-5367-4eb3-8543-7e5bdfd84420",
+      "section_no": "4.7",
+      "problem_no": "2",
+      "sub_no": "",
+      "current_stem_sha256": "b4ef362abd8de728fd42223c987dc78f3be006204c4bd6ae31c7e8c040c2c564",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 282,
+      "source_problem_id": "9d69a41f-7daa-4a0f-993a-fac93169351e",
+      "section_no": "4.7",
+      "problem_no": "4",
+      "sub_no": "",
+      "current_stem_sha256": "18797765a664956f0ab3c34c18a09e46dad38fa445dd67c5597337c7b490bde3",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列",
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 283,
+      "source_problem_id": "d63a453c-2a6b-4677-a1c0-5a417bf78879",
+      "section_no": "4.7",
+      "problem_no": "5",
+      "sub_no": "",
+      "current_stem_sha256": "7a27762915236c9fd9e19b9db8cf386cdb3584160fa1160dd27bc0f76a912435",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 286,
+      "source_problem_id": "49133ced-054a-4641-b967-8bec8fcd8ec6",
+      "section_no": "6.1",
+      "problem_no": "4",
+      "sub_no": "",
+      "current_stem_sha256": "03f7ebf781e927efc319a2e3e53cad90515fb9e2bbe13a44f5b8847751759f5b",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 287,
+      "source_problem_id": "ec7b4e00-7a68-4292-8a90-4180eb51ac1c",
+      "section_no": "6.1",
+      "problem_no": "5",
+      "sub_no": "",
+      "current_stem_sha256": "73047fc6952309f9d249d17fd069a8f43e08c6de611c285f1e720d414a2bd9d3",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 290,
+      "source_problem_id": "588a5330-0b13-42f4-87ca-cc484f0b3829",
+      "section_no": "6.2",
+      "problem_no": "2",
+      "sub_no": "",
+      "current_stem_sha256": "c88f21d483a2011b16b31ba6b4d39720da1086c05722f771d04663548654c24c",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "题干含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 293,
+      "source_problem_id": "1ca71ff2-69a3-45df-bcaf-470c1919c43a",
+      "section_no": "6.2",
+      "problem_no": "7",
+      "sub_no": "",
+      "current_stem_sha256": "4c3fb89e9de1a3d9f585702e13b6b46cffe6c70644bfd9ac997acf09572457de",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 294,
+      "source_problem_id": "38b6c6c7-e355-4859-afd9-27a69fd7cc31",
+      "section_no": "6.2",
+      "problem_no": "8",
+      "sub_no": "",
+      "current_stem_sha256": "25c44bf9e46d46ed285678775785b5915a135277a5292ae15950ef4caa548ca8",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 298,
+      "source_problem_id": "41ff2531-867e-4b6f-b1d2-2a15b803841f",
+      "section_no": "6.3",
+      "problem_no": "5",
+      "sub_no": "",
+      "current_stem_sha256": "4a3b68a72e63d7a192563b2542bc5c42923bdffd3230f71a58aa4d1bb9322198",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 299,
+      "source_problem_id": "08e54fde-85d7-4cb8-8a4e-e4f888cce583",
+      "section_no": "6.3",
+      "problem_no": "6",
+      "sub_no": "",
+      "current_stem_sha256": "e8b35f8067dea380c6b4edbe1322dc3a8e347722aa1cdb725572566e53afa298",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 300,
+      "source_problem_id": "1afa94e1-ba6b-427e-8fde-e814b7ce8210",
+      "section_no": "6.3",
+      "problem_no": "7",
+      "sub_no": "",
+      "current_stem_sha256": "a20a1f34692c33ee17a4b6a6b82d0f58c6c4bd184e8c22be3a446c50607a6ec1",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 301,
+      "source_problem_id": "65ee874a-7e17-4f3a-bbea-c0b3e3db4463",
+      "section_no": "6.4",
+      "problem_no": "1",
+      "sub_no": "",
+      "current_stem_sha256": "d08be73f51a5b85602995db194693bb792f41829c805df05ddd9d9e6b39fa792",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 305,
+      "source_problem_id": "25352824-6d33-4532-9093-8f5b52a095bb",
+      "section_no": "6.4",
+      "problem_no": "5",
+      "sub_no": "",
+      "current_stem_sha256": "9f5659447c7c73d0f1910254051b92cad5e650448a4934bd4dd2d26ce2f20226",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 307,
+      "source_problem_id": "d6d78475-4abc-486d-bc9f-2e0454df1bd3",
+      "section_no": "6.4",
+      "problem_no": "7",
+      "sub_no": "",
+      "current_stem_sha256": "753569280482590b8a5290b5a9237e7e7557635ee7ea00d9a43f954ee45cd6c2",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 309,
+      "source_problem_id": "8a71c588-796d-4f69-986e-e11cb2a22642",
+      "section_no": "6.5",
+      "problem_no": "1",
+      "sub_no": "",
+      "current_stem_sha256": "814bb5333e4e00f5b006c563c9a1978bfc093d51902a5b8814a1906a3af223be",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 310,
+      "source_problem_id": "60495d78-4d4f-4c34-bb79-dfded336471d",
+      "section_no": "6.5",
+      "problem_no": "2",
+      "sub_no": "",
+      "current_stem_sha256": "e72771fbdee18b1648a3a4d25d35c8ad4ed2de3c120de25202349d47bc73d33a",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 311,
+      "source_problem_id": "54f73e77-6388-43ad-a878-5128928151e6",
+      "section_no": "6.5",
+      "problem_no": "3",
+      "sub_no": "",
+      "current_stem_sha256": "d54139f22662fe24be2f82ab3e50241ae34a41d7fef6d038a3e6b04e74e9b621",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 314,
+      "source_problem_id": "cb202ee6-b68a-466d-8d7a-2c50ca6d1c23",
+      "section_no": "6.5",
+      "problem_no": "6",
+      "sub_no": "",
+      "current_stem_sha256": "3f5c334258f1ecd2fb27481bd26ddddef81d09044dfa9ccb053c4300794ef855",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 326,
+      "source_problem_id": "a07fc291-7e7e-4ee5-b565-f8683411f432",
+      "section_no": "6.7",
+      "problem_no": "7",
+      "sub_no": "",
+      "current_stem_sha256": "caf662bdd0fa84b2cd1f848dab2ad48e3fde5c92a02288af92f3026a43faf840",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 331,
+      "source_problem_id": "0d03ed60-a591-4e47-b7b5-c032fd3310c0",
+      "section_no": "6.7",
+      "problem_no": "12",
+      "sub_no": "",
+      "current_stem_sha256": "4cc987b6f12a9d3729fc1ebd3f63bb1aa2becb6c8f88006667431e4989a6d7a6",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列",
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 332,
+      "source_problem_id": "03eaea5b-e4e2-4032-943a-40782cc87df9",
+      "section_no": "6.8",
+      "problem_no": "1",
+      "sub_no": "",
+      "current_stem_sha256": "1840c30949b2ad42848a7a1faf73069f8ec3cfd0d1bd1a3fbaa91e94ef0d4272",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 333,
+      "source_problem_id": "a01ebf62-d0e7-4f21-a5e5-2338853f670d",
+      "section_no": "6.8",
+      "problem_no": "2",
+      "sub_no": "",
+      "current_stem_sha256": "b516a2950cb370913caf1d39ac544926c483408c4eb6ac28bb5a2c87f21e76bf",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "题干含重复 OCR 代字",
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 334,
+      "source_problem_id": "0b58423e-ef63-4860-9fb6-1b65c2558321",
+      "section_no": "6.8",
+      "problem_no": "5",
+      "sub_no": "",
+      "current_stem_sha256": "2cfbcb7134560afa1d653853a7140e236974850c01bd4d1c459427f675e51339",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "题干含全角/替换字符",
+        "题干含可疑公式或字母序列",
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 339,
+      "source_problem_id": "6574e02a-c4f0-41d2-ab01-1858b438459b",
+      "section_no": "7.1",
+      "problem_no": "5",
+      "sub_no": "",
+      "current_stem_sha256": "fff8ada279ad764e656e369bb2145e713ebf60c84cf67bb93ee36bf72467099b",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 341,
+      "source_problem_id": "230a58be-4539-421c-a04b-b92f4084cffb",
+      "section_no": "7.1",
+      "problem_no": "8",
+      "sub_no": "",
+      "current_stem_sha256": "76d0c25115f5ff5177d1c86a1a2ffafe29398c5271f039fb15f6ff3cbdff8ab8",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 342,
+      "source_problem_id": "f8426629-deae-4f8b-8f6d-2381e29deb92",
+      "section_no": "7.2",
+      "problem_no": "1",
+      "sub_no": "",
+      "current_stem_sha256": "f00386d8a1eefbd9c345610d36a0ecf1cf381c936c5f00ba87168cd153c26b59",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "题干含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 343,
+      "source_problem_id": "27a5622e-3e4a-47ec-9557-dad3b6e7c605",
+      "section_no": "7.3",
+      "problem_no": "4",
+      "sub_no": "",
+      "current_stem_sha256": "2bef5071fda93a6c420067c6cbc35bf79d0ffb73fa09fa1ab4f1986fac813805",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 344,
+      "source_problem_id": "5e6ea6ad-33bd-490d-978c-93e88b04ee22",
+      "section_no": "7.3",
+      "problem_no": "5",
+      "sub_no": "",
+      "current_stem_sha256": "8014a5fa99c507981a866da1c360cad1fd5111bcb1b94a137e4a753ec27d87f4",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 345,
+      "source_problem_id": "47af3c3f-e4ae-4b58-b8de-640a943e3518",
+      "section_no": "7.3",
+      "problem_no": "6",
+      "sub_no": "",
+      "current_stem_sha256": "e36dfb117b96b9276ddbf5e34705f72a1f755c0aa95824d5ee73d24b9880a843",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列",
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 346,
+      "source_problem_id": "79a03918-cda5-4043-8aaa-79632202c4ac",
+      "section_no": "7.3",
+      "problem_no": "9",
+      "sub_no": "",
+      "current_stem_sha256": "057000077c4dd5db38237b0f38656196e0f66a12f18366a5e0efe39719b57c5b",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "题干含重复 OCR 代字",
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 347,
+      "source_problem_id": "7b270493-c0a5-4f80-b962-a5cb4561afeb",
+      "section_no": "7.3",
+      "problem_no": "10",
+      "sub_no": "",
+      "current_stem_sha256": "66a7239aaeb43b37aee7aac7a611c94a30340a928fa4bc359fe1213368385c0a",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "题干含全角/替换字符",
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 349,
+      "source_problem_id": "5e911544-7ea6-424e-9a48-94bb8d6370f3",
+      "section_no": "7.4",
+      "problem_no": "1",
+      "sub_no": "",
+      "current_stem_sha256": "a1a7df08a094870e020dad8c07f3318ce384ba4abd37fa5abb8c784867d28f59",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "题干含全角/替换字符",
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 350,
+      "source_problem_id": "7c543462-c132-49aa-a5aa-04c0d2f211b0",
+      "section_no": "7.4",
+      "problem_no": "2",
+      "sub_no": "",
+      "current_stem_sha256": "426a38b5cc8e2a7044c745106bfd88570be97bda24165a901dbc841660b73cfa",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 353,
+      "source_problem_id": "47ea6603-e173-4d94-b889-60e5de4b4141",
+      "section_no": "7.4",
+      "problem_no": "5",
+      "sub_no": "",
+      "current_stem_sha256": "588855be8b0c61c5bfa57ec86b285e24fdc82a7a987832437d2fdf6dc5505c6c",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "题干含全角/替换字符",
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 355,
+      "source_problem_id": "a779579d-70d4-43d3-bc48-ffefdafb9f82",
+      "section_no": "7.5",
+      "problem_no": "4",
+      "sub_no": "",
+      "current_stem_sha256": "f4b9751318e0745b0944baaa8bcd537346a17999b75cb5dd90c4c8bfcacecd40",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列",
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 356,
+      "source_problem_id": "9a6f55c8-17f9-4aa8-a04a-bd6089669179",
+      "section_no": "7.5",
+      "problem_no": "5",
+      "sub_no": "",
+      "current_stem_sha256": "7ecac447154aff32807eca02872cdd57bbabafb9f69ba3f78d788a03f50fce13",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 357,
+      "source_problem_id": "3e5ffba7-582b-4c19-aa16-b8d755e301ec",
+      "section_no": "7.6",
+      "problem_no": "2",
+      "sub_no": "",
+      "current_stem_sha256": "2e7dd2299b8ca64692f87bab9c3fc0a6adae666282d63dea131b635f5f0dbd70",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 358,
+      "source_problem_id": "6af0b0a3-2c63-473c-ace6-d2e4a9b4ab10",
+      "section_no": "8.1",
+      "problem_no": "3",
+      "sub_no": "",
+      "current_stem_sha256": "0603d969fcc908130d5653d6bb981f013192c5851c90ea85380a8bb726bfebbe",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "题干含重复 OCR 代字",
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 359,
+      "source_problem_id": "c619d8b9-6d44-4f36-87cb-1837c8aa01c7",
+      "section_no": "8.1",
+      "problem_no": "6",
+      "sub_no": "",
+      "current_stem_sha256": "88f27452d56dc6566d562f55bae73ef4e92e79c660a73558672c3d789cc37082",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列",
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 360,
+      "source_problem_id": "9fabd2ae-fae4-4fea-b13a-9af0993de53c",
+      "section_no": "8.2",
+      "problem_no": "1",
+      "sub_no": "",
+      "current_stem_sha256": "268771d5926ce3a00cc4fc1764143eb5c7ad721f0d9284b399a9e991e8847011",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列",
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 361,
+      "source_problem_id": "ee125e74-c7a7-45f1-b191-48832de00225",
+      "section_no": "8.2",
+      "problem_no": "2",
+      "sub_no": "",
+      "current_stem_sha256": "b4945747095b9822cd1268b39b8d12bf634ea40ef4a14be3e07fa5191cac54db",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 362,
+      "source_problem_id": "aabd81b3-0584-4e93-baa2-2d5465272ce8",
+      "section_no": "8.2",
+      "problem_no": "3",
+      "sub_no": "",
+      "current_stem_sha256": "39a4940570c1fcab74d2163e958fb63152a05c95fed6c3ceef08cbceb5e845b5",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 363,
+      "source_problem_id": "250adde8-1f0d-40f9-96ee-29179d6841c1",
+      "section_no": "8.2",
+      "problem_no": "5",
+      "sub_no": "",
+      "current_stem_sha256": "b709519dd1aeca8cc84aae485567656dd27db2cd0494378da00de7c24dbe73c7",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "题干含全角/替换字符",
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 364,
+      "source_problem_id": "6625e458-fb12-4b55-8121-86db6136447f",
+      "section_no": "8.2",
+      "problem_no": "6",
+      "sub_no": "",
+      "current_stem_sha256": "32153dfeca57c061a231b8070d8ae71648fab76330a48cae50190e887321531e",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列",
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 365,
+      "source_problem_id": "bec4658c-1e5c-456c-8cf9-bb897197f266",
+      "section_no": "8.2",
+      "problem_no": "7",
+      "sub_no": "",
+      "current_stem_sha256": "389c49f712d9484370e6d263aad305bd136eadc0fc3a16276e3e4491e6826d9c",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列",
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 367,
+      "source_problem_id": "2a0cfe37-ddaf-42f0-baa6-d560c442106e",
+      "section_no": "8.2",
+      "problem_no": "9",
+      "sub_no": "",
+      "current_stem_sha256": "10215dd55ac48ee278d657fb19c9eaa630cc2a65082cccbc1b51a60e878d4930",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "题干含全角/替换字符",
+        "题干含可疑公式或字母序列",
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 369,
+      "source_problem_id": "c8b49a65-cbcb-453b-80dc-dc2e25cea805",
+      "section_no": "8.3",
+      "problem_no": "2",
+      "sub_no": "",
+      "current_stem_sha256": "1b5bc1f84632e33fa5ef556d5895f3fff05171dd02984cc3627cfca4049c65d2",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列",
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 371,
+      "source_problem_id": "89d3fd3a-21fc-481f-b6b7-b215f1197d83",
+      "section_no": "8.4",
+      "problem_no": "1",
+      "sub_no": "",
+      "current_stem_sha256": "7e42f2a3a6edab8d72064ef0b94d1709b538ca509aec78baa6ba67be08e0de78",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列",
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 372,
+      "source_problem_id": "489b25b3-1296-445b-9bab-68734faf2106",
+      "section_no": "8.4",
+      "problem_no": "2",
+      "sub_no": "",
+      "current_stem_sha256": "5f66a53d052e0a0384924dee5a419e281ed3befbfcd24a1dcb9c381c3d976bb0",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "题干含重复 OCR 代字",
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 373,
+      "source_problem_id": "48d517fe-788c-4c0b-aeb8-e95bf2fbf0e3",
+      "section_no": "8.4",
+      "problem_no": "4",
+      "sub_no": "",
+      "current_stem_sha256": "84b27d3eaa46f9b91536ddfc047272ef278a5a8569fbc3a4ec31aac59d67f9d0",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "题干含全角/替换字符",
+        "题干含可疑公式或字母序列",
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 374,
+      "source_problem_id": "25522600-9f29-406b-a437-2b9b10e755db",
+      "section_no": "8.6",
+      "problem_no": "1",
+      "sub_no": "",
+      "current_stem_sha256": "6e0285b7ddd412b078db011a937c8d6e675821123bae0f7f2316378fd582466b",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 375,
+      "source_problem_id": "5c15932c-e41e-40a5-b690-1e2f612f5362",
+      "section_no": "8.6",
+      "problem_no": "4",
+      "sub_no": "",
+      "current_stem_sha256": "ce0b0dec00302039513647f8a0ede7bbf332a9a2e09f8ae09d8a800d2b02ca92",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 377,
+      "source_problem_id": "fd395546-2f8b-4c51-83cc-d971294dfad2",
+      "section_no": "8.6",
+      "problem_no": "11",
+      "sub_no": "",
+      "current_stem_sha256": "a860138c8b03ed1be6ec567fc314a4d8b2b8b05da7c0089cfd9e28312e21b027",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 378,
+      "source_problem_id": "4cdf8b6b-62c3-47e7-b587-71ce0a6af496",
+      "section_no": "9.1",
+      "problem_no": "2",
+      "sub_no": "",
+      "current_stem_sha256": "754dcfd7f4d741f096e24c923c0314e3f5abef412324ce96a4e4a0a4456ad96b",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 379,
+      "source_problem_id": "08114645-67e8-4534-b6ef-bb0fcef2b653",
+      "section_no": "9.1",
+      "problem_no": "4",
+      "sub_no": "",
+      "current_stem_sha256": "04a00d1e410a8235456f0b35f0bbe32161af51762006c6dfbbf5a6eb3b67a105",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 380,
+      "source_problem_id": "27be71c9-be44-4357-a866-0098a2f05eee",
+      "section_no": "9.2",
+      "problem_no": "2",
+      "sub_no": "",
+      "current_stem_sha256": "1f5c0fd902b0553cab44dc1797e5d3d65c7ce87eec1bdc476e116c86ee54b481",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列",
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 384,
+      "source_problem_id": "0ac7224a-b46a-4024-b4c7-b7a39f0862a8",
+      "section_no": "9.6",
+      "problem_no": "1",
+      "sub_no": "",
+      "current_stem_sha256": "c75feedb41c9ae60894ba0f9e8f7651d0d92b5b233e0909f79071566d4c6ef9d",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 385,
+      "source_problem_id": "2d094eca-c30e-4523-92b0-9542df6d0b3b",
+      "section_no": "9.6",
+      "problem_no": "2",
+      "sub_no": "",
+      "current_stem_sha256": "9868bad16029708ef1325fe059b09381cad0595b31ced8fc8e6d16ea9ec1d2a0",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 387,
+      "source_problem_id": "dbf5e340-6da6-4ba4-9e72-9448328cb5a9",
+      "section_no": "9.7",
+      "problem_no": "1",
+      "sub_no": "",
+      "current_stem_sha256": "2301d21179d37bc2bfa7e4ae855a01fd8a4709908b3d9cb8aaaa8c75c7dd0bac",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 388,
+      "source_problem_id": "ba6b315e-c71c-4d1b-a35d-7f40aec6cf90",
+      "section_no": "9.7",
+      "problem_no": "4",
+      "sub_no": "",
+      "current_stem_sha256": "7b5f0c5bc048145080c3f49b9b44fb0f5b07d863ea7c0709d75a755795555037",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "题干含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 389,
+      "source_problem_id": "12a7c4a1-0e34-4df6-bfd3-fa94b685e76a",
+      "section_no": "9.7",
+      "problem_no": "5",
+      "sub_no": "",
+      "current_stem_sha256": "e2a3613775737f057e90d5b5d5bdc207d0c193a4363259889be81af4215b8ff1",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 390,
+      "source_problem_id": "373f2e07-3e39-4254-81d6-710192570bdb",
+      "section_no": "9.8",
+      "problem_no": "1",
+      "sub_no": "",
+      "current_stem_sha256": "34a4aa8666845e1af0c9e1e2bc7bb51a18550c821563c06e898f42e951eda2c0",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "题干含重复 OCR 代字",
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 392,
+      "source_problem_id": "c245644e-0bfb-4c47-994e-aa35433f5c2e",
+      "section_no": "9.8",
+      "problem_no": "3",
+      "sub_no": "",
+      "current_stem_sha256": "813e8b41ee6303cc3dd743c28a67b143401ff5134e4479b2172bfe1fea3c8cf3",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "题干含可疑公式或字母序列",
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 393,
+      "source_problem_id": "879f263a-a337-4628-8381-63ebb7905110",
+      "section_no": "9.8",
+      "problem_no": "4",
+      "sub_no": "",
+      "current_stem_sha256": "ed2fb0a1de4a771a652e382845534032e19cd726de608bd30ab13694a71e8971",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "答案含重复 OCR 代字",
+        "评分参考含重复 OCR 代字"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 394,
+      "source_problem_id": "4e609887-8841-43b3-88d4-6109a5f838be",
+      "section_no": "9.8",
+      "problem_no": "5",
+      "sub_no": "",
+      "current_stem_sha256": "33d4632aa3d0709f950c5db4cc40e1309daff33940927fbab4b533f5dded2c94",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 395,
+      "source_problem_id": "f94c2810-b6d2-4161-845e-63cf93a392ce",
+      "section_no": "9.8",
+      "problem_no": "6",
+      "sub_no": "",
+      "current_stem_sha256": "43db9291d9f322cf0b4b694d60515d5ddf1ca1547e15150fb07af0a83ebe0c0a",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列",
+        "评分参考含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 396,
+      "source_problem_id": "06fbfe69-8853-48ea-a0f3-fb79810b1b86",
+      "section_no": "9.9",
+      "problem_no": "2",
+      "sub_no": "",
+      "current_stem_sha256": "7c6110b12e9cfa0cf8882cf08ca6457f09ba7e421de0fa258e85a282bc85da3f",
+      "risk_level": "HIGH",
+      "risk_reasons": [
+        "答案为空"
+      ],
+      "classification": "RISK_CANDIDATE"
+    },
+    {
+      "local_question_id": 400,
+      "source_problem_id": "a6b0cc9f-784e-4684-86f8-55d1b20013b5",
+      "section_no": "2.6",
+      "problem_no": "9",
+      "sub_no": "",
+      "current_stem_sha256": "cf9bb8970b50eeda7e50fce1545b79e1569887371a38dd71f8ea957aa0c4cecd",
+      "risk_level": "MEDIUM",
+      "risk_reasons": [
+        "答案含可疑公式或字母序列"
+      ],
+      "classification": "RISK_CANDIDATE"
+    }
+  ]
+}

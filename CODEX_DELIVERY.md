@@ -101,3 +101,13 @@ docs/                    设计/诊断/复核清单（garble_audit.csv、QUESTIO
 ## 7. 本次交付物确认
 
 本次 commit 包含：最新业务代码（编辑面板 / MathJax 预览 / PDF 引擎 / 8014 回写）、安全修复（SSH 凭据环境变量化）、`docs/garble_audit.csv` 乱码复核清单、`question_bank_review.py`、`tests/`、`src/grading_engine.py`、`src/tools/mineru_knowledge_pipeline.py`、本交付说明。
+
+---
+
+## 8. 2026-08-25 Milestone 1A：教材来源证据基础
+
+- 已新增可复跑的 PDF 盘点、SHA-256 验证、相对根路径解析和 8014 来源登记。原始 PDF 不入库；题干、答案、`published`/`blocked` 均未改动。
+- 8014 新增 `textbook_documents`（来源文件）和 `problem_source_anchors`（未来页/框锚点）两张表；本次仅登记 7 个文件映射，尚未写入任何题目锚点。
+- Route2 §5.1–§5.6 已按用户确认映射到 `李继成高数-答案-下册-OCR.pdf`：303 页、295 页有原生文本、文本层比例 97.36%。上册教材为 329 页纯扫描 PDF。
+- 证据清单与操作说明见 `docs/textbook_document_registration.json`、`docs/SOURCE_EVIDENCE_FOUNDATION.md`；风险快照为 120 个 `RISK_CANDIDATE`（44 高、76 中），不等同于已确认错误。
+- 下一步 1B 仅对已有“页码/框选/来源图”的单题建立 `problem_source_anchors`，再输出教师确认的 LaTeX 候选；无证据时继续标注阻塞，禁止猜测数学内容。

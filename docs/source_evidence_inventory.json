@@ -1,0 +1,31 @@
+{
+  "created_at": "2026-08-25T12:23:26.587290+00:00",
+  "documents": [
+    {
+      "source_root": "explicit-file-parent",
+      "stored_path": "李继成高数-教材-上册-2版(1).pdf",
+      "filename": "李继成高数-教材-上册-2版(1).pdf",
+      "file_size": 31881498,
+      "sha256": "315d35d7963fef0f9d4470e3f6fc34957fc7488bfb0cff5745ebebf346d874f4",
+      "page_count": 329,
+      "extractable_text_pages": 0,
+      "text_layer_ratio": 0.0,
+      "average_text_chars_per_page": 0.0,
+      "scanned_image_pages": 329,
+      "pdf_type": "IMAGE_SCANNED"
+    },
+    {
+      "source_root": "explicit-file-parent",
+      "stored_path": "李继成高数-答案-下册-OCR.pdf",
+      "filename": "李继成高数-答案-下册-OCR.pdf",
+      "file_size": 12000974,
+      "sha256": "d28cdf6be74a2264a375870177ef0a49cb300051fb283dde1352504cf78e0d4b",
+      "page_count": 303,
+      "extractable_text_pages": 295,
+      "text_layer_ratio": 0.9736,
+      "average_text_chars_per_page": 883.1,
+      "scanned_image_pages": 8,
+      "pdf_type": "TEXT_NATIVE"
+    }
+  ]
+}

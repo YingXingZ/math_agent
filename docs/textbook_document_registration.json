@@ -1,0 +1,46 @@
+{
+  "documents": [
+    {
+      "textbook_id": "7f55d4ae-94e7-4428-b2bb-da2e113070c4",
+      "document_role": "textbook",
+      "stored_path": "李继成高数-教材-上册-2版(1).pdf",
+      "sha256": "315d35d7963fef0f9d4470e3f6fc34957fc7488bfb0cff5745ebebf346d874f4"
+    },
+    {
+      "textbook_id": "0b5bb31e-c61c-4631-ae4c-a5a688595f18",
+      "document_role": "route2_question_answer_ocr",
+      "stored_path": "李继成高数-答案-下册-OCR.pdf",
+      "sha256": "d28cdf6be74a2264a375870177ef0a49cb300051fb283dde1352504cf78e0d4b"
+    },
+    {
+      "textbook_id": "4d0db853-cd6d-4ade-9d5f-d75e4b344be7",
+      "document_role": "route2_question_answer_ocr",
+      "stored_path": "李继成高数-答案-下册-OCR.pdf",
+      "sha256": "d28cdf6be74a2264a375870177ef0a49cb300051fb283dde1352504cf78e0d4b"
+    },
+    {
+      "textbook_id": "30adb774-6097-4963-94d8-01d5f55f5ee6",
+      "document_role": "route2_question_answer_ocr",
+      "stored_path": "李继成高数-答案-下册-OCR.pdf",
+      "sha256": "d28cdf6be74a2264a375870177ef0a49cb300051fb283dde1352504cf78e0d4b"
+    },
+    {
+      "textbook_id": "85b3c058-cf9e-4fa7-ae73-432075b19bc8",
+      "document_role": "route2_question_answer_ocr",
+      "stored_path": "李继成高数-答案-下册-OCR.pdf",
+      "sha256": "d28cdf6be74a2264a375870177ef0a49cb300051fb283dde1352504cf78e0d4b"
+    },
+    {
+      "textbook_id": "0c15c083-7982-4138-b360-919b6648e7c1",
+      "document_role": "route2_question_answer_ocr",
+      "stored_path": "李继成高数-答案-下册-OCR.pdf",
+      "sha256": "d28cdf6be74a2264a375870177ef0a49cb300051fb283dde1352504cf78e0d4b"
+    },
+    {
+      "textbook_id": "f678a0a6-5f74-450f-915a-66af823b5620",
+      "document_role": "route2_question_answer_ocr",
+      "stored_path": "李继成高数-答案-下册-OCR.pdf",
+      "sha256": "d28cdf6be74a2264a375870177ef0a49cb300051fb283dde1352504cf78e0d4b"
+    }
+  ]
+}
