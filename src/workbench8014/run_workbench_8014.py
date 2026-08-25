@@ -44,5 +44,13 @@ def teacher_workbench():
     return FileResponse(page)
 
 
+@app.get("/ocr-repair")
+def ocr_repair_workbench():
+    page = REPOSITORY_ROOT / "ocr_repair_review.html"
+    if not page.is_file():
+        raise RuntimeError(f"OCR repair page does not exist: {page}")
+    return FileResponse(page)
+
+
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8014, log_level="info")

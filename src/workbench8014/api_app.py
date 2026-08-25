@@ -166,6 +166,16 @@ def init_db():
         UNIQUE(problem_id, document_id, pdf_page_index, segment_index));
     CREATE INDEX IF NOT EXISTS idx_problem_source_anchor_problem ON problem_source_anchors(problem_id, status);
     CREATE INDEX IF NOT EXISTS idx_problem_source_anchor_document ON problem_source_anchors(document_id, pdf_page_index);
+    CREATE TABLE IF NOT EXISTS ocr_repair_candidates(
+        id TEXT PRIMARY KEY, problem_id TEXT NOT NULL, anchor_id INTEGER, provider TEXT NOT NULL,
+        crop_path TEXT NOT NULL, latex_text TEXT NOT NULL DEFAULT '', confidence REAL NOT NULL DEFAULT 0,
+        risks_json TEXT NOT NULL DEFAULT '[]', result_json TEXT NOT NULL DEFAULT '{}',
+        status TEXT NOT NULL DEFAULT 'pending_teacher', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        UNIQUE(problem_id, anchor_id, provider, crop_path));
+    CREATE TABLE IF NOT EXISTS ocr_repair_decisions(
+        problem_id TEXT PRIMARY KEY, decision TEXT NOT NULL, decision_json TEXT NOT NULL,
+        teacher_status TEXT NOT NULL DEFAULT 'pending', teacher_note TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS idx_p_kp ON problems(knowledge_pts);
     CREATE INDEX IF NOT EXISTS idx_p_section ON problems(section_id);
     CREATE INDEX IF NOT EXISTS idx_p_type ON problems(ptype);
@@ -3490,6 +3500,61 @@ def review_answer_import_candidate(candidate_id: int, req: AnswerCandidateReview
     return {"ok": True, "candidate_id": candidate_id, "status": req.action,
             "ptype": effective_ptype,
             "automatic_grading_enabled": req.action == "approved" and effective_ptype == "calc"}
+
+
+@app.get("/ocr-repair/reviews")
+def list_ocr_repair_reviews(status: str = Query("pending"), limit: int = Query(100, ge=1, le=300)):
+    """Return OCR repair evidence; this endpoint never exposes a write-back action."""
+    conn = get_db()
+    try:
+        rows = conn.execute("""
+            SELECT d.problem_id,d.decision,d.decision_json,d.teacher_status,d.teacher_note,
+                   p.content_text,s.section_no,p.problem_no,a.id AS anchor_id,a.crop_path,a.confidence AS anchor_confidence
+            FROM ocr_repair_decisions d JOIN problems p ON p.id=d.problem_id
+            JOIN sections s ON s.id=p.section_id LEFT JOIN problem_source_anchors a ON a.problem_id=d.problem_id
+            WHERE (?='' OR d.teacher_status=?) ORDER BY d.updated_at DESC LIMIT ?
+        """, (status, status, limit)).fetchall()
+        items=[]
+        for row in rows:
+            item=dict(row)
+            item['candidates']=[dict(candidate) for candidate in conn.execute("""
+              SELECT id,provider,crop_path,latex_text,confidence,risks_json,status,updated_at
+              FROM ocr_repair_candidates WHERE problem_id=? ORDER BY provider""",(row['problem_id'],)).fetchall()]
+            items.append(item)
+        return {"items":items}
+    finally: conn.close()
+
+
+@app.get("/ocr-repair/crops/{anchor_id}")
+def get_ocr_repair_crop(anchor_id: int):
+    conn=get_db()
+    try:
+        row=conn.execute("SELECT crop_path FROM problem_source_anchors WHERE id=? AND status='candidate'",(anchor_id,)).fetchone()
+    finally: conn.close()
+    if not row or not row['crop_path']: raise HTTPException(404,"candidate crop not found")
+    root=Path(os.environ.get("OCR_REPAIR_IMAGE_ROOT", str(Path(__file__).resolve().parents[2] / 'answer_source_previews'))).resolve()
+    path=(root / row['crop_path']).resolve()
+    try: path.relative_to(root)
+    except ValueError: raise HTTPException(400,"invalid crop path")
+    if not path.is_file(): raise HTTPException(404,"candidate crop file is unavailable")
+    return FileResponse(path, media_type='image/png')
+
+
+@app.post("/ocr-repair/reviews/{problem_id}")
+def review_ocr_repair_candidate(problem_id: str, body: dict = Body(...)):
+    """Teacher confirm/reject is metadata-only; it never changes problems."""
+    action=str(body.get('action') or '')
+    if action not in {'confirmed','rejected'}: raise HTTPException(400,"action must be confirmed or rejected")
+    note=str(body.get('note') or '').strip()[:2000]
+    conn=get_db()
+    try:
+        exists=conn.execute("SELECT 1 FROM ocr_repair_decisions WHERE problem_id=?",(problem_id,)).fetchone()
+        if not exists: raise HTTPException(404,"OCR repair decision not found")
+        conn.execute("UPDATE ocr_repair_decisions SET teacher_status=?,teacher_note=?,updated_at=? WHERE problem_id=?",
+                     (action,note,datetime.now().isoformat(timespec='seconds'),problem_id))
+        conn.commit()
+        return {"ok":True,"problem_id":problem_id,"teacher_status":action,"question_bank_written":False}
+    finally: conn.close()
 
 
 REVIEW_SAMPLING_DB = os.path.join(os.path.dirname(__file__), "review_sample.json")

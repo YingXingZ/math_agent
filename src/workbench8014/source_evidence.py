@@ -131,6 +131,20 @@ def ensure_source_evidence_schema(conn: sqlite3.Connection) -> None:
     );
     CREATE INDEX IF NOT EXISTS idx_problem_source_anchor_problem ON problem_source_anchors(problem_id, status);
     CREATE INDEX IF NOT EXISTS idx_problem_source_anchor_document ON problem_source_anchors(document_id, pdf_page_index);
+    CREATE TABLE IF NOT EXISTS ocr_repair_candidates(
+        id TEXT PRIMARY KEY, problem_id TEXT NOT NULL, anchor_id INTEGER,
+        provider TEXT NOT NULL, crop_path TEXT NOT NULL, latex_text TEXT NOT NULL DEFAULT '',
+        confidence REAL NOT NULL DEFAULT 0, risks_json TEXT NOT NULL DEFAULT '[]',
+        result_json TEXT NOT NULL DEFAULT '{}', status TEXT NOT NULL DEFAULT 'pending_teacher',
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        UNIQUE(problem_id, anchor_id, provider, crop_path)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ocr_repair_candidates_problem ON ocr_repair_candidates(problem_id,status);
+    CREATE TABLE IF NOT EXISTS ocr_repair_decisions(
+        problem_id TEXT PRIMARY KEY, decision TEXT NOT NULL, decision_json TEXT NOT NULL,
+        teacher_status TEXT NOT NULL DEFAULT 'pending', teacher_note TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
     """)
 
 
