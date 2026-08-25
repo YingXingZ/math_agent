@@ -11,6 +11,7 @@ UPSERT（默认）：按 source_problem_id 匹配，已存在则 UPDATE（推送
 import os, sys, json, sqlite3, shutil, re
 from datetime import datetime
 from pathlib import Path
+from tool_config import agent_db, agent_dir, workbench_db
 
 # 损坏判别：全角拉丁字母 / 全角 ~ ' \ | / 私有区字符 的密度。
 # 干净的 LaTeX OCR 几乎不含这些；mojibake 会密集出现。阈值 0.006 干净分离 干净/损坏。
@@ -29,6 +30,10 @@ def garbage_score(t):
 PROJECT = r"D:\My File\大四\高数教材答案\高数作业助手"
 SRC_DB = r"D:\My File\大四\高数教材答案\api.workbench.db"
 AGENT_DB = os.path.join(PROJECT, "data", "homework.db")
+os.environ["DATABASE_PATH"] = AGENT_DB
+PROJECT = str(agent_dir())
+SRC_DB = str(workbench_db())
+AGENT_DB = str(agent_db())
 os.environ["DATABASE_PATH"] = AGENT_DB
 sys.path.insert(0, PROJECT)
 

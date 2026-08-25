@@ -104,8 +104,9 @@ curl -s http://127.0.0.1:8000/api/reports/summary          # 总览
 | 大 PDF（>12 页）被拒识 | 已修复：现渲染全部页交 VLM 跨页定位，仅 >80 页转人工 |
 
 ## 7. 自动化回归（改代码后用）
-```bash
-C:\Users\YXZ\.workbuddy\binaries\python\envs\default\Scripts\python.exe D:\workbuddy\2026-08-06-15-31-48\validate_agent_reports.py
-C:\Users\YXZ\.workbuddy\binaries\python\envs\default\Scripts\python.exe D:\workbuddy\2026-08-06-15-31-48\regress_student_submit.py
+```powershell
+# 在仓库根目录执行；首次运行先安装 requirements.txt
+python -m pytest -q tests
 ```
-两个脚本均基于临时库副本运行，不影响生产数据，全绿即代表接口契约未被破坏。
+
+该 pytest 入口会运行报表、学生提交与 SQL 注入三项回归。每项均在新建的系统临时 SQLite 数据库中完成，不读取或修改生产数据库。

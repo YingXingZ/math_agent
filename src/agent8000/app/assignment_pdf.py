@@ -1,7 +1,7 @@
 """Generate a student homework PDF and a LaTeX-source export from an assignment.
 
 This module reuses the A4 layout engine in
-``D:/workbuddy/2026-08-06-15-31-48/build_worksheet.py`` (``WorksheetBuilder``):
+the repository's ``src/tools/build_worksheet.py`` (``WorksheetBuilder``):
 it already implements the exact "original screenshot fidelity + dashed answer
 blank" design (设计二：留答题空白).  We drive it with one rendered image per
 selected problem so that:
@@ -15,6 +15,7 @@ is available it can be passed in via ``img_path`` and embedded verbatim.
 """
 from __future__ import annotations
 
+import io
 import json
 import re
 import sys
@@ -25,15 +26,47 @@ from typing import Any
 import fitz
 
 # --- reuse the workspace worksheet engine -----------------------------------
-_WORKSPACE = Path(r"D:/workbuddy/2026-08-06-15-31-48")
-if str(_WORKSPACE) not in sys.path:
-    sys.path.insert(0, str(_WORKSPACE))
+TOOLS_ROOT = Path(__file__).resolve().parents[2] / "tools"
+if str(TOOLS_ROOT) not in sys.path:
+    sys.path.insert(0, str(TOOLS_ROOT))
 
 from build_worksheet import WorksheetBuilder  # noqa: E402  (workspace engine)
 
 FONT_SONG = r"C:/Windows/Fonts/simsun.ttc"
 FONT_HEI = r"C:/Windows/Fonts/simhei.ttf"
 CONTENT_W = 595.28 - 56.7 - 45.4  # matches build_worksheet.py CONTENT_W
+
+# Pre-compile the LaTeX detector.  We only treat tokens that look like real
+# LaTeX commands (\frac, \lim, \sum, …) as formulae, never plain text.  The
+# regex below matches either a backslash-letter command or a backslash symbol
+# (e.g. \le, \ge, \to, \infty) followed by an optional braced group.
+_LATEX_SCAN = re.compile(
+    r"\\[A-Za-z]+(?:\s*\{[^{}]*\})*"
+    r"|\\\([^()]*\)"
+    r"|\\\[^[\]]*\]"
+)
+
+# Match the textbook-standard math delimiters: $$...$$ (display) first, then
+# $...$ (inline).  Everything between the delimiters is a single formula span
+# that mathtext should render as one glyph run, not token-by-token.
+_MATH_DOLLAR = re.compile(r"\$\$(.+?)\$\$|\$(.+?)\$")
+
+
+def _normalise_mathtext(tex: str) -> str:
+    """Map textbook macros onto what matplotlib mathtext understands.
+
+    mathtext is a deliberately small subset of TeX: it has no ``\\operatorname``
+    and renders ``\\text`` poorly, so we swap those for ``\\mathrm``.  We also
+    normalise the fraction/style macros.  Applied to the *inner* content of a
+    $...$ span (delimiters already stripped by the caller).
+    """
+    return (
+        tex.replace("\\operatorname", "\\mathrm")
+           .replace("\\dfrac", "\\frac")
+           .replace("\\tfrac", "\\frac")
+           .replace("\\text{", "\\mathrm{")
+           .replace("\\text ", "\\mathrm ")
+    )
 
 
 def _answer_space_for(question_type: str, content: str) -> int:
@@ -47,12 +80,65 @@ def _answer_space_for(question_type: str, content: str) -> int:
     return 110
 
 
+# ---------------------------------------------------------------------------
+# LaTeX rendering helpers (matplotlib mathtext → inline PNG)
+# ---------------------------------------------------------------------------
+def _has_matplotlib() -> bool:
+    try:
+        import matplotlib  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+def _render_latex_png(tex: str, *, fontsize: float = 14.0) -> bytes | None:
+    """Render a single LaTeX fragment to a tight PNG via matplotlib mathtext.
+
+    Returns ``None`` when matplotlib is missing or the fragment is not
+    renderable.  mathtext is intentionally preferred over a full TeX install:
+    it covers the textbook formula vocabulary (\\frac, \\sqrt, \\lim, \\to,
+    Greek letters, sums, integrals) without bringing in a 200+ MB TeX tree.
+    """
+    if not _has_matplotlib() or not tex.strip():
+        return None
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as _plt
+
+        # Normalise the textbook-style macros that mathtext does not recognise.
+        # We swap them for an equivalent that mathtext renders cleanly, while
+        # leaving everything else untouched.
+        normalised = _normalise_mathtext(tex)
+
+        fig = _plt.figure(figsize=(0.1, 0.1))
+        try:
+            fig.text(0, 0, "$" + normalised + "$", fontsize=fontsize)
+            buf = io.BytesIO()
+            _plt.savefig(
+                buf, format="png", bbox_inches="tight", pad_inches=0.05,
+                dpi=300, transparent=True,
+            )
+            return buf.getvalue()
+        finally:
+            _plt.close(fig)
+    except Exception:
+        return None
+
+
 def render_problem_image(content: str, original_no: str, out_path: str | Path,
                          font_size: float = 11.5) -> str:
     """Render one problem (original number + text) to a cropped PNG for the engine.
 
     The engine scales the PNG back to ``CONTENT_W`` at 300 DPI, so we render at
     that DPI and crop to the text height to avoid empty trailing space.
+
+    LaTeX-bearing substrings (``\\frac{...}``, ``\\lim``, etc.) are detected
+    inline and rendered as proper formula glyphs via matplotlib mathtext; the
+    rest of the line is drawn with the system Chinese font.  This makes the
+    printable PDF match the textbook layout the teacher expects, instead of
+    showing raw ``\\frac{1}{2}gt^2`` on the worksheet.
     """
     doc = fitz.open()
     page = doc.new_page(width=CONTENT_W, height=2000)
@@ -65,13 +151,119 @@ def render_problem_image(content: str, original_no: str, out_path: str | Path,
     # Strip it before prepending the *canonical* original number so we do not
     # print "10. 10. ..." on the worksheet.
     body = re.sub(rf"^{re.escape(original_no)}\.\s*", "", body)
-    full = label + body
-    rect = fitz.Rect(margin, margin, CONTENT_W - margin, 1990)
-    leftover = page.insert_textbox(
-        rect, full, fontname="song", fontsize=font_size, lineheight=1.55, align=0,
-    )
-    used = (1990 - margin) - (leftover if leftover > 0 else 0)
-    used_h = max(margin * 2 + font_size, used + margin)
+
+    y = margin
+    max_x = CONTENT_W - margin
+    line_h = font_size * 1.95
+    cursor_x = margin
+
+    def ew(text: str) -> float:
+        """Rough width for a CJK+mixed string in simsun at ``font_size``.
+
+        fitz's ``get_text_length`` rejects page-registered fonts, so we use a
+        heuristic: CJK glyphs are full-width, Latin/digit/punct are about half.
+        """
+        w = 0.0
+        for ch in text:
+            if "\u4e00" <= ch <= "\u9fff" or "\u3000" <= ch <= "\u303f":
+                w += font_size  # full-width CJK
+            else:
+                w += font_size * 0.55
+        return w
+
+    def newline():
+        nonlocal y, cursor_x
+        y += line_h
+        cursor_x = margin
+
+    def draw_literal(text: str):
+        nonlocal cursor_x
+        if not text:
+            return
+        w = ew(text)
+        if cursor_x + w > max_x:
+            newline()
+        page.insert_text(
+            fitz.Point(cursor_x, y + font_size),
+            text, fontname="song", fontsize=font_size,
+        )
+        cursor_x += w + 1.5
+
+    def draw_math(tex: str, *, from_text_span: bool = False):
+        nonlocal cursor_x
+        inner = tex.strip()
+        if not inner:
+            return
+        png = _render_latex_png(inner, fontsize=font_size + 2.0)
+        if png is None:
+            # mathtext could not render the whole span (some mixes of `\le`,
+            # `\in`, unmatched bars, etc. are out of mathtext's grammar).  Fall
+            # back to per-token rendering so known `\cmd` fragments become
+            # real glyphs while the rest of the line is drawn as text.  The
+            # ``from_text_span`` guard breaks the cycle: a token called from
+            # ``draw_text_span`` only falls back to literal text (not another
+            # text-span pass) to avoid infinite recursion.
+            if from_text_span:
+                draw_literal(inner)
+            else:
+                draw_text_span(inner)
+            return
+        tmp = Path(tempfile.gettempdir()) / "_latex_seg.png"
+        tmp.write_bytes(png)
+        with fitz.open(str(tmp)) as png_doc:
+            pix = png_doc[0].get_pixmap()
+        aspect = pix.height / max(pix.width, 1)
+        target_h = line_h * 0.95
+        target_w = target_h / max(aspect, 0.01)
+        if cursor_x + target_w > max_x:
+            newline()
+        img_rect = fitz.Rect(
+            cursor_x, y + (line_h - target_h) * 0.45,
+            cursor_x + target_w, y + (line_h + target_h) * 0.45,
+        )
+        page.insert_image(img_rect, filename=str(tmp))
+        cursor_x += target_w + 2.0
+        try:
+            tmp.unlink()
+        except Exception:
+            pass
+
+    def draw_text_span(text: str):
+        """Draw a plain-text span, rendering any bare \\cmd tokens as math."""
+        last = 0
+        for m in _LATEX_SCAN.finditer(text):
+            pre = text[last:m.start()]
+            if pre:
+                draw_literal(pre)
+            draw_math(m.group(0), from_text_span=True)
+            last = m.end()
+        tail = text[last:]
+        if tail:
+            draw_literal(tail)
+
+    for raw_line in body.splitlines():
+        line = raw_line.rstrip()
+        if not line:
+            y += line_h * 0.6
+            continue
+        cursor_x = margin
+        # Tokenize on $ delimiters: text gaps are drawn with the CJK font, math
+        # spans are rendered as one glyph run.  The $ delimiters themselves are
+        # consumed as boundaries and never drawn.
+        last = 0
+        for m in _MATH_DOLLAR.finditer(line):
+            text_seg = line[last:m.start()]
+            if text_seg:
+                draw_text_span(text_seg)
+            inner = m.group(1) if m.group(1) is not None else m.group(2)
+            draw_math(inner)
+            last = m.end()
+        tail = line[last:]
+        if tail:
+            draw_text_span(tail)
+        y += line_h
+
+    used_h = max(margin * 2 + font_size, y + margin)
     clip = fitz.Rect(0, 0, CONTENT_W, used_h)
     pix = page.get_pixmap(dpi=300, clip=clip)
     pix.save(str(out_path))

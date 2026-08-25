@@ -1,36 +1,48 @@
 # -*- coding: utf-8 -*-
-"""Bring the 8014 teacher-workbench back up with the *patched* api_app.vision.
+"""Start the 8014 workbench and mount its flat-file API under ``/api``.
 
-Replicates serve_vision.py's behaviour (mounts the workbench app under /api) by
-loading api_app.vision.py directly via importlib, so we don't depend on the
-`import api_app` resolution that the flat file layout no longer provides.
+The implementation stays importlib-based because ``api_app.py`` is a
+flat file, not an importable package.  Paths are repository-relative by
+default and can be overridden in production with environment variables.
 """
 import importlib.util
 import os
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 import uvicorn
 
-WORKBENCH = r"D:/My File/大四/高数教材答案/api_app.vision.py"
-# 默认指向真实生产库 api.workbench.db（463 题）；可用环境变量 WORKBENCH_DB 覆盖。
-REAL_DB = r"D:/My File/大四/高数教材答案/api.workbench.db"
-os.environ.setdefault("WORKBENCH_DB", REAL_DB)
-# 教材裁切图（problems.crop_image_path 指向 book/...）真实存放于本工作区
-# extract_img；8014 默认的 IMAGE_ROOT='extract_img' 是相对 cwd 的路径，在生产目录
-# 下不存在，会导致 /images/ 404、VLM 识别原题图失败。这里显式指向真实位置。
-REAL_IMG_ROOT = r"D:/workbuddy/2026-08-06-15-31-48/extract_img"
-os.environ.setdefault("IMAGE_ROOT", REAL_IMG_ROOT)
+
+WORKBENCH_DIR = Path(__file__).resolve().parent
+REPOSITORY_ROOT = WORKBENCH_DIR.parents[1]
+WORKBENCH = Path(os.environ.get("WORKBENCH_API_MODULE", WORKBENCH_DIR / "api_app.py"))
+os.environ.setdefault("WORKBENCH_DB", str(REPOSITORY_ROOT / "api.workbench.db"))
+os.environ.setdefault("IMAGE_ROOT", str(REPOSITORY_ROOT / "extract_img"))
+
+if not WORKBENCH.is_file():
+    raise RuntimeError(f"Workbench API module does not exist: {WORKBENCH}")
 
 spec = importlib.util.spec_from_file_location("api_app_vision", WORKBENCH)
+if spec is None or spec.loader is None:
+    raise RuntimeError(f"Could not load workbench API module: {WORKBENCH}")
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
-vision_app = mod.app
 
-app = FastAPI(title="高数作业助手 · 统一服务 (api mount)")
-app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
-)
-app.mount("/api", vision_app)
+app = FastAPI(title="高数作业助手 — 统一服务 (api mount)")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.mount("/api", mod.app)
+
+
+@app.get("/")
+def teacher_workbench():
+    """Serve the preserved teacher workbench rather than a bare API 404."""
+    page = REPOSITORY_ROOT / "teacher_vision.html"
+    if not page.is_file():
+        raise RuntimeError(f"Teacher workbench page does not exist: {page}")
+    return FileResponse(page)
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8014, log_level="info")

@@ -1937,7 +1937,7 @@ def _answer_document_root() -> str:
 
 
 def _ocr_python() -> str:
-    configured = os.environ.get("PIX2TEXT_PYTHON", r"C:\Users\YXZ\.workbuddy\binaries\python\envs\ocr\Scripts\python.exe")
+    configured = os.environ.get("PIX2TEXT_PYTHON", sys.executable)
     return configured if os.path.isfile(configured) else sys.executable
 
 
@@ -3348,7 +3348,7 @@ def run_vision_task(task_id: str):
         if not os.path.isfile(worker):
             conn.close()
             raise HTTPException(503, "Pix2Text worker is missing")
-        local_python = os.environ.get("PIX2TEXT_PYTHON", r"C:\\Users\\YXZ\\.workbuddy\\binaries\\python\\envs\\ocr\\Scripts\\python.exe")
+        local_python = os.environ.get("PIX2TEXT_PYTHON", sys.executable)
         if not os.path.isfile(local_python):
             local_python = sys.executable
         now = datetime.now().isoformat(timespec="seconds")

@@ -4,10 +4,55 @@ from html import escape
 from pathlib import Path
 from typing import Literal
 import json
-import random
 import re
-import shutil
+import asyncio
+import os
+import csv
+import sqlite3
 import httpx
+
+
+# --- LaTeX helpers for HTML rendering ----------------------------------------
+# 8014 content_text often contains raw LaTeX without $ delimiters (e.g.
+# \begin{cases}..., \frac{...}{...}).  Wrap them so MathJax can render them.
+_LATEX_INLINE_RE = re.compile(
+    r'\\(?!(?:begin|end)\{)[a-zA-Z]+.*?(?=[\u4e00-\u9fa5，。；：？！、;!]|\\begin|\$\$|$)',
+    re.DOTALL,
+)
+_LATEX_ENV_RE = re.compile(r'\\begin\{[^}]+\}.*?\\end\{[^}]+\}', re.DOTALL)
+
+
+def _wrap_latex_for_html(text: str) -> str:
+    """Add $ / $$ delimiters around raw LaTeX fragments without double-wrapping."""
+    placeholders: list[str] = []
+
+    def _stash(m: re.Match) -> str:
+        placeholders.append(m.group(0))
+        return f'\x00MATH{len(placeholders) - 1}\x00'
+
+    # 1. Preserve already-delimited math.
+    text = re.sub(r'\$\$.*?\$\$', _stash, text, flags=re.DOTALL)
+    text = re.sub(r'(?<!\$)\$(?!\$)[^\$]*?\$(?!\$)', _stash, text, flags=re.DOTALL)
+
+    # 2. Convert \begin{...} ... \end{...} environments to display math.
+    def _wrap_env(m: re.Match) -> str:
+        wrapped = f'\n$$\n{m.group(0)}\n$$\n'
+        placeholders.append(wrapped)
+        return f'\x00MATH{len(placeholders) - 1}\x00'
+
+    text = _LATEX_ENV_RE.sub(_wrap_env, text)
+
+    # 3. Wrap remaining inline LaTeX commands (but not \begin / \end).
+    def _wrap_inline(m: re.Match) -> str:
+        s = m.group(0).strip()
+        return f'${s}$' if s else m.group(0)
+
+    text = _LATEX_INLINE_RE.sub(_wrap_inline, text)
+
+    # 4. Restore stashed math.
+    for i, ph in enumerate(placeholders):
+        text = text.replace(f'\x00MATH{i}\x00', ph)
+    return text
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, FileResponse
@@ -22,7 +67,7 @@ from .mineru_staging import match_staged, stage_markdown
 from .answer_matcher import answer_json_to_staged, canonical_section, match_section_questions
 from .question_validation import validate_question, first_issue_message
 from .assignment_pdf import build_assignment_pdf, export_latex_source, latex_document
-from .orchestrator import publish_homework, grade_due_submissions
+from .orchestrator import publish_homework
 from .mineru_review import (
     approve_item as approve_mineru_item,
     create_session as create_mineru_session,
@@ -59,6 +104,23 @@ class QuestionIn(BaseModel):
     answer: str = ""
     rubric: str = ""
     source_page: int | None = None
+
+
+class QuestionUpdateIn(BaseModel):
+    """Manual edit of an existing question.  All fields optional (PATCH-style);
+    only the provided fields are written.  Intentionally NOT gated by
+    validate_question — a teacher correcting OCR garble or raw LaTeX must be able
+    to save text the auto-validator would otherwise flag."""
+
+    content: str | None = None
+    chapter: str | None = None
+    difficulty: Literal["基础", "提高", "综合"] | None = None
+    question_type: str | None = None
+    answer: str | None = None
+    rubric: str | None = None
+    knowledge_points: str | None = None
+    review_status: str | None = None
+    sync_8014: bool = True  # when True, also push the edited fields back to the 8014 evidence DB
 
 
 class AssignmentIn(BaseModel):
@@ -238,29 +300,44 @@ async def _sync_section_into_local_cache(section_no: str, limit: int = 80) -> di
     pending_review_items: list[dict] = []
     unresolved_count = 0
     unresolved_items: list[dict] = []
-    for item in source_items:
+    # Per-item processing used to be a serial `for` loop; with VLM/Pix2Text in
+    # the rescue path each problem can stall 5-10s, so a chapter of 80 items
+    # easily blew past the 90s hard cap even after we made `publish_homework`
+    # run its sections concurrently.  Run item handling through a small
+    # semaphore so we fan out without flooding 8014.
+    PER_ITEM_SEM = asyncio.Semaphore(6)
+    PER_ITEM_TIMEOUT = 18  # seconds per problem (VLM 15 + headroom)
+
+    async def _process_one(item: dict) -> str:
+        """Return 'usable' | 'ai' | 'pending' | 'unresolved' to classify."""
+        async with PER_ITEM_SEM:
+            try:
+                return await asyncio.wait_for(_handle_one_item(item), PER_ITEM_TIMEOUT)
+            except asyncio.TimeoutError:
+                return "timeout"
+            except Exception:
+                return "unresolved"
+
+    async def _handle_one_item(item: dict) -> str:
         text_issue = _problem_text_issue(item)
         if not text_issue and (item.get("std_answer") or "").strip():
             usable, _ = await _validate_or_rescue(item)
             if usable is not None:
                 usable_items.append(usable)
-                continue
+                return "usable"
         candidate = await build_image_solve_candidate(item)
         if candidate.get("status") == "eligible":
-            item = dict(item)
-            item["content_text"] = candidate["problem_text"]
-            item["ptype"] = candidate["ptype"]
-            item["std_answer"] = candidate["std_answer"]
-            item["full_solution"] = candidate["full_solution"]
-            item["answer_status"] = "ai_candidate"
-            item["evidence"] = {**item["evidence"], "ai_candidate": candidate}
-            usable_items.append(item)
-            ai_candidate_count += 1
-            continue
+            item2 = dict(item)
+            item2["content_text"] = candidate["problem_text"]
+            item2["ptype"] = candidate["ptype"]
+            item2["std_answer"] = candidate["std_answer"]
+            item2["full_solution"] = candidate["full_solution"]
+            item2["answer_status"] = "ai_candidate"
+            item2["evidence"] = {**item2["evidence"], "ai_candidate": candidate}
+            usable_items.append(item2)
+            nonlocal ai_candidate_count; ai_candidate_count += 1
+            return "ai"
         if candidate.get("status") == "pending_review":
-            # VLM produced a readable stem but the strict dual-model gate did not
-            # pass.  Park it for teacher review instead of discarding it, so the
-            # OCR-completion loop can close once a teacher confirms the text.
             stored = store_pending_candidate(item, candidate)
             pending_review_count += 1
             pending_review_items.append({
@@ -276,16 +353,21 @@ async def _sync_section_into_local_cache(section_no: str, limit: int = 80) -> di
                 "has_source_image": bool(crop := (item.get("evidence") or {}).get("crop_image_path")),
                 "next_action": "教师核对原题图后确认写回",
             })
-            continue
+            return "pending"
+        text_issue_final = _problem_text_issue(item)
         unresolved_count += 1
         unresolved_items.append({
             "source_problem_id": str(item.get("source_problem_id") or ""),
             "problem_no": str(item.get("problem_no") or "?"),
             "ptype": str(item.get("ptype") or ""),
-            "reason": text_issue or "缺少可用标准答案",
+            "reason": text_issue_final or "缺少可用标准答案",
             "has_source_image": bool(crop := (item.get("evidence") or {}).get("crop_image_path")),
             "next_action": "系统将按原题图重识" if crop else "8014 缺少原题裁切图，需补绑定原题证据",
         })
+        return "unresolved"
+
+    if source_items:
+        await asyncio.gather(*[_process_one(it) for it in source_items])
     if not usable_items:
         raise HTTPException(
             422,
@@ -472,15 +554,27 @@ async def sync_mineru_review_session(session_id: int):
 
     results = []
     errors = []
-    for section in sections:
+    async def _sync_one(section: str):
+        import time as _t
+        _t0 = _t.time()
+        print(f"[publish_sync] START section={section}", flush=True)
         try:
             result = await _sync_section_into_local_cache(section, limit=80)
             mark_section_synced(section)
-            results.append({"section_no": section, "sync": result})
+            print(f"[publish_sync] DONE section={section} in {_t.time()-_t0:.1f}s", flush=True)
+            return (section, result, None)
         except HTTPException as exc:
-            errors.append({"section_no": section, "error": exc.detail})
+            print(f"[publish_sync] FAIL section={section} in {_t.time()-_t0:.1f}s", flush=True)
+            return (section, None, exc.detail)
         except Exception as exc:  # noqa: BLE001
-            errors.append({"section_no": section, "error": str(exc)[:200]})
+            print(f"[publish_sync] FAIL section={section} in {_t.time()-_t0:.1f}s: {str(exc)[:120]}", flush=True)
+            return (section, None, str(exc)[:200])
+    pairs = await asyncio.gather(*[_sync_one(s) for s in sections])
+    for section, result, err in pairs:
+        if err is not None:
+            errors.append({"section_no": section, "error": err})
+        else:
+            results.append({"section_no": section, "sync": result})
 
     return {
         "session_id": session_id,
@@ -585,6 +679,147 @@ def create_question(question: QuestionIn):
         return {"id": cursor.lastrowid, "message": "题目已入库，待教师审核后可参与组卷。"}
 
 
+@app.get("/api/questions/{question_id}")
+def get_question(question_id: int):
+    """Return a single question by id (any review_status, not just published)."""
+    with connection() as conn:
+        row = conn.execute("SELECT * FROM questions WHERE id=?", (question_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, f"题目 {question_id} 不存在")
+    return dict(row)
+
+
+@app.put("/api/questions/{question_id}")
+def update_question(question_id: int, payload: QuestionUpdateIn):
+    """Manual edit of an existing question.  Provided fields are written; missing
+    fields are left untouched.  Saving is NOT blocked by the math validator — we
+    only surface a non-fatal warning when the new content looks suspicious."""
+    with connection() as conn:
+        row = conn.execute("SELECT * FROM questions WHERE id=?", (question_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, f"题目 {question_id} 不存在")
+        fields = {}
+        if payload.content is not None:
+            fields["content"] = payload.content
+        if payload.chapter is not None:
+            fields["chapter"] = payload.chapter
+        if payload.difficulty is not None:
+            fields["difficulty"] = payload.difficulty
+        if payload.question_type is not None:
+            fields["question_type"] = payload.question_type
+        if payload.answer is not None:
+            fields["answer"] = payload.answer
+        if payload.rubric is not None:
+            fields["rubric"] = payload.rubric
+        if payload.knowledge_points is not None:
+            fields["knowledge_points"] = payload.knowledge_points
+        if payload.review_status is not None:
+            fields["review_status"] = payload.review_status
+        if not fields:
+            return {"id": question_id, "message": "无字段变更", "question": dict(row)}
+        set_sql = ", ".join(f"{k}=?" for k in fields)
+        conn.execute(
+            f"UPDATE questions SET {set_sql} WHERE id=?",
+            list(fields.values()) + [question_id],
+        )
+        new_row = conn.execute("SELECT * FROM questions WHERE id=?", (question_id,)).fetchone()
+    # Best-effort push the edited fields back to the 8014 evidence DB so the
+    # source of truth stays consistent with the manual correction.
+    sync_status = {"synced": False, "skipped": "未请求同步"}
+    if payload.sync_8014:
+        sync_status = _sync_to_8014(row["source_problem_id"], fields)
+    # Non-fatal validation hint so the teacher knows if the text looks off.
+    validation_warning = None
+    try:
+        rep = validate_question(
+            new_row["content"], source_type="manual",
+            source_confidence=None, crop_image_path=None,
+        )
+        if not rep["publish_allowed"]:
+            validation_warning = first_issue_message(rep)
+    except Exception:  # noqa: BLE001 - validator must never block the save
+        validation_warning = None
+    return {
+        "id": question_id,
+        "message": "题目已更新",
+        "question": dict(new_row),
+        "validation_warning": validation_warning,
+        "sync_8014_status": sync_status,
+    }
+
+
+# Teacher-facing OCR-garble backlog.  The CSV is produced by the offline audit
+# script (scan_garble_precise / fix_fullwidth_and_audit) and lives in the
+# operator's workspace; this endpoint simply surfaces it so the edit panel can
+# walk the backlog in priority order.  Degrades gracefully if absent.
+_GARBLE_AUDIT_CSV = Path(r"D:/workbuddy/2026-08-06-15-31-48/garble_audit.csv")
+
+# 8014 证据库（独立 SQLite）。本地 questions 通过 source_problem_id 指回它的
+# problems.id；人工订正时若 sync_8014=True，则把对应字段写回这里，保持证据源一致。
+_WORKBENCH_DB = Path(r"D:/My File/大四/高数教材答案/api.workbench.db")
+
+
+def _sync_to_8014(source_problem_id: object, fields: dict) -> dict:
+    """Best-effort write of edited fields back to the 8014 evidence DB.
+
+    Returns a status dict the endpoint surfaces to the teacher; NEVER raises, so a
+    8014 hiccup can't break the local save that already committed.
+    Maps: content->content_text, answer->std_answer, rubric->full_solution.
+    Clears answer_invalid_reason when the answer/solution is fixed.
+    """
+    if not source_problem_id:
+        return {"synced": False, "skipped": "本题无 source_problem_id，8014 中无对应记录"}
+    if not _WORKBENCH_DB.exists():
+        return {"synced": False, "skipped": "未找到 8014 资料库文件"}
+    col_map = {"content": "content_text", "answer": "std_answer", "rubric": "full_solution"}
+    updates = {tgt: fields[src] for src, tgt in col_map.items() if src in fields}
+    if not updates:
+        return {"synced": False, "skipped": "未提供可同步到 8014 的字段"}
+    try:
+        wb = sqlite3.connect(str(_WORKBENCH_DB), timeout=5)
+        try:
+            cur = wb.execute("SELECT id FROM problems WHERE id=?", (source_problem_id,)).fetchone()
+            if not cur:
+                return {"synced": False, "reason": f"8014 中找不到 id={source_problem_id} 的记录"}
+            set_sql = ", ".join(f"{k}=?" for k in updates)
+            if "std_answer" in updates or "full_solution" in updates:
+                set_sql += ", answer_invalid_reason=NULL"
+            wb.execute(
+                f"UPDATE problems SET {set_sql} WHERE id=?",
+                list(updates.values()) + [source_problem_id],
+            )
+            wb.commit()
+        finally:
+            wb.close()
+        return {"synced": True, "problem_id": str(source_problem_id)}
+    except Exception as e:  # noqa: BLE001 - must not block the local save
+        return {"synced": False, "reason": f"写回 8014 失败：{e}"}
+
+
+
+@app.get("/api/garble-queue")
+def garble_queue():
+    if not _GARBLE_AUDIT_CSV.exists():
+        return {"items": [], "note": "未找到 garble_audit.csv（离线审计脚本未运行）"}
+    items = []
+    with _GARBLE_AUDIT_CSV.open(encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            try:
+                qid = int(row.get("question_id") or row.get("id") or "")
+            except ValueError:
+                continue
+            items.append({
+                "question_id": qid,
+                "assignments_using": int(row.get("assignments_using") or 0),
+                "review_status": row.get("review_status") or "",
+                "garble_hint": (row.get("garble_hint") or "")[:60],
+                "preview": (row.get("content_preview") or row.get("preview") or "")[:80],
+            })
+    # priority: most-used assignments first
+    items.sort(key=lambda x: -x["assignments_using"])
+    return {"items": items, "note": f"共 {len(items)} 道待修订题目"}
+
+
 @app.post("/api/assignments", status_code=201)
 async def create_assignment(payload: AssignmentIn):
     if payload.basic_ratio + payload.advanced_ratio > 1:
@@ -615,7 +850,10 @@ async def create_assignment(payload: AssignmentIn):
 async def sync_section(section_no: str, limit: int = 80):
     """Teacher-visible operation: refresh a chapter's working cache from 8014."""
     sections = _parse_sections(section_no)
-    results = [await _sync_section_into_local_cache(section, max(1, min(limit, 80))) for section in sections]
+    safe_limit = max(1, min(limit, 80))
+    results = await asyncio.gather(
+        *[_sync_section_into_local_cache(s, safe_limit) for s in sections]
+    )
     if len(results) == 1:
         return results[0]
     return {
@@ -644,15 +882,30 @@ async def create_evidence_backed_assignment(payload: AssignmentIn):
     Delegates the ingestion pipeline to the Agent Orchestrator and then runs the
     existing Dify AI-review workflow over the selected source problems.
     """
-    pipeline = await publish_homework(
-        sections=_parse_sections(payload.chapter),
-        title=payload.title,
-        class_name=payload.class_name,
-        due_at=payload.due_at,
-        question_count=payload.question_count,
-        basic_ratio=payload.basic_ratio,
-        advanced_ratio=payload.advanced_ratio,
-    )
+    # Top-level hard cap so a stuck external dependency (VLM / Pix2Text / Dify)
+    # never freezes the teacher's browser.  When we trip the cap we tell the
+    # teacher the truth: the cache could not refresh in time, but they can
+    # either retry or open the draft directly from the local cache without
+    # waiting on the slow path.
+    ASSIGNMENT_DRAFT_TIMEOUT = float(os.environ.get("ASSIGNMENT_DRAFT_TIMEOUT", "90"))
+    try:
+        pipeline = await asyncio.wait_for(
+            publish_homework(
+                sections=_parse_sections(payload.chapter),
+                title=payload.title,
+                class_name=payload.class_name,
+                due_at=payload.due_at,
+                question_count=payload.question_count,
+                basic_ratio=payload.basic_ratio,
+                advanced_ratio=payload.advanced_ratio,
+            ),
+            timeout=ASSIGNMENT_DRAFT_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            504,
+            "题库同步暂未响应（外部服务较慢），请稍候再试；如反复失败可先在『同步本章节』单独同步后再生成作业。",
+        ) from None
     ai_note = await run_workflow({
         "task": "assignment_review",
         "chapter": payload.chapter,
@@ -732,12 +985,21 @@ def printable_assignment(assignment_id: int):
         rows = conn.execute("""SELECT q.*, aq.sort_order, aq.score, aq.original_no FROM assignment_questions aq
           JOIN questions q ON q.id=aq.question_id WHERE aq.assignment_id=? ORDER BY aq.sort_order""", (assignment_id,)).fetchall()
     # Preserve the original textbook problem numbers (设计二：保持原本题号).
+    # Wrap raw LaTeX fragments first, then escape HTML so entities inside math
+    # (e.g. >) are handled by the browser/MathJax correctly.
     items = "".join(
-        f"<section><h3>{r['original_no'] or r['sort_order']}.（{r['score']}分）{escape(r['content'])}</h3><div class='space'></div></section>"
+        f"<section><h3>{r['original_no'] or r['sort_order']}.（{r['score']}分）{escape(_wrap_latex_for_html(r['content']))}</h3><div class='space'></div></section>"
         for r in rows
     )
     return f"""<!doctype html><html lang='zh-CN'><meta charset='utf-8'><title>{escape(assignment['title'])}</title>
     <style>@page{{size:A4;margin:18mm}}body{{font-family:'Microsoft YaHei',sans-serif;color:#111;line-height:1.65}}header{{border-bottom:2px solid #1e3a5f}}h1{{text-align:center}}.meta{{display:flex;justify-content:space-between}}section{{break-inside:avoid;margin-top:20px}}.space{{height:115px;border-bottom:1px dashed #cbd5e1}}</style>
+    <script>
+    MathJax = {{
+      tex: {{ inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']] }},
+      svg: {{ fontCache: 'global' }}
+    }};
+    </script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.min.js"></script>
     <header><h1>{escape(assignment['title'])}</h1><div class='meta'><span>班级：{escape(assignment['class_name'])}</span><span>姓名：__________</span><span>学号：__________</span></div><p>章节：{escape(assignment['chapter'])}　截止：{escape(assignment['due_at'])}　总分：{assignment['total_score']}</p></header>{items}</html>"""
 
 

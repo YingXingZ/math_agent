@@ -16,6 +16,7 @@ sequences them and normalises the data passed between them.
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import Any
 
@@ -48,13 +49,13 @@ async def publish_homework(
     diagnostics and the ``source_problem_ids`` needed by the downstream
     AI-review workflow.
     """
-    step_sync: list[dict[str, Any]] = []
-    for section in sections:
-        step_sync.append(await sync_section(section))
+    step_sync: list[dict[str, Any]] = list(
+        await asyncio.gather(*(sync_section(s) for s in sections))
+    )
 
-    step_strat: list[dict[str, Any]] = []
-    for section in sections:
-        step_strat.append(await stratify_section_difficulty(section))
+    step_strat: list[dict[str, Any]] = list(
+        await asyncio.gather(*(stratify_section_difficulty(s) for s in sections))
+    )
 
     result = assemble(
         sections,

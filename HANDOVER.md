@@ -27,8 +27,8 @@
 | 8000 智能体（教师端 + 学生端） | 127.0.0.1:8000 | LISTENING（单实例，托管 venv 后台运行） | capabilities 含 7 项（assignments/reports/ai_stem/sync…） |
 | 18080 VLM | 222.211.217.7:10022（远端，8×A100） | 运行中（4 worker，bind 0.0.0.0） | `/solve` `/solve-from-image` `/grade-homework` `/review` `/health` |
 
-**启动命令（务必照此，不能裸 `uvicorn api_app.vision:app`）**：
-- 8014：`python run_workbench_8014.py`（importlib 加载 `api_app.vision` 并挂 `/api`，固化 `WORKBENCH_DB` + `IMAGE_ROOT`）。
+**启动命令（务必照此，不能裸 `uvicorn api_app:app`）**：
+- 8014：`python src/workbench8014/run_workbench_8014.py`（importlib 加载权威 `api_app.py` 并挂 `/api`，固化 `WORKBENCH_DB` + `IMAGE_ROOT`）。
 - 8000：从 `高数作业助手/` 目录用 `envs/default/Scripts/python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000`。
 - 18080：远端 `deploy_vlm.py` 上传重启（paramiko SSH）。
 
@@ -84,7 +84,7 @@
 
 1. **`questions` 列序陷阱**：`_upsert_local_cache` INSERT 列序 `(content,chapter,difficulty,question_type,answer,rubric,source_evidence_json,source_problem_id,source_problem_no)`，bind 必须 `(*values[:7], source_id, values[7])`。曾因列序错把 `problem_no` 落进 `source_problem_id` 污染 §5.2。→ 重构时务必用命名参数或 ORM。
 2. **`garbage_score` 门禁 vs 全角标点误杀**：严格全角拉丁门禁会把「数学 intact 但含全角标点（`＇`/`？`/`［`）」的可读题 block。已用 `recover_corrupt_269.py` 规整放出。**不要为放量而用通用 salad 检测**（会误杀干净 LaTeX）。
-3. **8014 扁平文件布局**：`uvicorn api_app.vision:app` 与 `import api_app` 都会 No module。必须 `run_workbench_8014.py`（importlib 加载 + 挂 `/api`）。
+3. **8014 单模块布局**：权威模块为 `api_app.py`。必须使用 `run_workbench_8014.py`，以保持 `/api` 挂载和环境变量初始化；不要直接以裸 uvicorn 替代启动器。
 4. **`IMAGE_ROOT` 必须指向 `extract_img`**：`problems.crop_image_path` 指向 `book/...`，真实裁切图在 workbuddy 工作区 `extract_img/`，否则 `/images/` 404、VLM 取图失败。
 5. **`submissions.file_path` 绝对路径**：曾存相对路径导致批改依赖服务器 cwd；现强制 `str(path.resolve())`。
 6. **VLM 3B 模型错位**：按题号从整份作业定位单题偶发张冠李戴，所有错配被 `needs_review` 兜底。**不要把 needs_review 当失败处理**。
@@ -103,7 +103,7 @@
 **重点重构目标**：
 - 扁平文件 + 三份重复 `api_app`（vision/original/candidate-ui）+ 工作区副本 `api_app.py` → 收敛为单一可测试模块。
 - 硬编码绝对路径（`run_workbench_8014.py`、`config.py`、crop 路径、poppler 路径）→ 配置化。
-- 散落回归脚本 → 统一 `pytest` 套件固化。
+- [x] 散落回归脚本 → 统一 `pytest` 套件固化（`python -m pytest -q tests`）。
 - `questions` INSERT 列序脆弱点 → 命名参数/ORM。
 - 学生端/教师端 HTML 内嵌 `app/` 与后端耦合 → 考虑前后端分离或模板化。
 
@@ -167,6 +167,20 @@ git push -u origin main
 ---
 
 ## 7. 验收 / 回归基线（给 Codex 对照）
+
+### 2026-08-16 Codex 重构增量
+
+- 8014 启动器改为以仓库位置推导默认 API、SQLite 与图片根目录；生产部署可通过 `WORKBENCH_API_MODULE`、`WORKBENCH_DB`、`IMAGE_ROOT` 覆盖。
+- 8000 的 `EVIDENCE_API_URL` 与 `QWEN_GRADING_URL` 支持环境变量覆盖；MinerU 暂存适配器改为按需加载，缺少可选集成不会阻断核心服务启动。
+- 三个回归脚本已迁移为仓库相对路径与系统临时目录运行，均不写生产数据库；`questions` 的 AI 候选插入改为 SQLite 命名参数绑定。
+- 已新增 `tests/test_regression_scripts.py` 作为 pytest 统一入口，且测试不再依赖未纳入仓库的 `homework.db` 二进制文件。
+- 本轮验收：`python -m pytest -q tests` 通过（1 passed）；三个保留脚本亦均通过。
+- 8014 已收敛为 `src/workbench8014/api_app.py` 一个生产模块；`legacy/` 下三份旧副本仅供追溯，启动器、兼容启动器与回归测试均不再加载它们。
+- Windows 启动脚本、Route 2 导入器、组卷 PDF 引擎和 Pix2Text 解释器选择已移除运行时的个人绝对路径；外部位置通过环境变量覆盖。
+- 新增 `question_bank_readiness.py`：只读生成题库复核就绪清单。它不会写库或发布题目，供 VLM 识别与教师复核前确认裁图是否存在。
+- 本地真实库核查（2026-08-16）：477 题中 368 题完整；17 条损坏/缺字段记录已有裁图，可进入 VLM 候选与教师复核；92 条缺少源图，明确阻断自动补全。损坏扫描识别 73 条疑似乱码记录，均保持未发布处理。
+- `docs/QUESTION_BANK_REVIEW.md` 记录了候选暂存、教师批准/拒绝、缺图补证据与乱码重审的安全 SOP。
+- 经用户授权后已对 17 条已有裁图执行 VLM 候选暂存：对账结果为 9 条 `pending`、8 条 `not_staged`。未暂存条目仍未写回或发布，需补更清晰裁图/人工录入后重试。
 
 | 基线 | 期望值 |
 |------|--------|

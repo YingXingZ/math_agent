@@ -1,6 +1,9 @@
-import sqlite3, re
+import sqlite3, re, sys
+from tool_config import workbench_db
 SRC_DB = r"D:\My File\大四\高数教材答案\api.workbench.db"
-s = sqlite3.connect(SRC_DB); s.row_factory = sqlite3.Row
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+s = sqlite3.connect(workbench_db()); s.row_factory = sqlite3.Row
 
 # 已知数学/变量 token 白名单（小写）
 WHITE = set("""sin cos tan cot sec cosec csc_ alt lim log ln lg exp dx dy dz dt du dv dw ds

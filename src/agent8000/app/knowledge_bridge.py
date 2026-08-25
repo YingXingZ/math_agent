@@ -167,7 +167,7 @@ def _verify_standard_answer(stem: str, vision_std: str, qwen_base: str,
 
     if stem:
         try:
-            with httpx.Client(timeout=300) as client:
+            with httpx.Client(timeout=15) as client:
                 r = client.post(qwen_base + "/solve", json={
                     "problem_text": stem, "section_no": section_no, "problem_no": problem_no})
                 if r.status_code == 200:
@@ -188,7 +188,7 @@ def _verify_standard_answer(stem: str, vision_std: str, qwen_base: str,
     if image_bytes:
         try:
             b64 = base64.b64encode(image_bytes).decode("ascii")
-            with httpx.Client(timeout=300) as client:
+            with httpx.Client(timeout=15) as client:
                 r = client.post(qwen_base + "/solve-from-image", json={
                     "image_base64": b64, "section_no": section_no, "problem_no": problem_no})
                 if r.status_code == 200:
@@ -270,15 +270,18 @@ async def build_image_solve_candidate(item: dict[str, Any]) -> dict[str, Any]:
     base = settings.evidence_api_url.rstrip("/")
     qwen_base = settings.qwen_grading_url.rsplit("/", 1)[0]
     try:
-        async with httpx.AsyncClient(timeout=600) as client:
-            image_response = await client.get(base + "/images/" + quote(str(crop), safe="/"))
+        # VLM is currently flaky; keep the per-call deadline short so a dead
+        # server fails fast into the Pix2Text OCR fallback instead of stalling
+        # the whole section sync for ~10 minutes per problem.
+        async with httpx.AsyncClient(timeout=15) as client:
+            image_response = await asyncio.wait_for(client.get(base + "/images/" + quote(str(crop), safe="/")), timeout=15)
             image_response.raise_for_status()
             image_bytes = image_response.content
-            vision_response = await client.post(qwen_base + "/solve-from-image", json={
+            vision_response = await asyncio.wait_for(client.post(qwen_base + "/solve-from-image", json={
                 "image_base64": base64.b64encode(image_bytes).decode("ascii"),
                 "section_no": item["evidence"].get("section_no", ""),
                 "problem_no": str(item.get("problem_no") or ""),
-            })
+            }), timeout=20)
             vision_response.raise_for_status()
             vision = vision_response.json()
             # The independent text solve needs a stem. When the VLM could not read
@@ -288,11 +291,11 @@ async def build_image_solve_candidate(item: dict[str, Any]) -> dict[str, Any]:
             stem = str(vision.get("problem_text") or "").strip()
             if stem:
                 try:
-                    text_response = await client.post(qwen_base + "/solve", json={
+                    text_response = await asyncio.wait_for(client.post(qwen_base + "/solve", json={
                         "problem_text": vision["problem_text"],
                         "section_no": item["evidence"].get("section_no", ""),
                         "problem_no": str(item.get("problem_no") or ""),
-                    })
+                    }), timeout=15)
                     text_response.raise_for_status()
                     independent = text_response.json()
                 except Exception:

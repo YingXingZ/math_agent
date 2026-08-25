@@ -38,12 +38,16 @@ qwen_pdf_render_dpi=144
 pdf_renderer_path=                                        # 见 §6 poppler
 ```
 
+补充：`EVIDENCE_API_URL` 和 `QWEN_GRADING_URL` 是可用于容器/远程部署的等价大写环境变量；优先通过环境变量设置，不要把服务器地址或凭据写入源码。
+
 ## 5. 8014 环境变量（固化在 `run_workbench_8014.py`）
 
 ```
 WORKBENCH_DB = D:/My File/大四/高数教材答案/api.workbench.db
 IMAGE_ROOT   = D:/workbuddy/2026-08-06-15-31-48/extract_img
 ```
+
+当前 `run_workbench_8014.py` 的默认值为仓库根目录的 `api.workbench.db` 和 `extract_img/`，并可用 `WORKBENCH_API_MODULE`、`WORKBENCH_DB`、`IMAGE_ROOT` 覆盖。权威 8014 模块为 `src/workbench8014/api_app.py`；`legacy/` 中的文件不可用于部署。
 
 ## 6. 外部依赖 / 服务
 
@@ -77,4 +81,4 @@ IMAGE_ROOT   = D:/workbuddy/2026-08-06-15-31-48/extract_img
 - 杀进程：用 Python `os.kill(pid, signal.SIGTERM)`；`Stop-Process`/`wmic` 被沙箱拦截。
 - 删文件：用 Python `os.remove` + Windows 绝对路径 `D:/...`；`rm -f` 触发 safe-delete 钩子 fail-closed。
 - 无 git 仓库历史：迭代上下文在 `D:/workbuddy/.../.workbuddy/memory/2026-08-*.md`。
-- 改码必重启对应服务（8000 改 `app/main.py` 等需重启 uvicorn；8014 改 `api_app.vision.py` 需重启 `run_workbench_8014.py`）。
+- 改码必重启对应服务（8000 改 `app/main.py` 等需重启 uvicorn；8014 改 `api_app.py` 需重启 `run_workbench_8014.py`）。

@@ -29,6 +29,7 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -37,15 +38,18 @@ import httpx
 
 # ---- 路径/端点配置（可按需通过环境变量或参数覆盖） ----
 VLM_URL = os.environ.get("MATH_VLM_URL", "http://127.0.0.1:18080")
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 # 8014 证据库（本地工作台）工作目录：book_problems.json 的 img 相对路径相对它解析
 EVIDENCE_DIR = os.environ.get(
     "EVIDENCE_DIR", r"D:\My File\大四\高数教材答案"
 )
 EVIDENCE_URL = os.environ.get("EVIDENCE_URL", "http://127.0.0.1:8014/api")
+EVIDENCE_DIR = os.environ.get("EVIDENCE_DIR", str(REPOSITORY_ROOT))
 # 远程 VLM 盒子（仅当 VLM 不在本机时使用 --push-remote 才需要）
-SSH_HOST, SSH_PORT, SSH_USER, SSH_PW = (
-    "222.211.217.7", 10022, "root", "8vFdXMt@&s8cXM9D"
-)
+SSH_HOST = os.environ.get("VLM_SSH_HOST", "")
+SSH_PORT = int(os.environ.get("VLM_SSH_PORT", "22"))
+SSH_USER = os.environ.get("VLM_SSH_USER", "")
+SSH_PW = os.environ.get("VLM_SSH_PASSWORD", "")
 
 CROP_EXTS = {".png", ".jpg", ".jpeg"}
 
@@ -261,13 +265,13 @@ def run(chapter: str, input_dir: Path, dry_run: bool, push: bool):
 
 def self_test():
     """Validate the recognition->JSON->schema path against existing §1.1 crops (dry-run)."""
-    src = Path(r"D:\workbuddy\2026-08-06-15-31-48\extract_img\book\1.1")
+    src = Path(os.environ.get("IMAGE_ROOT", REPOSITORY_ROOT / "extract_img")) / "book" / "1.1"
     if not src.is_dir():
         print("[self-test] 未找到本地 §1.1 裁切图，跳过")
         return
     crops = sorted(p for p in src.iterdir() if p.suffix.lower() in CROP_EXTS)[:3]
     print(f"[self-test] 用 {len(crops)} 张 §1.1 裁切图验证管道（不入库）...")
-    tmp = Path(r"D:\workbuddy\2026-08-06-15-31-48\route2_selftest")
+    tmp = Path(tempfile.mkdtemp(prefix="route2-selftest-"))
     (tmp / "crops").mkdir(parents=True, exist_ok=True)
     for c in crops:
         shutil.copyfile(c, tmp / "crops" / c.name)

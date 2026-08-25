@@ -10,7 +10,7 @@ CODEX_HANDOVER/
 ├── BACKLOG.md           # 已完成清单 + 待办分类 + 重构范围 + 验收基线
 ├── src/
 │   ├── agent8000/       # 8000 智能体（FastAPI 教师端+学生端，核心）
-│   ├── workbench8014/   # 8014 工作台（证据库 api_app.vision 等）
+│   ├── workbench8014/   # 8014 工作台（权威 API：api_app.py；legacy/ 仅历史参考）
 │   ├── vlm18080/        # 18080 VLM 服务（server_vlm_service + deploy/pull）
 │   └── tools/           # 工具/恢复脚本（96 个 .py，含探针；维护清单见 HANDOVER.md §4）
 ├── db_schema/           # 两个 SQLite 的结构 + 表行数（无需 24MB 二进制）

@@ -9,6 +9,8 @@
 导出 gap_report.csv / gap_report.json 供教师逐条复核。
 """
 import sys, re, json, csv, sqlite3
+from pathlib import Path
+from tool_config import REPOSITORY_ROOT, workbench_db
 sys.path.insert(0, r"D:\workbuddy\2026-08-06-15-31-48")
 import recover_from_answer_ocr as R
 
@@ -16,6 +18,9 @@ SRC_DB = r"D:\My File\大四\高数教材答案\api.workbench.db"
 OUT_CSV = r"D:\workbuddy\2026-08-06-15-31-48\gap_report.csv"
 OUT_JSON = r"D:\workbuddy\2026-08-06-15-31-48\gap_report.json"
 
+SRC_DB = str(workbench_db())
+OUT_CSV = str(REPOSITORY_ROOT / "tmp" / "gap_report.csv")
+OUT_JSON = str(REPOSITORY_ROOT / "tmp" / "gap_report.json")
 idx = R.build_book_index()
 s = sqlite3.connect(SRC_DB); s.row_factory = sqlite3.Row
 rows = s.execute("""SELECT p.id, p.problem_no, p.sub_no, p.content_text, p.std_answer,

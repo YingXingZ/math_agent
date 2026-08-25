@@ -20,7 +20,7 @@ import httpx
 from .config import settings
 from .db import connection
 from .knowledge_bridge import retrieve_problem, retrieve_section_problems
-from .question_validation import validate_question, first_issue_message
+from .question_validation import validate_question
 
 
 def _same(value: Any, other: Any) -> bool:
