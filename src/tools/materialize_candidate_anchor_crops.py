@@ -26,6 +26,7 @@ def main() -> None:
                         help="Root for generated evidence; paths stored relative to it")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--dpi", type=int, default=400)
+    parser.add_argument("--force", action="store_true", help="Regenerate existing candidate evidence after an anchor-boundary correction")
     parser.add_argument("--apply", action="store_true", help="Write only candidate crop paths to anchor metadata")
     args = parser.parse_args()
     args.image_root.mkdir(parents=True, exist_ok=True)
@@ -36,9 +37,9 @@ def main() -> None:
             SELECT a.id AS anchor_id,a.problem_id,a.pdf_page_index,a.bbox_json,a.status,
                    d.stored_path,d.sha256,d.filename
             FROM problem_source_anchors a JOIN textbook_documents d ON d.id=a.document_id
-            WHERE a.status='candidate' AND (a.crop_path IS NULL OR a.crop_path='')
+            WHERE a.status='candidate' AND (? OR a.crop_path IS NULL OR a.crop_path='')
             ORDER BY a.id
-        """).fetchall()
+        """, (args.force,)).fetchall()
         roots = source_roots()
         results: list[dict] = []
         for row in rows:

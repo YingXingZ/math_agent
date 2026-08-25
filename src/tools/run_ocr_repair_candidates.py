@@ -33,6 +33,14 @@ def command_provider(name: str, command: str, image: Path) -> dict:
     except Exception as exc:
         return {"provider": name, "status": "failed", "reason": str(exc)[:500]}
 
+def remote_mineru_provider(image: Path) -> dict:
+    worker = Path(__file__).with_name('remote_mineru_ocr.py')
+    try:
+        completed = subprocess.run([sys.executable, str(worker), str(image)], capture_output=True, text=True, timeout=300, check=True)
+        result=json.loads(completed.stdout); return {"provider":"mineru","status":"completed","latex_text":str(result.get('latex_text') or ''),"confidence":float(result.get('confidence') or 0),"risks":result.get('risks') or [],"raw":result}
+    except Exception as exc:
+        return {"provider":"mineru","status":"failed","reason":str(exc)[:500]}
+
 def vlm_provider(url: str, image: Path, section: str, number: str) -> dict:
     if not url:
         return {"provider": "vlm", "status": "unavailable", "reason": "MATH_VLM_URL_not_configured"}
@@ -50,6 +58,7 @@ def main() -> None:
     parser.add_argument('--db', type=Path, required=True); parser.add_argument('--image-root', type=Path, required=True)
     parser.add_argument('--vlm-url', default=os.environ.get('MATH_VLM_URL',''))
     parser.add_argument('--mineru-command', default=os.environ.get('MINERU_OCR_COMMAND',''))
+    parser.add_argument('--mineru-remote', action='store_true', help='Use the configured A100 MinerU deployment helper')
     parser.add_argument('--formula-command', default=os.environ.get('PP_FORMULANET_COMMAND',''))
     parser.add_argument('--limit', type=int, default=100); args=parser.parse_args()
     conn=sqlite3.connect(args.db); conn.row_factory=sqlite3.Row; ensure_source_evidence_schema(conn)
@@ -60,7 +69,8 @@ def main() -> None:
     for row in rows:
         image=(args.image_root / row['crop_path']).resolve()
         if not image.is_file(): outcome.append({'anchor_id':row['anchor_id'],'status':'blocked','reason':'candidate_crop_missing'}); continue
-        results=[command_provider('mineru',args.mineru_command,image),command_provider('pp_formulanet',args.formula_command,image),vlm_provider(args.vlm_url,image,row['section_no'],str(row['problem_no']))]
+        mineru_result = remote_mineru_provider(image) if args.mineru_remote else command_provider('mineru',args.mineru_command,image)
+        results=[mineru_result,command_provider('pp_formulanet',args.formula_command,image),vlm_provider(args.vlm_url,image,row['section_no'],str(row['problem_no']))]
         usable=[]
         for result in results:
             if result['status']=='completed':

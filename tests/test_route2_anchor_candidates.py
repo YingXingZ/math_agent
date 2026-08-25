@@ -6,7 +6,7 @@ from src.tools.propose_route2_answer_anchors import numbered_blocks, page_sectio
 
 
 class FakePage:
-    rect = SimpleNamespace(width=500)
+    rect = SimpleNamespace(width=500, height=700)
 
     def get_text(self, mode: str):
         if mode == "text":
@@ -32,6 +32,7 @@ def test_native_header_and_numbered_prompts_are_located() -> None:
     assert set(prompts) == {1, 2}
     assert prompts[1][0] == 0
     assert prompts[1][1] == [72.0, 72.0, 482.0, 97.0]
+    assert prompts[2][1] == [72.0, 100.0, 482.0, 679.0]
 
 
 def test_final_section_stops_at_total_exercises() -> None:

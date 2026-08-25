@@ -1,0 +1,1078 @@
+{
+  "schema_version": "route2-anchor-review/v1",
+  "created_at": "2026-08-25T19:03:39.530731+00:00",
+  "mode": "applied",
+  "counts": {
+    "total": 48,
+    "candidate": 14,
+    "needs_teacher": 34,
+    "blocked": 17,
+    "applied": 14
+  },
+  "candidates": [
+    {
+      "problem_id": "39aa66bd-ed5b-4d9d-9c39-c17e3b0aef17",
+      "document_id": "7a1c6045f6a1499894f943b12a22c10e",
+      "section_no": "5.1",
+      "problem_no": 1,
+      "pdf_page_index": 26,
+      "pdf_page_number": 27,
+      "bbox": [
+        84.24,
+        134.1,
+        485.1,
+        382.01
+      ],
+      "source_prompt_sha256": "01d4d939188d9d074566c5f0d9a9b1d238d291863703d59bdfc9f471006f75e0",
+      "stored_stem_sha256": "8da2ec8c421ecd31739baf42915cf9eb7dec7e08e630c62dfef0ee122442e1ad",
+      "prompt_similarity": 0.4776,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "a7e74d21-6fd8-4052-b6a1-0997c44dc296",
+      "document_id": "7a1c6045f6a1499894f943b12a22c10e",
+      "section_no": "5.1",
+      "problem_no": 2,
+      "pdf_page_index": 26,
+      "pdf_page_number": 27,
+      "bbox": [
+        83.88,
+        385.01,
+        485.1,
+        479.74
+      ],
+      "source_prompt_sha256": "26974349f7c9002629422354a4f7af364b65a1d5c033f6221dbd4889b74f1b23",
+      "stored_stem_sha256": "e95d2aec3bc507246d62bf5936280bde80399f015273fff184aea73bf3d9f658",
+      "prompt_similarity": 0.4848,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "90b48da0-70c0-401d-a08d-baa6c4985f94",
+      "document_id": "7a1c6045f6a1499894f943b12a22c10e",
+      "section_no": "5.1",
+      "problem_no": 3,
+      "pdf_page_index": 26,
+      "pdf_page_number": 27,
+      "bbox": [
+        83.7,
+        482.74,
+        485.1,
+        594.06
+      ],
+      "source_prompt_sha256": "5f037f027e3f06f4e9250b961b3a8b74e6c7e8ceba9b436c946b04a3c0af43e7",
+      "stored_stem_sha256": "3435594c9a07b750c4bf82ea43949b7011e9e118f2cd3747588534044979f09c",
+      "prompt_similarity": 0.4496,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "5a5d7bf6-3ce8-4a05-93b5-7a8019a452cd",
+      "document_id": "7a1c6045f6a1499894f943b12a22c10e",
+      "section_no": "5.1",
+      "problem_no": 4,
+      "pdf_page_index": 26,
+      "pdf_page_number": 27,
+      "bbox": [
+        83.7,
+        597.06,
+        485.1,
+        715.92
+      ],
+      "source_prompt_sha256": "b0692980fa21f95855ae718dffc4fdf5d3847584a7162ea6ddd7ea06bd58d1a8",
+      "stored_stem_sha256": "c1a25268d1dddd10b41f5ab1d97387f3e433d2833ca2bf1d434cd7efa1c86222",
+      "prompt_similarity": 0.6744,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "candidate",
+      "review_reason": "section_header+question_number+next_question_boundary+prompt_similarity"
+    },
+    {
+      "problem_id": "b3694288-5797-4835-84c8-e2e5f1503fdb",
+      "document_id": "7a1c6045f6a1499894f943b12a22c10e",
+      "section_no": "5.1",
+      "problem_no": 5,
+      "pdf_page_index": 27,
+      "pdf_page_number": 28,
+      "bbox": [
+        87.84,
+        322.36,
+        485.1,
+        431.33
+      ],
+      "source_prompt_sha256": "1a71d01bd162b0b42e7b7b3f40a9b2ef49d0450ca648f60dd4444ae2b79d789a",
+      "stored_stem_sha256": "5e77daf4b3625da99104ef03b35293fc8524b541060f93cfe250e4f341a436c0",
+      "prompt_similarity": 0.4559,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "37237cce-b2c0-44db-b77e-7a0e7c686fae",
+      "document_id": "7a1c6045f6a1499894f943b12a22c10e",
+      "section_no": "5.1",
+      "problem_no": 6,
+      "pdf_page_index": 27,
+      "pdf_page_number": 28,
+      "bbox": [
+        87.66,
+        434.33,
+        485.1,
+        546.89
+      ],
+      "source_prompt_sha256": "403f732d534466ccde9f148929c97c02c42d07670d3c26a0dc71d4e3b72e970c",
+      "stored_stem_sha256": "96d2288b7c3c2465d954f2594fbd0ed860766781e901257dca373e15e306629d",
+      "prompt_similarity": 0.8923,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "candidate",
+      "review_reason": "section_header+question_number+next_question_boundary+prompt_similarity"
+    },
+    {
+      "problem_id": "816fe29a-fef1-450c-8f2f-147f827aa27a",
+      "document_id": "7a1c6045f6a1499894f943b12a22c10e",
+      "section_no": "5.1",
+      "problem_no": 7,
+      "pdf_page_index": 27,
+      "pdf_page_number": 28,
+      "bbox": [
+        87.66,
+        549.89,
+        485.1,
+        584.69
+      ],
+      "source_prompt_sha256": "83f5bab45ff02a505c711e26f455b20cf636d19d787d605d66cb2d167f09d429",
+      "stored_stem_sha256": "bc54f457b29f83a50bb18525945efb71daa4615a820148c1dec15b76a60a9473",
+      "prompt_similarity": 0.7907,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "candidate",
+      "review_reason": "section_header+question_number+next_question_boundary+prompt_similarity"
+    },
+    {
+      "problem_id": "d5cf7666-58f3-4524-9bed-5f13ec91790d",
+      "document_id": "7a1c6045f6a1499894f943b12a22c10e",
+      "section_no": "5.1",
+      "problem_no": 8,
+      "pdf_page_index": 27,
+      "pdf_page_number": 28,
+      "bbox": [
+        87.48,
+        587.69,
+        485.1,
+        666.95
+      ],
+      "source_prompt_sha256": "dfe1c001b6dcccd16402d8ff5576cfcef614351f494e9eb28f9ccb2beacea43a",
+      "stored_stem_sha256": "90cc71b41fbb60bba0ced3d76f7b21836f25a10c4cff3b228c5d3dd0dccb8bba",
+      "prompt_similarity": 0.963,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "candidate",
+      "review_reason": "section_header+question_number+next_question_boundary+prompt_similarity"
+    },
+    {
+      "problem_id": "b7b5ce07-ce6c-443d-9b04-2114a3b24e26",
+      "document_id": "7a1c6045f6a1499894f943b12a22c10e",
+      "section_no": "5.1",
+      "problem_no": 9,
+      "pdf_page_index": 27,
+      "pdf_page_number": 28,
+      "bbox": [
+        87.48,
+        669.95,
+        485.1,
+        715.92
+      ],
+      "source_prompt_sha256": "9cdb4be988d4c180e1e0794427680ea66862847fa5d7ceb8ede5a7972cc88c65",
+      "stored_stem_sha256": "879d8a6b3d04ec543569a2c636c1c3a7e53173450f4a482ebedcdc40f9ddab26",
+      "prompt_similarity": 0.7246,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "candidate",
+      "review_reason": "section_header+question_number+next_question_boundary+prompt_similarity"
+    },
+    {
+      "problem_id": "4e1c7016-164c-478b-896a-f6f5dc284c96",
+      "document_id": "7a1c6045f6a1499894f943b12a22c10e",
+      "section_no": "5.1",
+      "problem_no": 10,
+      "pdf_page_index": 28,
+      "pdf_page_number": 29,
+      "bbox": [
+        85.5,
+        276.77,
+        485.1,
+        348.0
+      ],
+      "source_prompt_sha256": "c262c2e580a260275092aded65786db9c9cf8a36bd2033e205f42acf1ab29677",
+      "stored_stem_sha256": "b05a03b1d89b3909e6e5c70c0e2bd6a43816b4bb4522e68d5ce4f14584b436d3",
+      "prompt_similarity": 0.878,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "candidate",
+      "review_reason": "section_header+question_number+next_question_boundary+prompt_similarity"
+    },
+    {
+      "problem_id": "5abb5ce4-51b2-49d0-9da6-6fd2442ae2e9",
+      "document_id": "7a1c6045f6a1499894f943b12a22c10e",
+      "section_no": "5.1",
+      "problem_no": 11,
+      "pdf_page_index": 28,
+      "pdf_page_number": 29,
+      "bbox": [
+        85.5,
+        351.0,
+        485.1,
+        598.7
+      ],
+      "source_prompt_sha256": "bd2bf41b2b25b9fa2aaa4794c9f4febf2dd28168d24403fa12c6f47e6a989959",
+      "stored_stem_sha256": "ec2f3a14dc95fb0e1528ec9c90985cd2961dfed3da2f37f9caa5253210d8497e",
+      "prompt_similarity": 0.4478,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "704bd318-0396-4447-a7dd-a1fcd0909043",
+      "document_id": "7a1c6045f6a1499894f943b12a22c10e",
+      "section_no": "5.1",
+      "problem_no": 12,
+      "pdf_page_index": 28,
+      "pdf_page_number": 29,
+      "bbox": [
+        85.87,
+        601.7,
+        485.1,
+        715.92
+      ],
+      "source_prompt_sha256": "b7749b458cf1a9bfdeaf3c89c55d36b3da8780e259c368d497662088605eefdb",
+      "stored_stem_sha256": "4892db573c9dbf7021533f7b3c017fa6efd9921a6508160239743c5eb15f27dd",
+      "prompt_similarity": 0.4308,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "945e09cb-bb71-4f70-8536-ba8ab0657946",
+      "document_id": "7a1c6045f6a1499894f943b12a22c10e",
+      "section_no": "5.1",
+      "problem_no": 13,
+      "pdf_page_index": 29,
+      "pdf_page_number": 30,
+      "bbox": [
+        86.05,
+        62.99,
+        485.1,
+        336.69
+      ],
+      "source_prompt_sha256": "f6ab9b34e938abfa09fb90a052d1a1e9a3f93c454cea20b48c88e81b96278aa8",
+      "stored_stem_sha256": "e932ff6b1c4e3af939dc5be4b8256f458f8c641d9bb278a921e31aebd88cbbb6",
+      "prompt_similarity": 0.9143,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "candidate",
+      "review_reason": "section_header+question_number+next_question_boundary+prompt_similarity"
+    },
+    {
+      "problem_id": "af15d8f8-ce73-4f70-a460-7c0855befc9a",
+      "document_id": "7a1c6045f6a1499894f943b12a22c10e",
+      "section_no": "5.1",
+      "problem_no": 15,
+      "pdf_page_index": 29,
+      "pdf_page_number": 30,
+      "bbox": [
+        86.23,
+        339.69,
+        485.1,
+        467.72
+      ],
+      "source_prompt_sha256": "3c375668efd1d1aa2c8b05c728e2d838f01b0818cc5770933f766ce455f43da0",
+      "stored_stem_sha256": "80376a8dfe43d69821d1fe4b2604efc623479e5f7a3a38c91d3eabd5ff1be2bc",
+      "prompt_similarity": 0.4242,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "1541dc3c-54a4-4493-9542-20e3622f9bfb",
+      "document_id": "7a1c6045f6a1499894f943b12a22c10e",
+      "section_no": "5.1",
+      "problem_no": 16,
+      "pdf_page_index": 29,
+      "pdf_page_number": 30,
+      "bbox": [
+        86.23,
+        470.72,
+        485.1,
+        612.27
+      ],
+      "source_prompt_sha256": "9e20c68acc83c02e1023ce3771f70383e8daf9dda149a23165aac9f9ab49ccec",
+      "stored_stem_sha256": "30618fc9611a983a1754533f9744bde8d665e78b6813687870d2b98d93493a63",
+      "prompt_similarity": 0.5253,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "4b427de0-63aa-426c-a567-0d4aae4e4a48",
+      "document_id": "7a1c6045f6a1499894f943b12a22c10e",
+      "section_no": "5.1",
+      "problem_no": 17,
+      "pdf_page_index": 29,
+      "pdf_page_number": 30,
+      "bbox": [
+        86.23,
+        615.27,
+        485.1,
+        715.92
+      ],
+      "source_prompt_sha256": "5a6b5ab085dda94b589c18a4ed531d970b628c6aad61e7d813501b6735dfa46c",
+      "stored_stem_sha256": "dffad238e3e4301f0d16c479b1abd6c8329ad80ffd9594286f8270b900174e16",
+      "prompt_similarity": 0.2016,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "ad9c6890-8402-4678-9d5e-8b30985cf92f",
+      "document_id": "f194d7f3225448cc8f36776cf727f7c8",
+      "section_no": "5.2",
+      "problem_no": 1,
+      "pdf_page_index": 30,
+      "pdf_page_number": 31,
+      "bbox": [
+        83.7,
+        373.13,
+        485.1,
+        629.7
+      ],
+      "source_prompt_sha256": "106e76448fa31d037f9dbbb6270ec10d33e5a2efa5270c20bb36bc3f775cb4fa",
+      "stored_stem_sha256": "8c9ea7e0dedbb1494ee2445e84c095f6694686842325b9d28d77b99ed013a038",
+      "prompt_similarity": 0.2124,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "4b8b0712-897c-4625-a7a0-1fcd20f465a5",
+      "document_id": "f194d7f3225448cc8f36776cf727f7c8",
+      "section_no": "5.2",
+      "problem_no": 2,
+      "pdf_page_index": 30,
+      "pdf_page_number": 31,
+      "bbox": [
+        83.34,
+        632.7,
+        485.1,
+        715.92
+      ],
+      "source_prompt_sha256": "695f7ee81a6f102e2a8db4da2017f77c36c180347734287be8b050a4720ddba3",
+      "stored_stem_sha256": "b9b77433025b1d1f0dc2d8f6508fe6d51c84540f2e05e35130d24e2b1a5e34bd",
+      "prompt_similarity": 0.2735,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "12dbe212-0213-495d-9ee9-570170f372de",
+      "document_id": "f194d7f3225448cc8f36776cf727f7c8",
+      "section_no": "5.2",
+      "problem_no": 3,
+      "pdf_page_index": 31,
+      "pdf_page_number": 32,
+      "bbox": [
+        86.94,
+        356.84,
+        485.1,
+        527.21
+      ],
+      "source_prompt_sha256": "42a76b94126c7cecebdb9c87959966955792c18ea9a12a39b23f9b9283141e1d",
+      "stored_stem_sha256": "a1264ddc4c275dddf1be4bb20300e177965f4eb405842faab25bbd533ba8993b",
+      "prompt_similarity": 0.1947,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "adacb370-5394-4030-8cc3-7f6b100f07cd",
+      "document_id": "f194d7f3225448cc8f36776cf727f7c8",
+      "section_no": "5.2",
+      "problem_no": 4,
+      "pdf_page_index": 31,
+      "pdf_page_number": 32,
+      "bbox": [
+        86.94,
+        530.21,
+        485.1,
+        715.92
+      ],
+      "source_prompt_sha256": "c30dd97a8a92849392edd6799a298055d93fecf79a42adeb24b212746fadc6c8",
+      "stored_stem_sha256": "5de7babd5a143fe2c5d2b698af2885fd8fb08d1dd143739cd7979c8881be49d4",
+      "prompt_similarity": 0.2373,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "97a3db59-d2b4-4033-8bb6-9a00d7fc247d",
+      "document_id": "f194d7f3225448cc8f36776cf727f7c8",
+      "section_no": "5.2",
+      "problem_no": 5,
+      "pdf_page_index": 32,
+      "pdf_page_number": 33,
+      "bbox": [
+        83.34,
+        176.5,
+        485.1,
+        305.88
+      ],
+      "source_prompt_sha256": "a888ea72d22291f50c41a4b2cc7e2b5fa96dca96c7cb38b6aea61a207d973f7f",
+      "stored_stem_sha256": "56c5cc1775ca2654b689f81f2aa851af45161e41c4f12226e192829462d64ef5",
+      "prompt_similarity": 0.3968,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "7ab8f2a0-8439-4282-9ae6-a3d3573118d8",
+      "document_id": "f194d7f3225448cc8f36776cf727f7c8",
+      "section_no": "5.2",
+      "problem_no": 6,
+      "pdf_page_index": 32,
+      "pdf_page_number": 33,
+      "bbox": [
+        83.34,
+        308.88,
+        485.1,
+        381.47
+      ],
+      "source_prompt_sha256": "6a00e72c2c53676c5b541f22db5f70f918d22b40859a5625a705ff3de0f7ca9c",
+      "stored_stem_sha256": "f8a50a4e50f8ddd4d70c07bc87a2e0c5771cab6ae03f4de20acd043e54f2a2e7",
+      "prompt_similarity": 0.5333,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "64ebfbab-16fa-4cad-a858-7bc6e62e1459",
+      "document_id": "f194d7f3225448cc8f36776cf727f7c8",
+      "section_no": "5.2",
+      "problem_no": 7,
+      "pdf_page_index": 32,
+      "pdf_page_number": 33,
+      "bbox": [
+        83.34,
+        384.47,
+        485.1,
+        715.92
+      ],
+      "source_prompt_sha256": "31baac50454b8bf4e6c46e52bbcf7b54311c0bd1d48d6474c6893566bc682a0d",
+      "stored_stem_sha256": "437ae07a244d505a0f2337d444948793981d9fc34d56a2686cd0d3982c52a357",
+      "prompt_similarity": 0.1132,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "8f1f78e5-f9a5-4884-8a85-2ac91280780c",
+      "document_id": "704249315a3843a281910bbe2320ddb0",
+      "section_no": "5.3",
+      "problem_no": 1,
+      "pdf_page_index": 33,
+      "pdf_page_number": 34,
+      "bbox": [
+        89.46,
+        297.0,
+        485.1,
+        632.4
+      ],
+      "source_prompt_sha256": "cba321a982c671cc98e56aebe01df9772c4077509059d48dbe72204bc5438879",
+      "stored_stem_sha256": "acff458288413bc0c26aae06ec13c1d84de766624acbb0a1a69b4cfa65ce01bd",
+      "prompt_similarity": 0.2881,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "32afe4fa-a0fe-435a-8a11-9f03872b1790",
+      "document_id": "704249315a3843a281910bbe2320ddb0",
+      "section_no": "5.3",
+      "problem_no": 2,
+      "pdf_page_index": 33,
+      "pdf_page_number": 34,
+      "bbox": [
+        89.28,
+        635.4,
+        485.1,
+        715.92
+      ],
+      "source_prompt_sha256": "cf69526532454d5c19290d4f0fbce1b7b35b180d4335bbcefe83fe6a7a90f8dd",
+      "stored_stem_sha256": "c639df119014b8e67503713681558e3701a9b6f724bedce87451f957c9007691",
+      "prompt_similarity": 0.2301,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "bbe7b622-ee07-48a5-b8c0-99e5fce97a41",
+      "document_id": "704249315a3843a281910bbe2320ddb0",
+      "section_no": "5.3",
+      "problem_no": 3,
+      "pdf_page_index": 34,
+      "pdf_page_number": 35,
+      "bbox": [
+        77.58,
+        629.64,
+        485.1,
+        715.92
+      ],
+      "source_prompt_sha256": "3c39ff2a412cdd4a5bcfef13443ea3cc2c4176c9f4659e71be5d8f7dc3592214",
+      "stored_stem_sha256": "610aea457286caf0297459be1464b880190975a0a97bb94889f1dfb9f7023157",
+      "prompt_similarity": 0.3789,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "ab0bb408-3f6e-4dc4-ba6f-1653e1f3d435",
+      "document_id": "704249315a3843a281910bbe2320ddb0",
+      "section_no": "5.3",
+      "problem_no": 4,
+      "pdf_page_index": 35,
+      "pdf_page_number": 36,
+      "bbox": [
+        93.07,
+        473.75,
+        485.1,
+        623.49
+      ],
+      "source_prompt_sha256": "784675c5fa2bac673fda12f5d2c88d9c5d7a09fe747b66cb241e2a23f7b3b66a",
+      "stored_stem_sha256": "09fcf935f4fa0ef9c8bd8b133491d14648e5aaa83886ff16e229c029b56573dc",
+      "prompt_similarity": 0.2124,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "5bffc20e-9a19-4114-97a4-b5c1b6aa019b",
+      "document_id": "704249315a3843a281910bbe2320ddb0",
+      "section_no": "5.3",
+      "problem_no": 5,
+      "pdf_page_index": 35,
+      "pdf_page_number": 36,
+      "bbox": [
+        93.25,
+        626.49,
+        485.1,
+        715.92
+      ],
+      "source_prompt_sha256": "8fc9b254515b6af0a441909d57446976df9296509f2ae379c5e318ea19e2b020",
+      "stored_stem_sha256": "8889e8322ea55b8af54ca763ca828341c89f551cfbb07f750e86f94492ddaaad",
+      "prompt_similarity": 0.7436,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "candidate",
+      "review_reason": "section_header+question_number+next_question_boundary+prompt_similarity"
+    },
+    {
+      "problem_id": "aeb21c02-e814-44b7-88f0-a4ff716754d5",
+      "document_id": "c26f59034a9b4499899fff14a0df11dd",
+      "section_no": "5.4",
+      "problem_no": 1,
+      "pdf_page_index": 36,
+      "pdf_page_number": 37,
+      "bbox": [
+        79.56,
+        207.32,
+        485.1,
+        351.38
+      ],
+      "source_prompt_sha256": "25f2af4a6c0516e407be56035e7efc6bb616987b4cec8a21ee51a1347f2c01b2",
+      "stored_stem_sha256": "ff06db015dc8814188dd250ed1ee7d57a2459139bfec096104ff1c5728efc3d5",
+      "prompt_similarity": 0.8302,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "candidate",
+      "review_reason": "section_header+question_number+next_question_boundary+prompt_similarity"
+    },
+    {
+      "problem_id": "b41b11b1-2c1f-4643-8770-c14cd4fdec51",
+      "document_id": "c26f59034a9b4499899fff14a0df11dd",
+      "section_no": "5.4",
+      "problem_no": 2,
+      "pdf_page_index": 36,
+      "pdf_page_number": 37,
+      "bbox": [
+        79.2,
+        354.38,
+        485.1,
+        481.91
+      ],
+      "source_prompt_sha256": "f41acb23c5929f2cbbda8f3240454d90af6a8ad34a96ef40b87cac7cd3e6a174",
+      "stored_stem_sha256": "27aefe3bc753c310eec2f403fc08b9336e07a8a8515928e2014a7b9163db1092",
+      "prompt_similarity": 0.4848,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "25682660-233e-4e35-864f-4ce3665f9a01",
+      "document_id": "c26f59034a9b4499899fff14a0df11dd",
+      "section_no": "5.4",
+      "problem_no": 3,
+      "pdf_page_index": 36,
+      "pdf_page_number": 37,
+      "bbox": [
+        79.38,
+        484.91,
+        485.1,
+        715.92
+      ],
+      "source_prompt_sha256": "c6ae38930ca43d312d962621b2fea338c8bb2dcd80ce6d44d7a488e674b3fb05",
+      "stored_stem_sha256": "3035a4de0e36a48bd94ecc09aa053822b974200073808b51a61c8e94028f5d2b",
+      "prompt_similarity": 0.7719,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "candidate",
+      "review_reason": "section_header+question_number+next_question_boundary+prompt_similarity"
+    },
+    {
+      "problem_id": "2e03f9f0-2808-40a2-b25e-f2dd20456b60",
+      "document_id": "c26f59034a9b4499899fff14a0df11dd",
+      "section_no": "5.4",
+      "problem_no": 5,
+      "pdf_page_index": 37,
+      "pdf_page_number": 38,
+      "bbox": [
+        92.16,
+        173.51,
+        485.1,
+        297.42
+      ],
+      "source_prompt_sha256": "5d7b56a9d5e67fe6d6eff6903d661be148b9dafe66fe46e22f7623578087547f",
+      "stored_stem_sha256": "58069a9fb7ed5ca9e5d82d42a5c5ecc784db2ef6297ec7c366699e3554e9f51e",
+      "prompt_similarity": 1.0,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "candidate",
+      "review_reason": "section_header+question_number+next_question_boundary+prompt_similarity"
+    },
+    {
+      "problem_id": "04a23c81-fedb-4a15-9187-095a0ab14061",
+      "document_id": "c26f59034a9b4499899fff14a0df11dd",
+      "section_no": "5.4",
+      "problem_no": 6,
+      "pdf_page_index": 37,
+      "pdf_page_number": 38,
+      "bbox": [
+        92.16,
+        300.42,
+        485.1,
+        715.92
+      ],
+      "source_prompt_sha256": "d428e10e9dbb5d3c6f2714b039e08e9d0004270556dc51f39d5363d3b01c8e0f",
+      "stored_stem_sha256": "4dc5260a0cec8e8bfae86f1a618a93a3837507fdd09701d01d523122fa39b575",
+      "prompt_similarity": 0.4545,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "8e210261-0008-4784-96a1-4561fcd1d272",
+      "document_id": "c26f59034a9b4499899fff14a0df11dd",
+      "section_no": "5.4",
+      "problem_no": 7,
+      "pdf_page_index": 38,
+      "pdf_page_number": 39,
+      "bbox": [
+        79.56,
+        63.18,
+        485.1,
+        321.54
+      ],
+      "source_prompt_sha256": "66549a549ae73dd3e617d3e11ea5bca6c301a4b9f9329f585e3fe46083cc291c",
+      "stored_stem_sha256": "8ff31de95baf9b27b8c2df11963971d2a1f65a8f0997c90b7a83ef5a322b1eb0",
+      "prompt_similarity": 0.1651,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "3936afe4-ca94-422f-b63e-ed9d7984633c",
+      "document_id": "c26f59034a9b4499899fff14a0df11dd",
+      "section_no": "5.4",
+      "problem_no": 8,
+      "pdf_page_index": 38,
+      "pdf_page_number": 39,
+      "bbox": [
+        79.56,
+        324.54,
+        485.1,
+        552.87
+      ],
+      "source_prompt_sha256": "4f827aa9c1ba8bbbe8ddf03826c5e9f71e65e11a8a4710177699a5f928dbaf94",
+      "stored_stem_sha256": "6e9f07f7259772de8820cfbaa880715a78601d15e5f837f75998f423df85a41a",
+      "prompt_similarity": 0.5432,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "3f773633-65ba-40a5-a2ef-f3e5332db1bd",
+      "document_id": "c26f59034a9b4499899fff14a0df11dd",
+      "section_no": "5.4",
+      "problem_no": 9,
+      "pdf_page_index": 38,
+      "pdf_page_number": 39,
+      "bbox": [
+        79.92,
+        555.87,
+        485.1,
+        715.92
+      ],
+      "source_prompt_sha256": "57a2b6c3dc1733066ec45ff7749fa4e7a1aeb05ab4000d5ac0ad0481c2445783",
+      "stored_stem_sha256": "6420ff6caaf74993e68c290b71bd6201cbaaa553f4c09779b7774bf8838ed35a",
+      "prompt_similarity": 1.0,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "candidate",
+      "review_reason": "section_header+question_number+next_question_boundary+prompt_similarity"
+    },
+    {
+      "problem_id": "80e4adbb-08d9-4348-ad5a-f8b756e3dbab",
+      "document_id": "a68a9b24df7040a0906ecaabab758767",
+      "section_no": "5.5",
+      "problem_no": 1,
+      "pdf_page_index": 39,
+      "pdf_page_number": 40,
+      "bbox": [
+        90.36,
+        444.23,
+        485.1,
+        715.92
+      ],
+      "source_prompt_sha256": "b5d990f05c376085acc28dc8e58c3c87e45c9b735f28fc3603c3e8f59167bc90",
+      "stored_stem_sha256": "c6d0c64e297ce6586c4af7eaedfcdcb54d1b88eaad7e0f7d53e4d422c65e96ce",
+      "prompt_similarity": 0.4848,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "318116ea-376f-46f5-969f-6e261c9a8d80",
+      "document_id": "a68a9b24df7040a0906ecaabab758767",
+      "section_no": "5.5",
+      "problem_no": 2,
+      "pdf_page_index": 40,
+      "pdf_page_number": 41,
+      "bbox": [
+        77.4,
+        105.83,
+        485.1,
+        368.15
+      ],
+      "source_prompt_sha256": "fa1aaffb6310b71ba03db0017fead3e3a7fe07afad565ff7302e6826cb91377f",
+      "stored_stem_sha256": "ba708a7552ac7b28d8dc49d49b8e3aa101ff053c672157254e85dbbc11b6239a",
+      "prompt_similarity": 0.3607,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "1e202eed-d5c1-4ee8-a957-ecf47392257a",
+      "document_id": "a68a9b24df7040a0906ecaabab758767",
+      "section_no": "5.5",
+      "problem_no": 3,
+      "pdf_page_index": 40,
+      "pdf_page_number": 41,
+      "bbox": [
+        77.76,
+        371.15,
+        485.1,
+        576.95
+      ],
+      "source_prompt_sha256": "b08443e5012fa226d08a830a710aacb9ee975e6791ef2178cf2d75e8441eee5d",
+      "stored_stem_sha256": "1129cbdaf884fac850b8d2d63801402038bbd1653415ec834474819c059086ad",
+      "prompt_similarity": 0.4662,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "244be654-7da7-43ef-983e-6b1cc412eb78",
+      "document_id": "a68a9b24df7040a0906ecaabab758767",
+      "section_no": "5.5",
+      "problem_no": 4,
+      "pdf_page_index": 40,
+      "pdf_page_number": 41,
+      "bbox": [
+        77.76,
+        579.95,
+        485.1,
+        715.92
+      ],
+      "source_prompt_sha256": "66629a87b6e3987bb9724165a1640c6edb02e163b6daf1923aedb7ddfbd9df6b",
+      "stored_stem_sha256": "698c10e2dab16c9b60f042825db4b2014436e7b518a89a3a06f4f5d4604b1cce",
+      "prompt_similarity": 0.4375,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "68b1e785-d2f2-4d07-ad10-2361840ee3ed",
+      "document_id": "a68a9b24df7040a0906ecaabab758767",
+      "section_no": "5.5",
+      "problem_no": 5,
+      "pdf_page_index": 41,
+      "pdf_page_number": 42,
+      "bbox": [
+        93.25,
+        343.97,
+        485.1,
+        574.25
+      ],
+      "source_prompt_sha256": "1c6b51084374dc49e0c3568a432ae50b50460c4295799f61fbb382705f034d3c",
+      "stored_stem_sha256": "58b7613f3c2f53bae0c5301b98afbbbbe3530b67cefb6304e51a92bcf6146383",
+      "prompt_similarity": 0.4,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "c1aef531-aac0-4ec6-ba7a-d1d297dbca83",
+      "document_id": "a68a9b24df7040a0906ecaabab758767",
+      "section_no": "5.5",
+      "problem_no": 6,
+      "pdf_page_index": 41,
+      "pdf_page_number": 42,
+      "bbox": [
+        93.25,
+        577.25,
+        485.1,
+        715.92
+      ],
+      "source_prompt_sha256": "d6bcb9e9ddf9ea2a87b16ff1a29edba13749fe5500aab50f36610cdf0631af2b",
+      "stored_stem_sha256": "cb6a99e21c479b9d5a23cf80ed347e4ab275454d04a41c932985a00ca45e01e7",
+      "prompt_similarity": 0.3048,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "1c8cd46e-daa2-4e8c-b881-a18f62cc2ece",
+      "document_id": "a68a9b24df7040a0906ecaabab758767",
+      "section_no": "5.5",
+      "problem_no": 7,
+      "pdf_page_index": 42,
+      "pdf_page_number": 43,
+      "bbox": [
+        85.32,
+        203.57,
+        485.1,
+        329.45
+      ],
+      "source_prompt_sha256": "ee16849eb9a72e0ad962528c661d8838cd5b55a4a4bb6e047d6736b465406a4a",
+      "stored_stem_sha256": "a21534af47a6ab91d88427afd0352bb0d6411ee0ecbc0bec6b00ec40852b9934",
+      "prompt_similarity": 0.5412,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "09cb2057-9c73-43e9-bc57-bcd16fdb1bf5",
+      "document_id": "a68a9b24df7040a0906ecaabab758767",
+      "section_no": "5.5",
+      "problem_no": 8,
+      "pdf_page_index": 42,
+      "pdf_page_number": 43,
+      "bbox": [
+        85.14,
+        332.45,
+        485.1,
+        715.92
+      ],
+      "source_prompt_sha256": "27c2e1e1f9875a159eb7a8d8462d29c8c3b67c9c7bc53d36cdcefb51a726ce8c",
+      "stored_stem_sha256": "ddfbe6563c8ed5b32d6850decbb2acc7118f3ef9c47510bf115d00c33f00137c",
+      "prompt_similarity": 0.3333,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "0ba7911d-aa85-4229-b267-9a724b3e6f96",
+      "document_id": "a68a9b24df7040a0906ecaabab758767",
+      "section_no": "5.5",
+      "problem_no": 10,
+      "pdf_page_index": 43,
+      "pdf_page_number": 44,
+      "bbox": [
+        86.22,
+        385.67,
+        485.1,
+        624.97
+      ],
+      "source_prompt_sha256": "9958006d361b219946e8ebe7013152b3a3cb036bcfefa2819e2492200b2704e7",
+      "stored_stem_sha256": "805d1a1db7406162ad08841553a757d6d29102b3c221340fba90159cd674f56c",
+      "prompt_similarity": 0.8571,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "candidate",
+      "review_reason": "section_header+question_number+next_question_boundary+prompt_similarity"
+    },
+    {
+      "problem_id": "2acd90e0-7983-4a05-b7a0-5d46b24335b3",
+      "document_id": "a68a9b24df7040a0906ecaabab758767",
+      "section_no": "5.5",
+      "problem_no": 11,
+      "pdf_page_index": 43,
+      "pdf_page_number": 44,
+      "bbox": [
+        86.4,
+        627.97,
+        485.1,
+        715.92
+      ],
+      "source_prompt_sha256": "08766ca63e6f3afb876b9f64e0a141b9e6f4ac93f690f0a4db18ab62938dbd75",
+      "stored_stem_sha256": "e8ba8e9287d980f8c3c6ade1be2f315a7b1f412a331135abcf1f245bc1dbeded",
+      "prompt_similarity": 0.8667,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "candidate",
+      "review_reason": "section_header+question_number+next_question_boundary+prompt_similarity"
+    },
+    {
+      "problem_id": "19db313a-04a4-4e28-909d-632647856ea9",
+      "document_id": "e6eb220fb79541a196400527eadbaf50",
+      "section_no": "5.6",
+      "problem_no": 1,
+      "pdf_page_index": 44,
+      "pdf_page_number": 45,
+      "bbox": [
+        83.34,
+        159.47,
+        485.1,
+        251.15
+      ],
+      "source_prompt_sha256": "53b30febd589af141fa6abdaebb64b90be91e8a357c77074c0fc9ee3be3e8fae",
+      "stored_stem_sha256": "037738efe1e4f604f376db183d1ad45588ca6d43d7e8b2e32f208d5220522e3e",
+      "prompt_similarity": 0.241,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    },
+    {
+      "problem_id": "80236c25-3612-4e84-8ab8-1e6afd151bb7",
+      "document_id": "e6eb220fb79541a196400527eadbaf50",
+      "section_no": "5.6",
+      "problem_no": 2,
+      "pdf_page_index": 44,
+      "pdf_page_number": 45,
+      "bbox": [
+        82.98,
+        254.15,
+        485.1,
+        530.69
+      ],
+      "source_prompt_sha256": "5b65a040770a2bbf40d63d837c38e2f44274193f8d96303f66b11b365cbd487b",
+      "stored_stem_sha256": "0fdb4fcfb4d23521d97107009917dbcbbc5826265b907f6d5def1f8325e652f2",
+      "prompt_similarity": 0.4118,
+      "resolution_method": "question_number_to_next_native_text",
+      "status": "needs_teacher",
+      "review_reason": "question_number_found_but_prompt_similarity_below_gate"
+    }
+  ],
+  "blocked": [
+    {
+      "problem_id": "0387acdd-98cf-4af8-811c-a619900d3b96",
+      "section_no": "5.1",
+      "problem_no": "14",
+      "reason": "numbered_prompt_not_found"
+    },
+    {
+      "problem_id": "640ba69c-29bd-415d-ad07-39159f195f0f",
+      "section_no": "5.1",
+      "problem_no": "18",
+      "reason": "numbered_prompt_not_found"
+    },
+    {
+      "problem_id": "ea81f894-1f08-49b0-b562-072483fcdd43",
+      "section_no": "5.4",
+      "problem_no": "4",
+      "reason": "numbered_prompt_not_found"
+    },
+    {
+      "problem_id": "419caaf0-2c6d-45af-9c9c-f7390f93b513",
+      "section_no": "5.4",
+      "problem_no": "10",
+      "reason": "numbered_prompt_not_found"
+    },
+    {
+      "problem_id": "876df96d-db03-46c8-988e-4d10f8c5609d",
+      "section_no": "5.5",
+      "problem_no": "9",
+      "reason": "numbered_prompt_not_found"
+    },
+    {
+      "problem_id": "2d8f3472-f3d0-4bfe-bec1-c2f94f1ded96",
+      "section_no": "5.6",
+      "problem_no": "3",
+      "reason": "numbered_prompt_not_found"
+    },
+    {
+      "problem_id": "49f43cd4-7f7f-487a-84be-1d90a9e08c12",
+      "section_no": "5.6",
+      "problem_no": "4",
+      "reason": "numbered_prompt_not_found"
+    },
+    {
+      "problem_id": "1bffd9af-08a4-4dcd-bed7-3f877ac003a2",
+      "section_no": "5.6",
+      "problem_no": "5",
+      "reason": "numbered_prompt_not_found"
+    },
+    {
+      "problem_id": "6caa5720-bf10-447e-a1f5-7d1e44ff5081",
+      "section_no": "5.6",
+      "problem_no": "6",
+      "reason": "numbered_prompt_not_found"
+    },
+    {
+      "problem_id": "ca463b6e-7089-43de-b09d-8e85b682b19a",
+      "section_no": "5.6",
+      "problem_no": "7",
+      "reason": "numbered_prompt_not_found"
+    },
+    {
+      "problem_id": "047642ca-10fc-49d7-9eea-3c3699bf736f",
+      "section_no": "5.6",
+      "problem_no": "8",
+      "reason": "numbered_prompt_not_found"
+    },
+    {
+      "problem_id": "1d2e8b45-5060-4d1e-8223-b97758892f3c",
+      "section_no": "5.6",
+      "problem_no": "9",
+      "reason": "numbered_prompt_not_found"
+    },
+    {
+      "problem_id": "0a2f8986-e950-414d-bf0d-2b1925be3bfe",
+      "section_no": "5.6",
+      "problem_no": "10",
+      "reason": "numbered_prompt_not_found"
+    },
+    {
+      "problem_id": "b699f333-6067-4650-8835-58a705f928ed",
+      "section_no": "5.6",
+      "problem_no": "11",
+      "reason": "numbered_prompt_not_found"
+    },
+    {
+      "problem_id": "5a1c8827-17ee-4fb5-9aaf-a532a6873a56",
+      "section_no": "5.6",
+      "problem_no": "12",
+      "reason": "numbered_prompt_not_found"
+    },
+    {
+      "problem_id": "f53d6652-31c0-4395-bf44-e3af423c00de",
+      "section_no": "5.6",
+      "problem_no": "13",
+      "reason": "numbered_prompt_not_found"
+    },
+    {
+      "problem_id": "e7239491-4109-4d55-8478-3566383f84ab",
+      "section_no": "5.6",
+      "problem_no": "14",
+      "reason": "numbered_prompt_not_found"
+    }
+  ]
+}

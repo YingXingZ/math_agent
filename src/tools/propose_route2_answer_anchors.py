@@ -81,7 +81,12 @@ def numbered_blocks(document: fitz.Document, start: int, end: int) -> dict[int, 
             numbered.append((number, block))
         numbered.sort(key=lambda item: (float(item[1][1]), float(item[1][0])))
         for index, (number, block) in enumerate(numbered):
-            next_top = float(numbered[index + 1][1][1]) if index + 1 < len(numbered) else float(block[3])
+            # For the final numbered question, the safe same-page boundary is
+            # the page footer.  Keeping only its first text block produced a
+            # title-only 13pt crop and an empty OCR result.  We still never
+            # cross into the following page, where the next question may be.
+            next_top = (float(numbered[index + 1][1][1]) if index + 1 < len(numbered)
+                        else float(document[page_index].rect.height - 18))
             bottom = max(float(block[3]), next_top - 3)
             bbox = [round(float(block[0]), 2), round(float(block[1]), 2),
                     round(float(document[page_index].rect.width - 18), 2), round(bottom, 2)]
