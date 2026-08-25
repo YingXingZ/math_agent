@@ -800,7 +800,13 @@ def _sync_to_8014(source_problem_id: object, fields: dict) -> dict:
 
 
 @app.get("/api/garble-queue")
-def garble_queue():
+def garble_queue(review_status: str | None = None):
+    """Return the OCR-audit queue, optionally using live local review status.
+
+    The CSV is an immutable audit trail, so its status column can be stale after
+    a teacher fixes an item. Filtering therefore consults ``questions`` rather
+    than trusting the CSV snapshot.
+    """
     if not _GARBLE_AUDIT_CSV.exists():
         return {"items": [], "note": "未找到 garble_audit.csv（离线审计脚本未运行）"}
     items = []
@@ -817,9 +823,23 @@ def garble_queue():
                 "garble_hint": (row.get("garble_hint") or "")[:60],
                 "preview": (row.get("content_preview") or row.get("preview") or "")[:80],
             })
+    if review_status:
+        ids = [item["question_id"] for item in items]
+        if ids:
+            placeholders = ",".join("?" for _ in ids)
+            with connection() as conn:
+                rows = conn.execute(
+                    f"SELECT id FROM questions WHERE review_status=? AND id IN ({placeholders})",
+                    [review_status, *ids],
+                ).fetchall()
+            allowed_ids = {row["id"] for row in rows}
+            items = [item for item in items if item["question_id"] in allowed_ids]
+        else:
+            items = []
     # priority: most-used assignments first
     items.sort(key=lambda x: -x["assignments_using"])
-    return {"items": items, "note": f"共 {len(items)} 道待修订题目"}
+    label = f"状态为 {review_status} 的" if review_status else ""
+    return {"items": items, "note": f"共 {len(items)} 道{label}待修订题目"}
 
 
 @app.post("/api/assignments", status_code=201)

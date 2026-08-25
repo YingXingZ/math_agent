@@ -155,7 +155,7 @@ function queueNext(){queueGoto(_eqIdx+1);}
 function queuePrev(){queueGoto(_eqIdx-1);}
 async function loadGarbleQueue(){
   try{
-    const x=await api('/garble-queue');
+    const x=await api('/garble-queue?review_status=blocked');
     const ids=(x.items||[]).map(it=>it.question_id);
     if(ids.length){$('eqQueue').value=ids.join('\n');_eqIdx=-1;await queueGoto(0);}
     else{$('eqQueuePos').textContent=x.note||'暂无乱码队列';}

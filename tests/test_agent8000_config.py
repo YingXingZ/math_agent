@@ -26,3 +26,4 @@ def test_garble_queue_accepts_multiple_question_ids() -> None:
 
     assert '<textarea id="eqQueue"' in portal
     assert '<input id="eqQueue"' not in portal
+    assert "'/garble-queue?review_status=blocked'" in portal
