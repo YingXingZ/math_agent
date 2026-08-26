@@ -20,17 +20,26 @@ _LATEX_INLINE_RE = re.compile(
     re.DOTALL,
 )
 _LATEX_ENV_RE = re.compile(r'\\begin\{[^}]+\}.*?\\end\{[^}]+\}', re.DOTALL)
+_PRINT_PAGE_HEADER_RE = re.compile(r'(?m)^\s*\d{3}\s*第[一二三四五六七八九十]+章[^\n]*$')
 
 
 def _wrap_latex_for_html(text: str) -> str:
     """Add $ / $$ delimiters around raw LaTeX fragments without double-wrapping."""
+    # Answer-book imports occasionally retain a printed page header.  It is
+    # useful provenance in the source record but must not appear in a student
+    # worksheet.  This is display-only; the stored question is untouched.
+    text = _PRINT_PAGE_HEADER_RE.sub('', text or '')
     placeholders: list[str] = []
 
     def _stash(m: re.Match) -> str:
         placeholders.append(m.group(0))
         return f'\x00MATH{len(placeholders) - 1}\x00'
 
-    # 1. Preserve already-delimited math.
+    # 1. Preserve every supported existing delimiter.  In particular, do this
+    # before searching for raw commands: otherwise ``\\( \\frac{1}{2} \\)``
+    # becomes the invalid nested form ``\\( $\\frac{1}{2}$ \\)``.
+    text = re.sub(r'\\\(.*?\\\)', _stash, text, flags=re.DOTALL)
+    text = re.sub(r'\\\[.*?\\\]', _stash, text, flags=re.DOTALL)
     text = re.sub(r'\$\$.*?\$\$', _stash, text, flags=re.DOTALL)
     text = re.sub(r'(?<!\$)\$(?!\$)[^\$]*?\$(?!\$)', _stash, text, flags=re.DOTALL)
 
