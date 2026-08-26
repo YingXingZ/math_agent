@@ -117,3 +117,12 @@ docs/                    设计/诊断/复核清单（garble_audit.csv、QUESTIO
 - 新增 `src/tools/propose_route2_answer_anchors.py`：只读取 PDF 原生文本块，通过“习题章节标题 + 题号 + 题干前缀相似度”建立来源坐标；不调用 OCR/VLM、不修改 `problems`，也不改任何复核或发布状态。
 - 通过三重门禁的 14 条记录已写入 `problem_source_anchors`，状态均为 `candidate`；34 条仍为 `needs_teacher`，17 条因没有可靠编号证据而阻塞。完整审计见 `docs/route2_anchor_reviews/2026-08-25-applied.json`。
 - PDF 的 §5.6 在“总习题五”前仅有前两题，代码显式截断该边界，避免把后续总习题的同号内容误锚定为 §5.6。
+
+## 10. 2026-08-26 OCR Repair Agent：候选闭环（不写回题库）
+
+- 无 bbox 定位器已对 Route2 §5.1–§5.6 的原生 PDF 文本按“章节标题 → 题号 → 同页下一题（末题到页脚）”生成锚点；低相似度或无题号证据的记录仍停在 `needs_teacher`／`blocked`，不会猜测题目内容。14 条通过门禁的记录均为 `candidate`，裁切图仅存于 `answer_source_previews/candidate_anchor_crops/`，未写入 `problems.crop_image_path`。
+- A100 已实装并实测 MinerU pipeline、PP-FormulaNet_plus-L 与现有 18080 VLM。三路结果只写入 `ocr_repair_candidates`；该表和 `ocr_repair_decisions` 是独立的教师复核证据表。
+- 数学安全决策已实现 `AUTO_ACCEPT` / `AUTO_REPAIR` / `NEEDS_TEACHER_REVIEW`，对关键比较符号、上下标、分式、积分界等冲突保守拦截。当前 14 条真实候选均为 `NEEDS_TEACHER_REVIEW`：MinerU / FormulaNet 尚无可校准的整题置信度，故未自动采纳。
+- 教师端入口为 `http://127.0.0.1:8014/ocr-repair`：显示候选原图、当前题库文本、三路 LaTeX 候选、风险及确认/拒绝。确认只更新 `ocr_repair_decisions.teacher_status`，接口明确返回 `question_bank_written:false`，绝不修改 `problems`。
+- 审计：`docs/route2_anchor_reviews/2026-08-26-three-provider-audit.json` 记录 MinerU 14/14、PP-FormulaNet 14/14、VLM 对这 14 个锚点的候选（含历史重跑共 28 条）；所有 14 条为 `NEEDS_TEACHER_REVIEW`。
+- 验证：隔离 DB 下的 HTTP 端到端检查已验证候选列表、候选裁图 200、确认操作，以及 `content_text/std_answer/full_solution` 均保持不变；目标相关 pytest 14/14 通过。保留的全量 pytest 中历史 `test_regression_scripts.py` 超出常规执行时长而被单独隔离，未作为本模块通过凭据。
