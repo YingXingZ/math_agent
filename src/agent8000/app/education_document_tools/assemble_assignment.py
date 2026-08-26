@@ -23,7 +23,7 @@ from typing import Any
 
 from ..config import settings
 from ..db import connection
-from ..assignment_pdf import build_assignment_pdf
+from ..assignment_pdf import POINTS_PER_QUESTION, build_assignment_pdf
 
 
 def _select_by_tier(rows: list[dict], question_count: int,
@@ -92,7 +92,7 @@ def assemble(sections: list[str], *, title: str, class_name: str, due_at: dateti
     if not selected:
         raise ValueError("所选章节没有足够的可发布题目")
 
-    score = 100 // len(selected)
+    score = POINTS_PER_QUESTION
     with connection() as conn:
         cursor = conn.execute(
             "INSERT INTO assignments(title,chapter,class_name,due_at,total_score) "
@@ -104,7 +104,7 @@ def assemble(sections: list[str], *, title: str, class_name: str, due_at: dateti
             "INSERT INTO assignment_questions(assignment_id,question_id,sort_order,score,original_no) "
             "VALUES(?,?,?,?,?)",
             [
-                (assignment_id, r["id"], i + 1, score, r.get("source_problem_no") or str(i + 1))
+                (assignment_id, r["id"], i + 1, score, str(i + 1))
                 for i, r in enumerate(selected)
             ],
         )
@@ -119,7 +119,7 @@ def assemble(sections: list[str], *, title: str, class_name: str, due_at: dateti
             {
                 "content": r["content"],
                 "question_type": r.get("question_type") or "",
-                "original_no": r.get("source_problem_no") or str(idx + 1),
+                "original_no": str(idx + 1),
                 "img_path": None,
             }
             for idx, r in enumerate(selected)
@@ -148,7 +148,7 @@ def assemble(sections: list[str], *, title: str, class_name: str, due_at: dateti
         "page_count": page_count,
         "problems": [
             {
-                "original_no": r.get("source_problem_no") or str(i + 1),
+                "original_no": str(i + 1),
                 "difficulty": r["difficulty"],
                 "question_type": r.get("question_type"),
             }

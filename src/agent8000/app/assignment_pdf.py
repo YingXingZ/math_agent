@@ -127,6 +127,20 @@ def _render_latex_png(tex: str, *, fontsize: float = 14.0) -> bytes | None:
         return None
 
 
+POINTS_PER_QUESTION = 10
+_SOURCE_PROBLEM_PREFIX_RE = re.compile(r"^\s*\d+\s*[.．、]\s*")
+
+
+def display_problem_no(row: dict[str, Any], index: int) -> str:
+    """Use the assignment sequence, never the source textbook number."""
+    return str(row.get("sort_order") or (index + 1))
+
+
+def strip_source_problem_prefix(content: str) -> str:
+    """Avoid rendering both the worksheet number and the textbook number."""
+    return _SOURCE_PROBLEM_PREFIX_RE.sub("", (content or "").replace("\r", "").lstrip(), count=1)
+
+
 def render_problem_image(content: str, original_no: str, out_path: str | Path,
                          font_size: float = 11.5) -> str:
     """Render one problem (original number + text) to a cropped PNG for the engine.
@@ -146,11 +160,7 @@ def render_problem_image(content: str, original_no: str, out_path: str | Path,
     page.insert_font(fontname="hei", fontfile=FONT_HEI)
     margin = 6.0
     label = f"{original_no}. " if original_no else ""
-    body = (content or "").replace("\r", "").lstrip()
-    # 8014 content_text already contains the textbook number (e.g. "10. ...").
-    # Strip it before prepending the *canonical* original number so we do not
-    # print "10. 10. ..." on the worksheet.
-    body = re.sub(rf"^{re.escape(original_no)}\.\s*", "", body)
+    body = strip_source_problem_prefix(content)
 
     y = margin
     max_x = CONTENT_W - margin
@@ -276,7 +286,7 @@ def _items_to_render(assignment: dict[str, Any], items: list[dict[str, Any]],
     """Normalise DB rows into render descriptors (with temp images if needed)."""
     descriptors: list[dict[str, Any]] = []
     for idx, row in enumerate(items):
-        original_no = str(row.get("original_no") or row.get("sort_order") or (idx + 1))
+        original_no = display_problem_no(row, idx)
         content = (row.get("content") or "").strip()
         img_path = row.get("img_path")
         if not img_path:
@@ -335,11 +345,11 @@ def export_latex_source(assignment: dict[str, Any], items: list[dict[str, Any]])
         "due_at": assignment.get("due_at"),
         "problems": [
             {
-                "original_no": str(row.get("original_no") or row.get("sort_order")),
+                "original_no": display_problem_no(row, idx),
                 "latex": (row.get("content") or "").strip(),
                 "question_type": row.get("question_type"),
             }
-            for row in items
+            for idx, row in enumerate(items)
         ],
     }
 

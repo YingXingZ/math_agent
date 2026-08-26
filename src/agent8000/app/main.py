@@ -75,7 +75,9 @@ from .grading_pipeline import run_grading_job
 from .mineru_staging import match_staged, stage_markdown
 from .answer_matcher import answer_json_to_staged, canonical_section, match_section_questions
 from .question_validation import validate_question, first_issue_message
-from .assignment_pdf import build_assignment_pdf, export_latex_source, latex_document
+from .assignment_pdf import (POINTS_PER_QUESTION, build_assignment_pdf,
+                             display_problem_no, export_latex_source,
+                             latex_document, strip_source_problem_prefix)
 from .orchestrator import publish_homework
 from .mineru_review import (
     approve_item as approve_mineru_item,
@@ -928,12 +930,12 @@ async def create_assignment(payload: AssignmentIn):
                 row = conn.execute("SELECT * FROM questions WHERE chapter=? AND review_status='published' AND id NOT IN ({}) ORDER BY RANDOM() LIMIT 1".format(",".join("?" * len(used)) if used else "0"), [payload.chapter, *used]).fetchone()
             if row: picked.append(dict(row)); used.add(row["id"])
         if not picked: raise HTTPException(404, "该章节暂无已发布题目")
-        score = 100 // len(picked)
+        score = POINTS_PER_QUESTION
         cur = conn.execute("INSERT INTO assignments(title,chapter,class_name,due_at,total_score,semester) VALUES(?,?,?,?,?,?)", (payload.title, payload.chapter, payload.class_name, payload.due_at.isoformat(), score * len(picked), payload.semester or ""))
         assignment_id = cur.lastrowid
         conn.executemany(
             "INSERT INTO assignment_questions(assignment_id,question_id,sort_order,score,original_no) VALUES(?,?,?,?,?)",
-            [(assignment_id, q["id"], i + 1, score, q.get("source_problem_no") or str(i + 1)) for i, q in enumerate(picked)],
+            [(assignment_id, q["id"], i + 1, score, str(i + 1)) for i, q in enumerate(picked)],
         )
     ai_note = await run_workflow({"task": "assignment_review", "chapter": payload.chapter, "question_ids": list(used)})
     return {"id": assignment_id, "questions": picked, "ai_review": ai_note}
@@ -1077,12 +1079,12 @@ def printable_assignment(assignment_id: int):
         if not assignment: raise HTTPException(404, "作业不存在")
         rows = conn.execute("""SELECT q.*, aq.sort_order, aq.score, aq.original_no FROM assignment_questions aq
           JOIN questions q ON q.id=aq.question_id WHERE aq.assignment_id=? ORDER BY aq.sort_order""", (assignment_id,)).fetchall()
-    # Preserve the original textbook problem numbers (设计二：保持原本题号).
-    # Wrap raw LaTeX fragments first, then escape HTML so entities inside math
+    # Use assignment sequence numbers, and remove the source number from each
+    # stem. Wrap raw LaTeX fragments first, then escape HTML so entities inside math
     # (e.g. >) are handled by the browser/MathJax correctly.
     items = "".join(
-        f"<section><h3>{r['original_no'] or r['sort_order']}.（{r['score']}分）{escape(_wrap_latex_for_html(r['content']))}</h3><div class='space'></div></section>"
-        for r in rows
+        f"<section><h3>{display_problem_no(dict(r), i)}.（{POINTS_PER_QUESTION}分）{escape(_wrap_latex_for_html(strip_source_problem_prefix(r['content'])))}</h3><div class='space'></div></section>"
+        for i, r in enumerate(rows)
     )
     return f"""<!doctype html><html lang='zh-CN'><meta charset='utf-8'><title>{escape(assignment['title'])}</title>
     <style>@page{{size:A4;margin:18mm}}body{{font-family:'Microsoft YaHei',sans-serif;color:#111;line-height:1.65}}header{{border-bottom:2px solid #1e3a5f}}h1{{text-align:center}}.meta{{display:flex;justify-content:space-between}}section{{break-inside:avoid;margin-top:20px}}.space{{height:115px;border-bottom:1px dashed #cbd5e1}}</style>
