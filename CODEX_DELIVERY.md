@@ -129,3 +129,9 @@ docs/                    设计/诊断/复核清单（garble_audit.csv、QUESTIO
 - 教师端现已升级为可编辑的 `content_text` / `std_answer` / `full_solution` 分栏。仅当教师填写题干与标准答案、二次确认并点击“确认并写回题库”时，才写入 `problems` 并设为 `verified`；同一事务会保存 `ocr_repair_writebacks` 的前后快照和教师备注。空标准答案、未显式 `confirm=true` 或未通过既有答案质量门禁均拒绝写回。
 - 2026-08-26 教师已确认的 Route2 14 条候选已全部经显式写回接口入库：`ocr_repair_decisions.committed=14`、`ocr_repair_writebacks=14`。批量写入只复用了教师确认后的现有字段，未生成或猜测数学内容。
 - 后续风险题取证已启动并生成 `docs/route2_anchor_reviews/2026-08-26-garble-evidence-plan.json`：当前实时队列为 120 条（旧 `garble_audit.csv` 是 102 条静态快照），44 条高风险；120 条均缺可验证 PDF 页或本地裁图，因而本批 `ready_for_teacher_review=0`。其中 89 条缺 8014 来源绑定，31 条有登记裁图路径但文件缺失。它们必须待补教材／答案页或 IMA 证据后才能生成候选。
+
+## 11. 2026-08-26 OCR Repair 教师编辑体验
+
+- OCR Repair 写回接口允许教师保存多行 `std_answer`（例如多组傅里叶系数或方程组），不再把换行本身误判为 OCR 串题；仍保留空值、乱码、页眉和超过 3000 字符的跨题内容门禁。
+- 多行标准答案不会进入自动评分：`grading_ready` 仍会将其留在人工复核路径，避免改变学生端自动判分语义。
+- `http://127.0.0.1:8014/ocr-repair` 的题干、标准答案、完整解答编辑框均提供输入即刷新的 MathJax LaTeX 预览；写回前仍须教师对照原图并显式确认。

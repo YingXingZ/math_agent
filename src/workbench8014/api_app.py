@@ -280,14 +280,13 @@ def answer_quality_issue(answer: str, ptype: str, full_solution: str = "") -> st
     # They must never be eligible for a one-click adoption.
     if "标准答案字段需人工整理" in answer or "结构化结果需人工整理" in answer or "服务器已识别" in answer:
         return "模型未给出可入库的标准答案，仅保留了待整理的识别结果"
-    is_multi_part = "\n" in answer and all(
-        re.match(r"^\s*[（(]\s*\d+\s*[）)]\s*\S+", line)
-        for line in answer.splitlines() if line.strip()
-    )
-    if len(answer) > (3000 if is_multi_part else 500):
+    # A teacher may deliberately keep a multi-line final answer (for example a
+    # system of equations or a short list of Fourier coefficients).  Newlines
+    # alone are not OCR evidence and must not prevent an explicit writeback.
+    # The length cap, garble checks, and grading gate below still protect the
+    # question bank from page-sized OCR blobs.
+    if len(answer) > 3000:
         return "标准答案过长，疑似整页或多题 OCR 串入"
-    if "\n" in answer and not is_multi_part:
-        return "标准答案含多行内容；最终答案必须单题、单行"
     if any(mark in answer for mark in _OCR_GARBLED):
         return "标准答案包含 OCR/编码乱码"
     if "第" in answer and "章" in answer:
