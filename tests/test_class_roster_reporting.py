@@ -65,6 +65,10 @@ def test_class_roster_controls_submission_and_real_reports(tmp_path: Path) -> No
             report = client.get("/api/reports/semester-summary")
             assert report.status_code == 200
             assert [row["student_no"] for row in report.json()["students"]] == ["20260001"]
+            summary = client.get("/api/reports/summary")
+            assert summary.status_code == 200
+            assert summary.json()["assignment_count"] == 1
+            assert summary.json()["submission_count"] == 1
     finally:
         main.settings.database_path, main.settings.upload_dir = previous_db, previous_upload
 

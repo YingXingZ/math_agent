@@ -1602,7 +1602,11 @@ async def summary():
           (SELECT COUNT(*) FROM assignments WHERE status='published' AND class_id IS NOT NULL) assignment_count,
           (SELECT COUNT(*) FROM submissions s JOIN assignments a ON a.id=s.assignment_id WHERE a.class_id IS NOT NULL) submission_count,
           (SELECT COUNT(*) FROM grading_jobs WHERE status='queued') review_queue""").fetchone())
-        hw = conn.execute("SELECT AVG(handwriting_score) FROM submissions WHERE handwriting_score IS NOT NULL").fetchone()[0]
+        hw = conn.execute(
+            """SELECT AVG(s.handwriting_score) FROM submissions s
+               JOIN assignments a ON a.id=s.assignment_id
+               WHERE a.class_id IS NOT NULL AND s.handwriting_score IS NOT NULL"""
+        ).fetchone()[0]
         below = conn.execute(
             """SELECT COUNT(*) FROM (SELECT a.class_name, a.semester
                 FROM grading_experiences ge JOIN submissions s ON s.id=ge.submission_id
