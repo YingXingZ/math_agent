@@ -145,6 +145,13 @@ def ensure_source_evidence_schema(conn: sqlite3.Connection) -> None:
         teacher_status TEXT NOT NULL DEFAULT 'pending', teacher_note TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS ocr_repair_writebacks(
+        id TEXT PRIMARY KEY, problem_id TEXT NOT NULL, decision TEXT NOT NULL,
+        before_json TEXT NOT NULL, after_json TEXT NOT NULL, teacher_note TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_ocr_repair_writebacks_problem
+        ON ocr_repair_writebacks(problem_id, created_at);
     """)
 
 

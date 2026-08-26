@@ -176,6 +176,11 @@ def init_db():
         problem_id TEXT PRIMARY KEY, decision TEXT NOT NULL, decision_json TEXT NOT NULL,
         teacher_status TEXT NOT NULL DEFAULT 'pending', teacher_note TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS ocr_repair_writebacks(
+        id TEXT PRIMARY KEY, problem_id TEXT NOT NULL, decision TEXT NOT NULL,
+        before_json TEXT NOT NULL, after_json TEXT NOT NULL, teacher_note TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS idx_ocr_repair_writebacks_problem ON ocr_repair_writebacks(problem_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_p_kp ON problems(knowledge_pts);
     CREATE INDEX IF NOT EXISTS idx_p_section ON problems(section_id);
     CREATE INDEX IF NOT EXISTS idx_p_type ON problems(ptype);
@@ -3509,7 +3514,8 @@ def list_ocr_repair_reviews(status: str = Query("pending"), limit: int = Query(1
     try:
         rows = conn.execute("""
             SELECT d.problem_id,d.decision,d.decision_json,d.teacher_status,d.teacher_note,
-                   p.content_text,s.section_no,p.problem_no,a.id AS anchor_id,a.crop_path,a.confidence AS anchor_confidence
+                   p.content_text,p.std_answer,p.full_solution,p.ptype,s.section_no,p.problem_no,
+                   a.id AS anchor_id,a.crop_path,a.confidence AS anchor_confidence
             FROM ocr_repair_decisions d JOIN problems p ON p.id=d.problem_id
             JOIN sections s ON s.id=p.section_id LEFT JOIN problem_source_anchors a ON a.problem_id=d.problem_id
             WHERE (?='' OR d.teacher_status=?) ORDER BY d.updated_at DESC LIMIT ?
@@ -3555,6 +3561,58 @@ def review_ocr_repair_candidate(problem_id: str, body: dict = Body(...)):
         conn.commit()
         return {"ok":True,"problem_id":problem_id,"teacher_status":action,"question_bank_written":False}
     finally: conn.close()
+
+
+@app.post("/ocr-repair/reviews/{problem_id}/writeback")
+def writeback_ocr_repair_candidate(problem_id: str, body: dict = Body(...)):
+    """Explicit teacher adoption of edited OCR evidence into the question bank.
+
+    Merely opening a candidate or recording a normal confirmation never reaches
+    this endpoint.  This endpoint requires a deliberate ``confirm: true`` and
+    writes an immutable before/after audit row in the same transaction.
+    """
+    if body.get("confirm") is not True:
+        raise HTTPException(400, "writeback requires confirm=true")
+    content_text = str(body.get("content_text") or "").strip()
+    std_answer = str(body.get("std_answer") or "").strip()
+    full_solution = str(body.get("full_solution") or "").strip()
+    note = str(body.get("note") or "").strip()[:2000]
+    if not content_text:
+        raise HTTPException(400, "题干不能为空")
+    if not std_answer:
+        raise HTTPException(400, "标准答案不能为空；请先从原图核对并填写")
+    conn = get_db()
+    try:
+        decision = conn.execute("SELECT decision FROM ocr_repair_decisions WHERE problem_id=?", (problem_id,)).fetchone()
+        row = conn.execute("SELECT content_text,std_answer,full_solution,ptype,answer_status FROM problems WHERE id=?", (problem_id,)).fetchone()
+        if not decision:
+            raise HTTPException(404, "OCR repair decision not found")
+        if not row:
+            raise HTTPException(404, "problem not found")
+        issue = answer_quality_issue(std_answer, row["ptype"], full_solution)
+        if issue:
+            raise HTTPException(400, "不能写回：" + issue)
+        before = {"content_text": row["content_text"] or "", "std_answer": row["std_answer"] or "",
+                  "full_solution": row["full_solution"] or "", "answer_status": row["answer_status"] or ""}
+        after = {"content_text": content_text, "std_answer": std_answer, "full_solution": full_solution,
+                 "answer_status": "verified"}
+        now = datetime.now().isoformat(timespec="seconds")
+        conn.execute("""UPDATE problems SET content_text=?,std_answer=?,full_solution=?,
+                     answer_status='verified',answer_invalid_reason='' WHERE id=?""",
+                     (content_text, std_answer, full_solution or None, problem_id))
+        conn.execute("""UPDATE ocr_repair_decisions SET teacher_status='committed',teacher_note=?,updated_at=?
+                     WHERE problem_id=?""", (note, now, problem_id))
+        conn.execute("UPDATE ocr_repair_candidates SET status='teacher_adopted',updated_at=? WHERE problem_id=?",
+                     (now, problem_id))
+        conn.execute("""INSERT INTO ocr_repair_writebacks(id,problem_id,decision,before_json,after_json,teacher_note,created_at)
+                     VALUES(?,?,?,?,?,?,?)""",
+                     (uuid.uuid4().hex, problem_id, decision["decision"], json.dumps(before, ensure_ascii=False),
+                      json.dumps(after, ensure_ascii=False), note, now))
+        conn.commit()
+        return {"ok": True, "problem_id": problem_id, "question_bank_written": True,
+                "answer_status": "verified", "audit_recorded": True}
+    finally:
+        conn.close()
 
 
 REVIEW_SAMPLING_DB = os.path.join(os.path.dirname(__file__), "review_sample.json")

@@ -126,3 +126,4 @@ docs/                    设计/诊断/复核清单（garble_audit.csv、QUESTIO
 - 教师端入口为 `http://127.0.0.1:8014/ocr-repair`：显示候选原图、当前题库文本、三路 LaTeX 候选、风险及确认/拒绝。确认只更新 `ocr_repair_decisions.teacher_status`，接口明确返回 `question_bank_written:false`，绝不修改 `problems`。
 - 审计：`docs/route2_anchor_reviews/2026-08-26-three-provider-audit.json` 记录 MinerU 14/14、PP-FormulaNet 14/14、VLM 对这 14 个锚点的候选（含历史重跑共 28 条）；所有 14 条为 `NEEDS_TEACHER_REVIEW`。
 - 验证：隔离 DB 下的 HTTP 端到端检查已验证候选列表、候选裁图 200、确认操作，以及 `content_text/std_answer/full_solution` 均保持不变；目标相关 pytest 14/14 通过。保留的全量 pytest 中历史 `test_regression_scripts.py` 超出常规执行时长而被单独隔离，未作为本模块通过凭据。
+- 教师端现已升级为可编辑的 `content_text` / `std_answer` / `full_solution` 分栏。仅当教师填写题干与标准答案、二次确认并点击“确认并写回题库”时，才写入 `problems` 并设为 `verified`；同一事务会保存 `ocr_repair_writebacks` 的前后快照和教师备注。空标准答案、未显式 `confirm=true` 或未通过既有答案质量门禁均拒绝写回。
