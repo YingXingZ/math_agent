@@ -26,6 +26,17 @@ class Settings(BaseSettings):
     # outside the source tree.
     garble_audit_csv: str = str(REPOSITORY_ROOT / "docs" / "garble_audit.csv")
     workbench_db_path: str = str(REPOSITORY_ROOT / "api.workbench.db")
+    # Authentication is deliberately opt-in for the existing local single-user
+    # installation.  Every public deployment must set AUTH_REQUIRED=true.
+    auth_required: bool = False
+    session_days: int = 14
+    session_cookie_name: str = "math_agent_session"
+    cookie_secure: bool = False
+    bootstrap_admin_username: str = ""
+    bootstrap_admin_password: str = ""
+    student_invite_days: int = 14
+    submission_retention_days: int = 365
+    audit_retention_days: int = 730
 
     class Config:
         env_file = ".env"

@@ -96,6 +96,14 @@ docs/                    设计/诊断/复核清单（garble_audit.csv、QUESTIO
 4. **方向 C（能力完善）**：编辑面板可加「LaTeX 自动包 `$`」工具、「8014 原图对照」；组卷策略等 —— 详见 CODEX_BRIEF §4。
 5. **红线**（CODEX_BRIEF §5）：不乱码推题、题库不回退、端点契约不破坏、SQL 参数化、三服务可启动。
 
+## 17. 多教师上线基础（2026-08-26）
+
+- 8000 已加入可选认证层：`AUTH_REQUIRED=false` 保持原本机单教师体验；正式部署必须设为 `true`，并通过 `BOOTSTRAP_ADMIN_USERNAME` / `BOOTSTRAP_ADMIN_PASSWORD` 首次创建管理员。
+- 角色为 admin / teacher / student。教师数据以 `classes.teacher_user_id` 隔离；学生需邀请码且必须匹配已导入名单的学号、姓名才可激活并提交。题库中官方已核验题可读，教师私有题不可相互读取或修改。
+- 新增 `users`、`user_sessions`、`class_invites`、`audit_logs` 表与迁移，且有 `tests/test_auth_tenancy.py` 覆盖教师隔离和学生邀请码激活。
+- 公网部署仅暴露 8000；8014 与 18080 必须留在内网/loopback。生产部署、HTTPS、备份 timer 与数据保留默认规则见 `src/agent8000/deploy/PRODUCTION_MULTI_TENANT.md`。
+- **外部阻塞**：尚无域名、应用服务器、DNS 及学校最终隐私/保留制度，故不能宣称公网 HTTPS 已上线；这些到位后按部署清单实施并做恢复演练。
+
 ---
 
 ## 7. 本次交付物确认

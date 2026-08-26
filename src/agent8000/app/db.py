@@ -188,6 +188,33 @@ CREATE TABLE IF NOT EXISTS ai_stem_candidates (
 );
 CREATE INDEX IF NOT EXISTS idx_ai_stem_candidates_status ON ai_stem_candidates(status, section_no);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_stem_candidates_source ON ai_stem_candidates(source_problem_id);
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE,
+  display_name TEXT NOT NULL, password_hash TEXT NOT NULL,
+  role TEXT NOT NULL CHECK(role IN ('admin','teacher','student')),
+  active INTEGER NOT NULL DEFAULT 1, created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  password_changed_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS user_sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, token_hash TEXT NOT NULL UNIQUE,
+  user_id INTEGER NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  expires_at TEXT NOT NULL, last_seen_at TEXT, revoked_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id, expires_at);
+CREATE TABLE IF NOT EXISTS class_invites (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, class_id INTEGER NOT NULL,
+  code_hash TEXT NOT NULL UNIQUE, expires_at TEXT NOT NULL,
+  max_uses INTEGER NOT NULL DEFAULT 1, used_count INTEGER NOT NULL DEFAULT 0,
+  created_by INTEGER NOT NULL, revoked_at TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_class_invites_class ON class_invites(class_id, expires_at);
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, actor_user_id INTEGER,
+  tenant_teacher_id INTEGER, action TEXT NOT NULL, resource_type TEXT NOT NULL,
+  resource_id TEXT, metadata_json TEXT NOT NULL DEFAULT '{}', ip TEXT,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_tenant_created ON audit_logs(tenant_teacher_id, created_at DESC);
 """
 
 
@@ -235,6 +262,18 @@ def init_db() -> None:
         # class data and historical sample records.
         if "class_id" not in assign_cols:
             conn.execute("ALTER TABLE assignments ADD COLUMN class_id INTEGER")
+        class_cols = {row[1] for row in conn.execute("PRAGMA table_info(classes)")}
+        if "teacher_user_id" not in class_cols:
+            conn.execute("ALTER TABLE classes ADD COLUMN teacher_user_id INTEGER")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_classes_teacher ON classes(teacher_user_id)")
+        student_cols = {row[1] for row in conn.execute("PRAGMA table_info(students)")}
+        if "user_id" not in student_cols:
+            conn.execute("ALTER TABLE students ADD COLUMN user_id INTEGER")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_students_user_class ON students(class_id,user_id) WHERE user_id IS NOT NULL")
+        question_owner_cols = {row[1] for row in conn.execute("PRAGMA table_info(questions)")}
+        if "owner_teacher_id" not in question_owner_cols:
+            conn.execute("ALTER TABLE questions ADD COLUMN owner_teacher_id INTEGER")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_questions_owner ON questions(owner_teacher_id)")
         sub_cols = {row[1] for row in conn.execute("PRAGMA table_info(submissions)")}
         if "handwriting_score" not in sub_cols:
             conn.execute("ALTER TABLE submissions ADD COLUMN handwriting_score REAL")

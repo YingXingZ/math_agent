@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from html import escape
 from io import BytesIO
 from pathlib import Path
@@ -64,12 +64,13 @@ def _wrap_latex_for_html(text: str) -> str:
         text = text.replace(f'\x00MATH{i}\x00', ph)
     return text
 
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import HTMLResponse, FileResponse
 from pydantic import BaseModel, Field
 
 from .config import settings
 from .db import connection, init_db, queue_due_grading as enqueue_due_grading
+from .auth import audit, current_user, ensure_bootstrap_admin, login, require_roles, teacher_id_for_scope, token_hash
 from .dify import run_workflow
 from .knowledge_bridge import build_image_solve_candidate, evidence_status, list_evidence_sections, rescue_formula_from_crop, retrieve_section_problems
 from .grading_pipeline import run_grading_job
@@ -103,6 +104,7 @@ from .question_bank_review import _looks_corrupt, _scan_looks_corrupt
 async def lifespan(_: FastAPI):
     settings.prepare_dirs()
     init_db()
+    ensure_bootstrap_admin()
     yield
 
 
@@ -166,6 +168,30 @@ class StudentListIn(BaseModel):
     students: list[dict]
 
 
+class LoginIn(BaseModel):
+    username: str = Field(min_length=1, max_length=80)
+    password: str = Field(min_length=1, max_length=200)
+
+
+class TeacherCreateIn(BaseModel):
+    username: str = Field(min_length=3, max_length=80)
+    display_name: str = Field(min_length=1, max_length=80)
+    temporary_password: str = Field(min_length=10, max_length=200)
+
+
+class InviteCreateIn(BaseModel):
+    max_uses: int = Field(default=1, ge=1, le=500)
+    expires_days: int = Field(default=14, ge=1, le=90)
+
+
+class StudentActivateIn(BaseModel):
+    invite_code: str = Field(min_length=16, max_length=160)
+    student_no: str = Field(min_length=1, max_length=32)
+    name: str = Field(min_length=1, max_length=80)
+    username: str = Field(min_length=3, max_length=80)
+    password: str = Field(min_length=10, max_length=200)
+
+
 class MineruStageIn(BaseModel):
     role: Literal["textbook", "answer_book"]
     name: str = Field(min_length=1, max_length=120)
@@ -193,6 +219,90 @@ class MineruReviewDecisionIn(BaseModel):
     full_solution: str = ""
     note: str = ""
     overwrite_verified: bool = False
+
+
+@app.post("/api/auth/login")
+def auth_login(payload: LoginIn, response: Response, request: Request):
+    user, token, expires_at = login(payload.username, payload.password)
+    response.set_cookie(settings.session_cookie_name, token, httponly=True,
+                        secure=settings.cookie_secure, samesite="lax", expires=expires_at)
+    audit(user, "login", "session", tenant_teacher_id=(user["id"] if user["role"] == "teacher" else None),
+          ip=request.client.host if request.client else None)
+    return {"user": user, "auth_required": settings.auth_required}
+
+
+@app.post("/api/auth/logout")
+def auth_logout(request: Request, response: Response):
+    user = current_user(request)
+    token = request.cookies.get(settings.session_cookie_name, "")
+    if token:
+        with connection() as conn:
+            conn.execute("UPDATE user_sessions SET revoked_at=? WHERE token_hash=?", (datetime.now(timezone.utc).isoformat(), token_hash(token)))
+    response.delete_cookie(settings.session_cookie_name)
+    audit(user, "logout", "session")
+    return {"ok": True}
+
+
+@app.get("/api/auth/me")
+def auth_me(request: Request):
+    user = current_user(request)
+    return {"user": user, "auth_required": settings.auth_required}
+
+
+@app.get("/api/admin/status")
+def admin_status(request: Request):
+    require_roles(request, {"admin"})
+    with connection() as conn:
+        return {
+            "auth_required": settings.auth_required,
+            "users": conn.execute("SELECT COUNT(*) FROM users WHERE active=1").fetchone()[0],
+            "teachers": conn.execute("SELECT COUNT(*) FROM users WHERE active=1 AND role='teacher'").fetchone()[0],
+            "classes": conn.execute("SELECT COUNT(*) FROM classes WHERE teacher_user_id IS NOT NULL").fetchone()[0],
+            "pending_reviews": conn.execute("SELECT COUNT(*) FROM submissions WHERE needs_review=1").fetchone()[0],
+            "retention": {"submission_days": settings.submission_retention_days, "audit_days": settings.audit_retention_days},
+        }
+
+
+@app.get("/api/admin/teachers")
+def admin_list_teachers(request: Request):
+    require_roles(request, {"admin"})
+    with connection() as conn:
+        rows = conn.execute("""SELECT u.id,u.username,u.display_name,u.active,u.created_at,COUNT(c.id) AS class_count
+                               FROM users u LEFT JOIN classes c ON c.teacher_user_id=u.id
+                               WHERE u.role='teacher' GROUP BY u.id ORDER BY u.created_at DESC""").fetchall()
+    return [dict(row) for row in rows]
+
+
+@app.post("/api/admin/teachers", status_code=201)
+def admin_create_teacher(payload: TeacherCreateIn, request: Request):
+    admin = require_roles(request, {"admin"})
+    from .auth import hash_password
+    with connection() as conn:
+        try:
+            cur = conn.execute("INSERT INTO users(username,display_name,password_hash,role) VALUES(?,?,?,'teacher')",
+                               (payload.username.strip(), payload.display_name.strip(), hash_password(payload.temporary_password)))
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(409, "该登录名已存在") from exc
+    audit(admin, "teacher.create", "user", cur.lastrowid, metadata={"username": payload.username.strip()})
+    return {"id": cur.lastrowid, "username": payload.username.strip(), "display_name": payload.display_name.strip(), "role": "teacher"}
+
+
+@app.get("/api/admin/audit")
+def admin_audit(request: Request, limit: int = 100):
+    require_roles(request, {"admin"})
+    limit = min(max(limit, 1), 500)
+    with connection() as conn:
+        rows = conn.execute("""SELECT l.*,u.username,u.display_name FROM audit_logs l
+                               LEFT JOIN users u ON u.id=l.actor_user_id
+                               ORDER BY l.id DESC LIMIT ?""", (limit,)).fetchall()
+    return [dict(row) for row in rows]
+
+
+@app.get("/api/admin/roster-template")
+def admin_roster_template(request: Request):
+    require_roles(request, {"admin"})
+    return Response("学号,姓名\n20260001,示例同学\n", media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": "attachment; filename=roster_template.csv"})
 
 
 def _difficulty_label(value: object) -> str:
@@ -454,10 +564,14 @@ async def _sync_section_into_local_cache(section_no: str, limit: int = 80) -> di
 
 
 @app.get("/api/questions")
-def list_questions(chapter: str | None = None):
+def list_questions(request: Request, chapter: str | None = None):
+    actor = require_roles(request, {"admin", "teacher"})
     sql, args = "SELECT * FROM questions WHERE review_status='published'", []
     if chapter:
         sql += " AND chapter=?"; args.append(chapter)
+    scope = teacher_id_for_scope(actor)
+    if scope is not None:
+        sql += " AND (owner_teacher_id IS NULL OR owner_teacher_id=?)"; args.append(scope)
     with connection() as conn:
         return [dict(r) for r in conn.execute(sql + " ORDER BY id DESC", args)]
 
@@ -678,7 +792,8 @@ def mineru_review_page():
 
 
 @app.post("/api/questions", status_code=201)
-def create_question(question: QuestionIn):
+def create_question(question: QuestionIn, request: Request):
+    actor = require_roles(request, {"admin", "teacher"})
     report = validate_question(
         question.content,
         source_type="manual",
@@ -691,34 +806,45 @@ def create_question(question: QuestionIn):
             "题目未通过数学校验，不能发布：" + (first_issue_message(report) or "存在结构问题"),
         )
     with connection() as conn:
-        cursor = conn.execute("""INSERT INTO questions(content,chapter,difficulty,question_type,answer,rubric,source_page,review_status)
-          VALUES(?,?,?,?,?,?,?,?)""", (
+        cursor = conn.execute("""INSERT INTO questions(content,chapter,difficulty,question_type,answer,rubric,source_page,review_status,owner_teacher_id)
+          VALUES(?,?,?,?,?,?,?,?,?)""", (
             question.content, question.chapter, question.difficulty,
             question.question_type, question.answer, question.rubric,
-            question.source_page, "published",
+            question.source_page, "published", actor["id"] if actor["role"] == "teacher" else None,
         ))
+        audit(actor, "question.create", "question", cursor.lastrowid, actor["id"] if actor["role"] == "teacher" else None)
         return {"id": cursor.lastrowid, "message": "题目已入库，待教师审核后可参与组卷。"}
 
 
 @app.get("/api/questions/{question_id}")
-def get_question(question_id: int):
+def get_question(question_id: int, request: Request):
     """Return a single question by id (any review_status, not just published)."""
+    actor = require_roles(request, {"admin", "teacher"})
     with connection() as conn:
         row = conn.execute("SELECT * FROM questions WHERE id=?", (question_id,)).fetchone()
     if not row:
+        raise HTTPException(404, f"题目 {question_id} 不存在")
+    scope = teacher_id_for_scope(actor)
+    if scope is not None and row["owner_teacher_id"] not in (None, scope):
         raise HTTPException(404, f"题目 {question_id} 不存在")
     return dict(row)
 
 
 @app.put("/api/questions/{question_id}")
-def update_question(question_id: int, payload: QuestionUpdateIn):
+def update_question(question_id: int, payload: QuestionUpdateIn, request: Request):
     """Manual edit of an existing question.  Provided fields are written; missing
     fields are left untouched.  Saving is NOT blocked by the math validator — we
     only surface a non-fatal warning when the new content looks suspicious."""
+    actor = require_roles(request, {"admin", "teacher"})
     with connection() as conn:
         row = conn.execute("SELECT * FROM questions WHERE id=?", (question_id,)).fetchone()
         if not row:
             raise HTTPException(404, f"题目 {question_id} 不存在")
+        scope = teacher_id_for_scope(actor)
+        if scope is not None and row["owner_teacher_id"] not in (None, scope):
+            raise HTTPException(404, f"题目 {question_id} 不存在")
+        if scope is not None and row["owner_teacher_id"] is None:
+            raise HTTPException(403, "官方题库为只读；请复制为个人题目后再修改，避免影响其他教师")
         fields = {}
         if payload.content is not None:
             fields["content"] = payload.content
@@ -744,6 +870,7 @@ def update_question(question_id: int, payload: QuestionUpdateIn):
             list(fields.values()) + [question_id],
         )
         new_row = conn.execute("SELECT * FROM questions WHERE id=?", (question_id,)).fetchone()
+    audit(actor, "question.update", "question", question_id, row["owner_teacher_id"])
     # Best-effort push the edited fields back to the 8014 evidence DB so the
     # source of truth stays consistent with the manual correction.
     sync_status = {"synced": False, "skipped": "未请求同步"}
@@ -924,10 +1051,32 @@ def garble_queue(review_status: str | None = None, source: Literal["audit", "liv
     return {"items": items, "note": f"共 {len(items)} 道{label}待修订题目"}
 
 
-def _require_class(conn: sqlite3.Connection, class_id: int) -> sqlite3.Row:
-    row = conn.execute("SELECT id,name,semester FROM classes WHERE id=?", (class_id,)).fetchone()
+def _require_class(conn: sqlite3.Connection, class_id: int, actor: dict | None = None) -> sqlite3.Row:
+    row = conn.execute("SELECT id,name,semester,teacher_user_id FROM classes WHERE id=?", (class_id,)).fetchone()
     if not row:
         raise HTTPException(404, "班级不存在；请先在“班级与名单”中创建班级")
+    if actor:
+        scope = teacher_id_for_scope(actor)
+        if scope is not None and row["teacher_user_id"] != scope:
+            # Do not reveal whether another teacher's class exists.
+            raise HTTPException(404, "班级不存在")
+    return row
+
+
+def _require_assignment(conn: sqlite3.Connection, assignment_id: int, actor: dict | None = None) -> sqlite3.Row:
+    row = conn.execute("""SELECT a.*,c.teacher_user_id FROM assignments a
+                        LEFT JOIN classes c ON c.id=a.class_id WHERE a.id=?""", (assignment_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "作业不存在")
+    if actor:
+        if actor["role"] == "student":
+            enrolled = conn.execute("SELECT 1 FROM students WHERE class_id=? AND user_id=?", (row["class_id"], actor["id"])).fetchone()
+            if not enrolled:
+                raise HTTPException(404, "作业不存在")
+            return row
+        scope = teacher_id_for_scope(actor)
+        if scope is not None and row["teacher_user_id"] != scope:
+            raise HTTPException(404, "作业不存在")
     return row
 
 
@@ -1020,34 +1169,44 @@ def _save_roster(class_id: int, students: list[dict]) -> dict:
 
 
 @app.get("/api/classes")
-def list_classes():
+def list_classes(request: Request):
+    actor = require_roles(request, {"admin", "teacher"})
+    scope = teacher_id_for_scope(actor)
     with connection() as conn:
-        rows = conn.execute(
+        sql = (
             """SELECT c.id,c.name,c.semester,c.created_at,COUNT(DISTINCT st.id) AS student_count,
                       COUNT(DISTINCT a.id) AS assignment_count
                FROM classes c
                LEFT JOIN students st ON st.class_id=c.id
                LEFT JOIN assignments a ON a.class_id=c.id
-               GROUP BY c.id ORDER BY c.semester DESC,c.name"""
-        ).fetchall()
+            """
+        )
+        args: list[object] = []
+        if scope is not None:
+            sql += " WHERE c.teacher_user_id=?"; args.append(scope)
+        rows = conn.execute(sql + " GROUP BY c.id ORDER BY c.semester DESC,c.name", args).fetchall()
     return [dict(row) for row in rows]
 
 
 @app.post("/api/classes", status_code=201)
-def create_class(payload: ClassIn):
+def create_class(payload: ClassIn, request: Request):
+    actor = require_roles(request, {"admin", "teacher"})
     name, semester = payload.name.strip(), payload.semester.strip()
     with connection() as conn:
         try:
-            cur = conn.execute("INSERT INTO classes(name,semester) VALUES(?,?)", (name, semester))
+            cur = conn.execute("INSERT INTO classes(name,semester,teacher_user_id) VALUES(?,?,?)", (name, semester, actor["id"]))
         except sqlite3.IntegrityError as exc:
             raise HTTPException(409, "该学期已存在同名班级") from exc
+    audit(actor, "class.create", "class", cur.lastrowid, actor["id"] if actor["role"] == "teacher" else None,
+          {"name": name, "semester": semester})
     return {"id": cur.lastrowid, "name": name, "semester": semester}
 
 
 @app.get("/api/classes/{class_id}/students")
-def list_class_students(class_id: int):
+def list_class_students(class_id: int, request: Request):
+    actor = require_roles(request, {"admin", "teacher"})
     with connection() as conn:
-        _require_class(conn, class_id)
+        _require_class(conn, class_id, actor)
         rows = conn.execute(
             "SELECT id,student_no,name,created_at FROM students WHERE class_id=? ORDER BY student_no", (class_id,)
         ).fetchall()
@@ -1055,28 +1214,79 @@ def list_class_students(class_id: int):
 
 
 @app.post("/api/classes/{class_id}/students/import")
-def import_roster_json(class_id: int, payload: StudentListIn):
-    return _save_roster(class_id, payload.students)
+def import_roster_json(class_id: int, payload: StudentListIn, request: Request):
+    actor = require_roles(request, {"admin", "teacher"})
+    with connection() as conn: _require_class(conn, class_id, actor)
+    result = _save_roster(class_id, payload.students)
+    audit(actor, "roster.import", "class", class_id, actor["id"] if actor["role"] == "teacher" else None, result)
+    return result
 
 
 @app.post("/api/classes/{class_id}/students/import-file")
-async def import_roster_file(class_id: int, file: UploadFile = File(...)):
+async def import_roster_file(class_id: int, request: Request, file: UploadFile = File(...)):
+    actor = require_roles(request, {"admin", "teacher"})
+    with connection() as conn: _require_class(conn, class_id, actor)
     filename = file.filename or "名单"
     raw = await file.read()
     if len(raw) > 10 * 1024 * 1024:
         raise HTTPException(413, "名单文件不能超过 10 MB")
-    return {"filename": filename, **_save_roster(class_id, _parse_roster_file(filename, raw))}
+    result = _save_roster(class_id, _parse_roster_file(filename, raw))
+    audit(actor, "roster.import", "class", class_id, actor["id"] if actor["role"] == "teacher" else None, result)
+    return {"filename": filename, **result}
+
+
+@app.post("/api/classes/{class_id}/invites", status_code=201)
+def create_class_invite(class_id: int, payload: InviteCreateIn, request: Request):
+    actor = require_roles(request, {"admin", "teacher"})
+    raw_code = "MATH-" + __import__("secrets").token_urlsafe(18)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=payload.expires_days)
+    with connection() as conn:
+        row = _require_class(conn, class_id, actor)
+        cur = conn.execute("""INSERT INTO class_invites(class_id,code_hash,expires_at,max_uses,created_by)
+                            VALUES(?,?,?,?,?)""", (class_id, token_hash(raw_code), expires_at.isoformat(), payload.max_uses, actor["id"] or 0))
+    audit(actor, "invite.create", "class_invite", cur.lastrowid, row["teacher_user_id"],
+          {"class_id": class_id, "expires_at": expires_at.isoformat(), "max_uses": payload.max_uses})
+    return {"id": cur.lastrowid, "invite_code": raw_code, "expires_at": expires_at.isoformat(), "max_uses": payload.max_uses,
+            "student_activation_url": f"/student-activate?code={raw_code}"}
+
+
+@app.post("/api/auth/student-activate", status_code=201)
+def activate_student(payload: StudentActivateIn, request: Request, response: Response):
+    """One-time class invitation + existing roster identity binds a student account."""
+    with connection() as conn:
+        invite = conn.execute("""SELECT i.*,c.teacher_user_id FROM class_invites i JOIN classes c ON c.id=i.class_id
+                                WHERE i.code_hash=? AND i.revoked_at IS NULL""", (token_hash(payload.invite_code),)).fetchone()
+        if not invite or datetime.fromisoformat(invite["expires_at"]).astimezone(timezone.utc) <= datetime.now(timezone.utc) or invite["used_count"] >= invite["max_uses"]:
+            raise HTTPException(403, "邀请码无效、已过期或使用次数已满")
+        roster = conn.execute("SELECT id,name,user_id FROM students WHERE class_id=? AND student_no=?", (invite["class_id"], payload.student_no.strip())).fetchone()
+        if not roster or roster["name"].strip() != payload.name.strip():
+            raise HTTPException(403, "学号或姓名与该班导入名单不一致")
+        if roster["user_id"] is not None:
+            raise HTTPException(409, "该名单学生已激活账号，请直接登录")
+        from .auth import hash_password
+        try:
+            user_id = conn.execute("INSERT INTO users(username,display_name,password_hash,role) VALUES(?,?,?,'student')",
+                                   (payload.username.strip(), payload.name.strip(), hash_password(payload.password))).lastrowid
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(409, "该登录名已存在") from exc
+        conn.execute("UPDATE students SET user_id=? WHERE id=?", (user_id, roster["id"]))
+        conn.execute("UPDATE class_invites SET used_count=used_count+1 WHERE id=?", (invite["id"],))
+    user, token, expires_at = login(payload.username, payload.password)
+    response.set_cookie(settings.session_cookie_name, token, httponly=True, secure=settings.cookie_secure, samesite="lax", expires=expires_at)
+    audit(user, "student.activate", "class", invite["class_id"], invite["teacher_user_id"], ip=request.client.host if request.client else None)
+    return {"user": user, "class_id": invite["class_id"]}
 
 
 @app.post("/api/assignments", status_code=201)
-async def create_assignment(payload: AssignmentIn):
+async def create_assignment(payload: AssignmentIn, request: Request):
+    actor = require_roles(request, {"admin", "teacher"})
     if payload.basic_ratio + payload.advanced_ratio > 1:
         raise HTTPException(422, "基础和提高比例之和不能超过 1")
     levels = (["基础"] * round(payload.question_count * payload.basic_ratio) +
               ["提高"] * round(payload.question_count * payload.advanced_ratio))
     levels += ["综合"] * (payload.question_count - len(levels))
     with connection() as conn:
-        class_row = _require_class(conn, payload.class_id)
+        class_row = _require_class(conn, payload.class_id, actor)
         _require_roster(conn, payload.class_id)
         picked, used = [], set()
         for level in levels:
@@ -1094,6 +1304,8 @@ async def create_assignment(payload: AssignmentIn):
             [(assignment_id, q["id"], i + 1, score, str(i + 1)) for i, q in enumerate(picked)],
         )
     ai_note = await run_workflow({"task": "assignment_review", "chapter": payload.chapter, "question_ids": list(used)})
+    audit(actor, "assignment.create", "assignment", assignment_id, class_row["teacher_user_id"],
+          {"class_id": payload.class_id, "question_count": len(picked)})
     return {"id": assignment_id, "questions": picked, "ai_review": ai_note}
 
 
@@ -1186,10 +1398,11 @@ async def create_evidence_backed_assignment(payload: AssignmentIn):
 
 
 @app.post("/api/agent/pipeline/publish", status_code=201)
-async def pipeline_publish(payload: AssignmentIn):
+async def pipeline_publish(payload: AssignmentIn, request: Request):
+    actor = require_roles(request, {"admin", "teacher"})
     """Full pipeline surface: returns sync + stratify + assemble diagnostics."""
     with connection() as conn:
-        class_row = _require_class(conn, payload.class_id)
+        class_row = _require_class(conn, payload.class_id, actor)
         _require_roster(conn, payload.class_id)
     return await publish_homework(
         sections=_parse_sections(payload.chapter),
@@ -1204,48 +1417,59 @@ async def pipeline_publish(payload: AssignmentIn):
 
 
 @app.get("/api/assignments")
-def list_assignments(class_name: str | None = None, include_legacy: bool = False):
+def list_assignments(request: Request, class_name: str | None = None, include_legacy: bool = False):
+    actor = current_user(request)
     sql, args = "SELECT * FROM assignments", []
     clauses = [] if include_legacy else ["class_id IS NOT NULL"]
     if class_name:
         clauses.append("class_name=?")
         args.append(class_name)
+    scope = teacher_id_for_scope(actor)
+    if actor["role"] == "student":
+        clauses.append("class_id IN (SELECT class_id FROM students WHERE user_id=?)")
+        args.append(actor["id"])
+    elif scope is not None:
+        clauses.append("class_id IN (SELECT id FROM classes WHERE teacher_user_id=?)")
+        args.append(scope)
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
     with connection() as conn: return [dict(r) for r in conn.execute(sql + " ORDER BY due_at DESC", args)]
 
 
 @app.patch("/api/assignments/{assignment_id}")
-def update_assignment(assignment_id: int, payload: AssignmentUpdateIn):
+def update_assignment(assignment_id: int, payload: AssignmentUpdateIn, request: Request):
+    actor = require_roles(request, {"admin", "teacher"})
     with connection() as conn:
+        assignment = _require_assignment(conn, assignment_id, actor)
         changed = conn.execute(
             "UPDATE assignments SET title=?, due_at=? WHERE id=?",
             (payload.title.strip(), payload.due_at.isoformat(), assignment_id),
         ).rowcount
     if not changed:
         raise HTTPException(404, "作业不存在")
+    audit(actor, "assignment.update", "assignment", assignment_id, assignment["teacher_user_id"])
     return {"ok": True, "message": "作业信息已更新"}
 
 
 @app.delete("/api/assignments/{assignment_id}")
-def delete_assignment(assignment_id: int):
+def delete_assignment(assignment_id: int, request: Request):
+    actor = require_roles(request, {"admin", "teacher"})
     with connection() as conn:
-        assignment = conn.execute("SELECT id FROM assignments WHERE id=?", (assignment_id,)).fetchone()
-        if not assignment:
-            raise HTTPException(404, "作业不存在")
+        assignment = _require_assignment(conn, assignment_id, actor)
         submission_count = conn.execute("SELECT COUNT(*) FROM submissions WHERE assignment_id=?", (assignment_id,)).fetchone()[0]
         if submission_count:
             raise HTTPException(409, "该作业已有学生提交，不能删除；请保留评分证据。")
         conn.execute("DELETE FROM assignment_questions WHERE assignment_id=?", (assignment_id,))
         conn.execute("DELETE FROM assignments WHERE id=?", (assignment_id,))
+    audit(actor, "assignment.delete", "assignment", assignment_id, assignment["teacher_user_id"])
     return {"ok": True, "message": "作业已删除"}
 
 
 @app.get("/api/assignments/{assignment_id}/print", response_class=HTMLResponse)
-def printable_assignment(assignment_id: int):
+def printable_assignment(assignment_id: int, request: Request):
+    actor = current_user(request)
     with connection() as conn:
-        assignment = conn.execute("SELECT * FROM assignments WHERE id=?", (assignment_id,)).fetchone()
-        if not assignment: raise HTTPException(404, "作业不存在")
+        assignment = _require_assignment(conn, assignment_id, actor)
         rows = conn.execute("""SELECT q.*, aq.sort_order, aq.score, aq.original_no FROM assignment_questions aq
           JOIN questions q ON q.id=aq.question_id WHERE aq.assignment_id=? ORDER BY aq.sort_order""", (assignment_id,)).fetchall()
     # Use assignment sequence numbers, and remove the source number from each
@@ -1267,11 +1491,9 @@ def printable_assignment(assignment_id: int):
     <header><h1>{escape(assignment['title'])}</h1><div class='meta'><span>班级：{escape(assignment['class_name'])}</span><span>姓名：__________</span><span>学号：__________</span></div><p>章节：{escape(assignment['chapter'])}　截止：{escape(assignment['due_at'])}　总分：{assignment['total_score']}</p></header>{items}</html>"""
 
 
-def _load_assignment_items(assignment_id: int) -> tuple[dict, list[dict]]:
+def _load_assignment_items(assignment_id: int, actor: dict | None = None) -> tuple[dict, list[dict]]:
     with connection() as conn:
-        assignment = conn.execute("SELECT * FROM assignments WHERE id=?", (assignment_id,)).fetchone()
-        if not assignment:
-            raise HTTPException(404, "作业不存在")
+        assignment = _require_assignment(conn, assignment_id, actor)
         rows = conn.execute("""SELECT q.content, q.question_type, q.source_problem_no, aq.sort_order, aq.score, aq.original_no
           FROM assignment_questions aq JOIN questions q ON q.id=aq.question_id
           WHERE aq.assignment_id=? ORDER BY aq.sort_order""", (assignment_id,)).fetchall()
@@ -1279,9 +1501,9 @@ def _load_assignment_items(assignment_id: int) -> tuple[dict, list[dict]]:
 
 
 @app.get("/api/assignments/{assignment_id}/pdf")
-def download_assignment_pdf(assignment_id: int):
+def download_assignment_pdf(assignment_id: int, request: Request):
     """Render the real printable A4 homework PDF (original numbers + answer blanks)."""
-    assignment, items = _load_assignment_items(assignment_id)
+    assignment, items = _load_assignment_items(assignment_id, current_user(request))
     out_dir = Path(settings.upload_dir) / "assignments"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"assignment_{assignment_id}.pdf"
@@ -1293,16 +1515,16 @@ def download_assignment_pdf(assignment_id: int):
 
 
 @app.get("/api/assignments/{assignment_id}/latex")
-def download_assignment_latex(assignment_id: int):
+def download_assignment_latex(assignment_id: int, request: Request):
     """Return the LaTeX source of every selected problem as JSON (设计二：含 latex 源码)."""
-    assignment, items = _load_assignment_items(assignment_id)
+    assignment, items = _load_assignment_items(assignment_id, current_user(request))
     return export_latex_source(assignment, items)
 
 
 @app.get("/api/assignments/{assignment_id}/latex.tex")
-def download_assignment_latex_tex(assignment_id: int):
+def download_assignment_latex_tex(assignment_id: int, request: Request):
     """Return a compilable .tex document wrapping the selected problems."""
-    assignment, items = _load_assignment_items(assignment_id)
+    assignment, items = _load_assignment_items(assignment_id, current_user(request))
     out_dir = Path(settings.upload_dir) / "assignments"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"assignment_{assignment_id}.tex"
@@ -1316,6 +1538,16 @@ def student_submit_page():
     return FileResponse(Path(__file__).with_name("student_submit.html"))
 
 
+@app.get("/login", response_class=HTMLResponse)
+def login_page():
+    return FileResponse(Path(__file__).with_name("login.html"))
+
+
+@app.get("/student-activate", response_class=HTMLResponse)
+def student_activate_page():
+    return FileResponse(Path(__file__).with_name("student_activate.html"))
+
+
 # 学生提交加固常量
 _ALLOWED_EXT = {".pdf", ".jpg", ".jpeg", ".png", ".doc", ".docx"}
 _MAX_UPLOAD_BYTES = 30 * 1024 * 1024  # 30MB 上限
@@ -1323,7 +1555,10 @@ _STUDENT_NO_RE = re.compile(r"[A-Za-z0-9_]{1,32}")
 
 
 @app.post("/api/assignments/{assignment_id}/submissions", status_code=201)
-async def submit_homework(assignment_id: int, background_tasks: BackgroundTasks, student_no: str = Form(...), student_name: str = Form(""), file: UploadFile = File(...)):
+async def submit_homework(assignment_id: int, background_tasks: BackgroundTasks, request: Request, student_no: str = Form(...), student_name: str = Form(""), file: UploadFile = File(...)):
+    actor = current_user(request)
+    if settings.auth_required and actor["role"] != "student":
+        raise HTTPException(403, "请使用学生账号提交作业")
     # 1) 学号格式与路径穿越防护：仅允许字母/数字/下划线，避免 folder = upload_dir/student_no 被注入
     student_no = (student_no or "").strip()
     if not _STUDENT_NO_RE.fullmatch(student_no):
@@ -1340,16 +1575,16 @@ async def submit_homework(assignment_id: int, background_tasks: BackgroundTasks,
 
     # 3) 防重复提交：同一作业+学号若已有正在批改（queued/running）的任务则拒绝
     with connection() as conn:
-        assignment = conn.execute("SELECT id,class_id FROM assignments WHERE id=?", (assignment_id,)).fetchone()
-        if not assignment:
-            raise HTTPException(404, "作业不存在")
+        assignment = _require_assignment(conn, assignment_id, actor)
         if assignment["class_id"] is None:
             raise HTTPException(409, "这是历史演示作业，不能再接收提交；请从已建班级重新发布作业")
         enrolled = conn.execute(
-            "SELECT name FROM students WHERE class_id=? AND student_no=?", (assignment["class_id"], student_no)
+            "SELECT name,user_id FROM students WHERE class_id=? AND student_no=?", (assignment["class_id"], student_no)
         ).fetchone()
         if not enrolled:
             raise HTTPException(403, "该学号不在本班名单中，请联系教师核对班级名单")
+        if settings.auth_required and enrolled["user_id"] != actor["id"]:
+            raise HTTPException(403, "当前学生账号与提交学号不一致")
         if not student_name:
             student_name = enrolled["name"]
         if conn.execute(
@@ -1393,28 +1628,38 @@ async def submit_homework(assignment_id: int, background_tasks: BackgroundTasks,
         submission_id = cur.lastrowid
         job_id = conn.execute("INSERT INTO grading_jobs(submission_id) VALUES(?)", (submission_id,)).lastrowid
     background_tasks.add_task(run_grading_job, job_id)
+    audit(actor, "submission.create", "submission", submission_id,
+          assignment["teacher_user_id"], {"assignment_id": assignment_id})
     return {"id": submission_id, "grading_job_id": job_id, "message": "提交成功，系统已归档并启动智能初评。"}
 
 
 @app.post("/api/grading/run-due")
-def queue_due_grading():
+def queue_due_grading(request: Request):
+    require_roles(request, {"admin", "teacher"})
     now = datetime.now(timezone.utc).isoformat()
     queued = enqueue_due_grading(now)
     return {"queued": queued, "message": "已为截止作业创建批改任务；主观题将进入复核队列。"}
 
 
 @app.get("/api/reviews")
-def list_reviews():
+def list_reviews(request: Request):
     """Teacher queue: only evidence and candidates, never silently published marks."""
+    actor = require_roles(request, {"admin", "teacher"})
+    scope = teacher_id_for_scope(actor)
     with connection() as conn:
-        rows = conn.execute(
+        sql = (
             """SELECT s.id, s.assignment_id, s.student_no, s.student_name, s.status, s.score,
                       s.feedback, s.submitted_at, j.status AS grading_status, j.result_json, a.title
                FROM submissions s JOIN assignments a ON a.id=s.assignment_id
+               JOIN classes c ON c.id=a.class_id
                LEFT JOIN grading_jobs j ON j.submission_id=s.id
                WHERE a.class_id IS NOT NULL AND (s.needs_review=1 OR j.status IN ('queued','running','failed'))
-               ORDER BY s.submitted_at DESC"""
-        ).fetchall()
+            """
+        )
+        args: list[object] = []
+        if scope is not None:
+            sql += " AND c.teacher_user_id=?"; args.append(scope)
+        rows = conn.execute(sql + " ORDER BY s.submitted_at DESC", args).fetchall()
     items = []
     for row in rows:
         item = dict(row)
@@ -1426,15 +1671,19 @@ def list_reviews():
 
 
 @app.get("/api/submissions/{submission_id}/grading")
-def grading_evidence(submission_id: int):
+def grading_evidence(submission_id: int, request: Request):
+    actor = require_roles(request, {"admin", "teacher"})
     with connection() as conn:
         row = conn.execute(
-            """SELECT s.*, j.status AS grading_status, j.result_json, a.title
-               FROM submissions s JOIN assignments a ON a.id=s.assignment_id
+            """SELECT s.*, j.status AS grading_status, j.result_json, a.title,c.teacher_user_id
+               FROM submissions s JOIN assignments a ON a.id=s.assignment_id JOIN classes c ON c.id=a.class_id
                LEFT JOIN grading_jobs j ON j.submission_id=s.id WHERE s.id=?""",
             (submission_id,),
         ).fetchone()
     if not row:
+        raise HTTPException(404, "提交不存在")
+    scope = teacher_id_for_scope(actor)
+    if scope is not None and row["teacher_user_id"] != scope:
         raise HTTPException(404, "提交不存在")
     payload = dict(row)
     payload["grading_result"] = json.loads(payload.pop("result_json") or "{}")
@@ -1444,11 +1693,16 @@ def grading_evidence(submission_id: int):
 
 
 @app.get("/api/submissions/{submission_id}/file")
-def original_submission_file(submission_id: int):
+def original_submission_file(submission_id: int, request: Request):
     """Serve only the original file belonging to this submission for review."""
     with connection() as conn:
-        row = conn.execute("SELECT file_path FROM submissions WHERE id=?", (submission_id,)).fetchone()
+        row = conn.execute("""SELECT s.file_path,c.teacher_user_id FROM submissions s JOIN assignments a ON a.id=s.assignment_id
+                            JOIN classes c ON c.id=a.class_id WHERE s.id=?""", (submission_id,)).fetchone()
     if not row:
+        raise HTTPException(404, "提交不存在")
+    actor = require_roles(request, {"admin", "teacher"})
+    scope = teacher_id_for_scope(actor)
+    if scope is not None and row["teacher_user_id"] != scope:
         raise HTTPException(404, "提交不存在")
     path = Path(row["file_path"]).resolve()
     upload_root = Path(settings.upload_dir).resolve()
@@ -1458,11 +1712,16 @@ def original_submission_file(submission_id: int):
 
 
 @app.post("/api/submissions/{submission_id}/review")
-def confirm_review(submission_id: int, decision: ReviewDecisionIn):
+def confirm_review(submission_id: int, decision: ReviewDecisionIn, request: Request):
     """Only the teacher's decision becomes reusable experience."""
+    actor = require_roles(request, {"admin", "teacher"})
     with connection() as conn:
-        submission = conn.execute("SELECT * FROM submissions WHERE id=?", (submission_id,)).fetchone()
+        submission = conn.execute("""SELECT s.*,c.teacher_user_id FROM submissions s JOIN assignments a ON a.id=s.assignment_id
+                                   JOIN classes c ON c.id=a.class_id WHERE s.id=?""", (submission_id,)).fetchone()
         if not submission:
+            raise HTTPException(404, "提交不存在")
+        scope = teacher_id_for_scope(actor)
+        if scope is not None and submission["teacher_user_id"] != scope:
             raise HTTPException(404, "提交不存在")
         job = conn.execute("SELECT result_json FROM grading_jobs WHERE submission_id=?", (submission_id,)).fetchone()
         evidence = (job["result_json"] if job else "") or "{}"
@@ -1476,6 +1735,7 @@ def confirm_review(submission_id: int, decision: ReviewDecisionIn):
                VALUES(?,?,?,?,?)""",
             (submission_id, submission["assignment_id"], decision.score, decision.feedback, evidence),
         )
+    audit(actor, "submission.review", "submission", submission_id, submission["teacher_user_id"], {"score": decision.score})
     return {"ok": True, "message": "教师复核已确认，评分证据已沉淀为可复用经验。"}
 
 
@@ -1483,17 +1743,22 @@ REVIEW_QUOTA_PER_CLASS = 2  # 设计文档要求：每班不少于 2 次人工�
 
 
 @app.get("/api/reports/review-quota")
-def review_quota():
+def review_quota(request: Request):
     """人工复核配额：每个班级（按学期）已完成的教师复核次数；少于配额则提示。"""
+    actor = require_roles(request, {"admin", "teacher"})
+    scope = teacher_id_for_scope(actor)
     with connection() as conn:
-        rows = conn.execute(
+        sql = (
             """SELECT a.class_name, a.semester, COUNT(DISTINCT ge.id) AS reviewed
                FROM grading_experiences ge
                JOIN submissions s ON s.id=ge.submission_id
                JOIN assignments a ON a.id=ge.assignment_id
                JOIN classes c ON c.id=a.class_id
-               GROUP BY a.class_name, a.semester"""
-        ).fetchall()
+            """
+        )
+        args: list[object] = []
+        if scope is not None: sql += " WHERE c.teacher_user_id=?"; args.append(scope)
+        rows = conn.execute(sql + " GROUP BY a.class_name, a.semester", args).fetchall()
     items = []
     for r in rows:
         reviewed = r["reviewed"]
@@ -1507,8 +1772,10 @@ def review_quota():
 
 
 @app.get("/api/reports/weak-points")
-def weak_points(class_name: str | None = None, semester: str | None = None, top: int = 10):
+def weak_points(request: Request, class_name: str | None = None, semester: str | None = None, top: int = 10):
     """薄弱知识点建议：按知识点（无标签时回退章节）聚合得分率，低于阈值给出补习建议。"""
+    actor = require_roles(request, {"admin", "teacher"})
+    scope = teacher_id_for_scope(actor)
     with connection() as conn:
         qmap = {row["id"]: (row["knowledge_points"] or row["chapter"])
                 for row in conn.execute("SELECT id, knowledge_points, chapter FROM questions")}
@@ -1517,6 +1784,8 @@ def weak_points(class_name: str | None = None, semester: str | None = None, top:
             clauses.append("a.class_name=?"); params.append(class_name)
         if semester:
             clauses.append("a.semester=?"); params.append(semester)
+        if scope is not None:
+            clauses.append("c.teacher_user_id=?"); params.append(scope)
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         rows = conn.execute(
             f"""SELECT ge.evidence_json FROM grading_experiences ge
@@ -1550,8 +1819,10 @@ def weak_points(class_name: str | None = None, semester: str | None = None, top:
 
 
 @app.get("/api/reports/semester-summary")
-def semester_summary(class_name: str | None = None, semester: str | None = None):
+def semester_summary(request: Request, class_name: str | None = None, semester: str | None = None):
     """学期末分数汇总：按学生聚合总分/平均分/排名，含班级均分、分布与书写整洁度。"""
+    actor = require_roles(request, {"admin", "teacher"})
+    scope = teacher_id_for_scope(actor)
     with connection() as conn:
         clauses = ["s.status='graded'", "a.class_id IS NOT NULL"]
         params = []
@@ -1559,6 +1830,8 @@ def semester_summary(class_name: str | None = None, semester: str | None = None)
             clauses.append("a.class_name=?"); params.append(class_name)
         if semester:
             clauses.append("a.semester=?"); params.append(semester)
+        if scope is not None:
+            clauses.append("c.teacher_user_id=?"); params.append(scope)
         where = " AND ".join(clauses)
         rows = conn.execute(
             f"""SELECT s.student_no, s.student_name, s.score, s.handwriting_score,
@@ -1596,22 +1869,27 @@ def semester_summary(class_name: str | None = None, semester: str | None = None)
 
 
 @app.get("/api/reports/summary")
-async def summary():
+async def summary(request: Request):
+    actor = require_roles(request, {"admin", "teacher"})
+    scope = teacher_id_for_scope(actor)
     with connection() as conn:
-        local = dict(conn.execute("""SELECT (SELECT COUNT(*) FROM questions) question_count,
-          (SELECT COUNT(*) FROM assignments WHERE status='published' AND class_id IS NOT NULL) assignment_count,
-          (SELECT COUNT(*) FROM submissions s JOIN assignments a ON a.id=s.assignment_id WHERE a.class_id IS NOT NULL) submission_count,
-          (SELECT COUNT(*) FROM grading_jobs WHERE status='queued') review_queue""").fetchone())
+        suffix, args = ("", []) if scope is None else (" AND class_id IN (SELECT id FROM classes WHERE teacher_user_id=?)", [scope])
+        local = dict(conn.execute(f"""SELECT (SELECT COUNT(*) FROM questions) question_count,
+          (SELECT COUNT(*) FROM assignments WHERE status='published' AND class_id IS NOT NULL{suffix}) assignment_count,
+          (SELECT COUNT(*) FROM submissions s JOIN assignments a ON a.id=s.assignment_id WHERE a.class_id IS NOT NULL{suffix}) submission_count,
+          (SELECT COUNT(*) FROM grading_jobs WHERE status='queued') review_queue""", args * 2).fetchone())
+        hw_where = "a.class_id IS NOT NULL AND s.handwriting_score IS NOT NULL" + (" AND c.teacher_user_id=?" if scope is not None else "")
         hw = conn.execute(
             """SELECT AVG(s.handwriting_score) FROM submissions s
                JOIN assignments a ON a.id=s.assignment_id
-               WHERE a.class_id IS NOT NULL AND s.handwriting_score IS NOT NULL"""
-        ).fetchone()[0]
+               JOIN classes c ON c.id=a.class_id WHERE """ + hw_where, args).fetchone()[0]
+        below_where = "" if scope is None else " WHERE c.teacher_user_id=?"
         below = conn.execute(
             """SELECT COUNT(*) FROM (SELECT a.class_name, a.semester
                 FROM grading_experiences ge JOIN submissions s ON s.id=ge.submission_id
-                JOIN assignments a ON a.id=ge.assignment_id JOIN classes c ON c.id=a.class_id GROUP BY a.class_name, a.semester
-                HAVING COUNT(DISTINCT ge.id) < ?)""", (REVIEW_QUOTA_PER_CLASS,)).fetchone()[0]
+                JOIN assignments a ON a.id=ge.assignment_id JOIN classes c ON c.id=a.class_id""" + below_where +
+                " GROUP BY a.class_name, a.semester HAVING COUNT(DISTINCT ge.id) < ?)",
+            args + [REVIEW_QUOTA_PER_CLASS]).fetchone()[0]
     evidence = await evidence_status()
     return {
         **local,

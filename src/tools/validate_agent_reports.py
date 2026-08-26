@@ -39,14 +39,16 @@ try:
     chapter = "ZZ_WEAKTEST"
     con = sqlite3.connect(TEMP_DB)
     valid_difficulty = con.execute("SELECT difficulty FROM questions LIMIT 1").fetchone()[0]
+    con.execute("INSERT INTO classes(name,semester) VALUES(?,?)", ("test class", "2026-fall"))
+    class_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
     con.execute(
         "INSERT INTO questions(content,chapter,difficulty,question_type,answer,rubric,source_evidence_json) VALUES(?,?,?,?,?,?,?)",
         ("test weak point", chapter, valid_difficulty, "calc", "1", "one point", "{}"),
     )
     question_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
     con.execute(
-        "INSERT INTO assignments(title,chapter,class_name,due_at,total_score,status,semester) VALUES(?,?,?,?,?,?,?)",
-        ("test assignment", chapter, "test class", "2026-12-31T00:00:00Z", 100, "published", "2026-fall"),
+        "INSERT INTO assignments(title,chapter,class_name,class_id,due_at,total_score,status,semester) VALUES(?,?,?,?,?,?,?,?)",
+        ("test assignment", chapter, "test class", class_id, "2026-12-31T00:00:00Z", 100, "published", "2026-fall"),
     )
     assignment_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
     con.execute(

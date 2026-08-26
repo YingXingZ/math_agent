@@ -27,9 +27,12 @@ try:
     client = TestClient(main.app)
     with patch.object(main, "run_grading_job", lambda _job_id: None):
         con = sqlite3.connect(TEMP_DB)
+        con.execute("INSERT INTO classes(name,semester) VALUES(?,?)", ("test class", "2026-fall"))
+        class_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+        con.execute("INSERT INTO students(class_id,student_no,name) VALUES(?,?,?)", (class_id, "TESTSUB009", "test"))
         con.execute(
-            "INSERT INTO assignments(title,chapter,class_name,due_at,total_score,status,semester) VALUES(?,?,?,?,?,?,?)",
-            ("submission regression", "ZZ_TEST", "test class", "2026-12-31T00:00:00Z", 100, "published", "2026-fall"),
+            "INSERT INTO assignments(title,chapter,class_name,class_id,due_at,total_score,status,semester) VALUES(?,?,?,?,?,?,?,?)",
+            ("submission regression", "ZZ_TEST", "test class", class_id, "2026-12-31T00:00:00Z", 100, "published", "2026-fall"),
         )
         assignment_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
         con.commit()

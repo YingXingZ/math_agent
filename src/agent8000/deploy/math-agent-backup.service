@@ -1,0 +1,9 @@
+[Unit]
+Description=Backup Math Agent SQLite databases
+After=network.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/math-agent/math-agent.env
+Environment=BACKUP_DIR=/var/backups/math-agent
+ExecStart=/opt/math-agent/deploy/backup_databases.sh
