@@ -1,0 +1,206 @@
+{
+  "schema_version": "ocr-repair-audit/v1",
+  "providers": [
+    {
+      "provider": "mineru",
+      "candidates": 14,
+      "avg_confidence": 0.0,
+      "min_confidence": 0.0,
+      "max_confidence": 0.0,
+      "risk_marked": 14
+    },
+    {
+      "provider": "pp_formulanet",
+      "candidates": 14,
+      "avg_confidence": 0.0,
+      "min_confidence": 0.0,
+      "max_confidence": 0.0,
+      "risk_marked": 14
+    },
+    {
+      "provider": "vlm",
+      "candidates": 28,
+      "avg_confidence": 0.7964,
+      "min_confidence": 0.0,
+      "max_confidence": 0.9,
+      "risk_marked": 0
+    }
+  ],
+  "decisions": [
+    {
+      "decision": "NEEDS_TEACHER_REVIEW",
+      "count": 14
+    }
+  ],
+  "risk_marked_candidates": [
+    {
+      "problem_id": "5a5d7bf6-3ce8-4a05-93b5-7a8019a452cd",
+      "provider": "mineru",
+      "confidence": 0.0,
+      "risks_json": "[\"MinerU 未提供可校准单题置信度；必须对照原图复核\"]"
+    },
+    {
+      "problem_id": "37237cce-b2c0-44db-b77e-7a0e7c686fae",
+      "provider": "mineru",
+      "confidence": 0.0,
+      "risks_json": "[\"MinerU 未提供可校准单题置信度；必须对照原图复核\"]"
+    },
+    {
+      "problem_id": "d5cf7666-58f3-4524-9bed-5f13ec91790d",
+      "provider": "mineru",
+      "confidence": 0.0,
+      "risks_json": "[\"MinerU 未提供可校准单题置信度；必须对照原图复核\"]"
+    },
+    {
+      "problem_id": "945e09cb-bb71-4f70-8536-ba8ab0657946",
+      "provider": "mineru",
+      "confidence": 0.0,
+      "risks_json": "[\"MinerU 未提供可校准单题置信度；必须对照原图复核\"]"
+    },
+    {
+      "problem_id": "5bffc20e-9a19-4114-97a4-b5c1b6aa019b",
+      "provider": "mineru",
+      "confidence": 0.0,
+      "risks_json": "[\"MinerU 未提供可校准单题置信度；必须对照原图复核\"]"
+    },
+    {
+      "problem_id": "aeb21c02-e814-44b7-88f0-a4ff716754d5",
+      "provider": "mineru",
+      "confidence": 0.0,
+      "risks_json": "[\"MinerU 未提供可校准单题置信度；必须对照原图复核\"]"
+    },
+    {
+      "problem_id": "25682660-233e-4e35-864f-4ce3665f9a01",
+      "provider": "mineru",
+      "confidence": 0.0,
+      "risks_json": "[\"MinerU 未提供可校准单题置信度；必须对照原图复核\"]"
+    },
+    {
+      "problem_id": "2e03f9f0-2808-40a2-b25e-f2dd20456b60",
+      "provider": "mineru",
+      "confidence": 0.0,
+      "risks_json": "[\"MinerU 未提供可校准单题置信度；必须对照原图复核\"]"
+    },
+    {
+      "problem_id": "3f773633-65ba-40a5-a2ef-f3e5332db1bd",
+      "provider": "mineru",
+      "confidence": 0.0,
+      "risks_json": "[\"MinerU 未提供可校准单题置信度；必须对照原图复核\"]"
+    },
+    {
+      "problem_id": "0ba7911d-aa85-4229-b267-9a724b3e6f96",
+      "provider": "mineru",
+      "confidence": 0.0,
+      "risks_json": "[\"MinerU 未提供可校准单题置信度；必须对照原图复核\"]"
+    },
+    {
+      "problem_id": "2acd90e0-7983-4a05-b7a0-5d46b24335b3",
+      "provider": "mineru",
+      "confidence": 0.0,
+      "risks_json": "[\"MinerU 未提供可校准单题置信度；必须对照原图复核\"]"
+    },
+    {
+      "problem_id": "816fe29a-fef1-450c-8f2f-147f827aa27a",
+      "provider": "mineru",
+      "confidence": 0.0,
+      "risks_json": "[\"MinerU 未提供可校准单题置信度；必须对照原图复核\"]"
+    },
+    {
+      "problem_id": "b7b5ce07-ce6c-443d-9b04-2114a3b24e26",
+      "provider": "mineru",
+      "confidence": 0.0,
+      "risks_json": "[\"MinerU 未提供可校准单题置信度；必须对照原图复核\"]"
+    },
+    {
+      "problem_id": "4e1c7016-164c-478b-896a-f6f5dc284c96",
+      "provider": "mineru",
+      "confidence": 0.0,
+      "risks_json": "[\"MinerU 未提供可校准单题置信度；必须对照原图复核\"]"
+    },
+    {
+      "problem_id": "5a5d7bf6-3ce8-4a05-93b5-7a8019a452cd",
+      "provider": "pp_formulanet",
+      "confidence": 0.0,
+      "risks_json": "[\"FormulaNet 未提供可校准的整题置信度；输入含题干文字，必须对照原图复核\"]"
+    },
+    {
+      "problem_id": "37237cce-b2c0-44db-b77e-7a0e7c686fae",
+      "provider": "pp_formulanet",
+      "confidence": 0.0,
+      "risks_json": "[\"FormulaNet 未提供可校准的整题置信度；输入含题干文字，必须对照原图复核\"]"
+    },
+    {
+      "problem_id": "816fe29a-fef1-450c-8f2f-147f827aa27a",
+      "provider": "pp_formulanet",
+      "confidence": 0.0,
+      "risks_json": "[\"FormulaNet 未提供可校准的整题置信度；输入含题干文字，必须对照原图复核\"]"
+    },
+    {
+      "problem_id": "d5cf7666-58f3-4524-9bed-5f13ec91790d",
+      "provider": "pp_formulanet",
+      "confidence": 0.0,
+      "risks_json": "[\"FormulaNet 未提供可校准的整题置信度；输入含题干文字，必须对照原图复核\"]"
+    },
+    {
+      "problem_id": "b7b5ce07-ce6c-443d-9b04-2114a3b24e26",
+      "provider": "pp_formulanet",
+      "confidence": 0.0,
+      "risks_json": "[\"FormulaNet 未提供可校准的整题置信度；输入含题干文字，必须对照原图复核\"]"
+    },
+    {
+      "problem_id": "4e1c7016-164c-478b-896a-f6f5dc284c96",
+      "provider": "pp_formulanet",
+      "confidence": 0.0,
+      "risks_json": "[\"FormulaNet 未提供可校准的整题置信度；输入含题干文字，必须对照原图复核\"]"
+    },
+    {
+      "problem_id": "945e09cb-bb71-4f70-8536-ba8ab0657946",
+      "provider": "pp_formulanet",
+      "confidence": 0.0,
+      "risks_json": "[\"FormulaNet 未提供可校准的整题置信度；输入含题干文字，必须对照原图复核\"]"
+    },
+    {
+      "problem_id": "5bffc20e-9a19-4114-97a4-b5c1b6aa019b",
+      "provider": "pp_formulanet",
+      "confidence": 0.0,
+      "risks_json": "[\"FormulaNet 未提供可校准的整题置信度；输入含题干文字，必须对照原图复核\"]"
+    },
+    {
+      "problem_id": "aeb21c02-e814-44b7-88f0-a4ff716754d5",
+      "provider": "pp_formulanet",
+      "confidence": 0.0,
+      "risks_json": "[\"FormulaNet 未提供可校准的整题置信度；输入含题干文字，必须对照原图复核\"]"
+    },
+    {
+      "problem_id": "25682660-233e-4e35-864f-4ce3665f9a01",
+      "provider": "pp_formulanet",
+      "confidence": 0.0,
+      "risks_json": "[\"FormulaNet 未提供可校准的整题置信度；输入含题干文字，必须对照原图复核\"]"
+    },
+    {
+      "problem_id": "2e03f9f0-2808-40a2-b25e-f2dd20456b60",
+      "provider": "pp_formulanet",
+      "confidence": 0.0,
+      "risks_json": "[\"FormulaNet 未提供可校准的整题置信度；输入含题干文字，必须对照原图复核\"]"
+    },
+    {
+      "problem_id": "3f773633-65ba-40a5-a2ef-f3e5332db1bd",
+      "provider": "pp_formulanet",
+      "confidence": 0.0,
+      "risks_json": "[\"FormulaNet 未提供可校准的整题置信度；输入含题干文字，必须对照原图复核\"]"
+    },
+    {
+      "problem_id": "0ba7911d-aa85-4229-b267-9a724b3e6f96",
+      "provider": "pp_formulanet",
+      "confidence": 0.0,
+      "risks_json": "[\"FormulaNet 未提供可校准的整题置信度；输入含题干文字，必须对照原图复核\"]"
+    },
+    {
+      "problem_id": "2acd90e0-7983-4a05-b7a0-5d46b24335b3",
+      "provider": "pp_formulanet",
+      "confidence": 0.0,
+      "risks_json": "[\"FormulaNet 未提供可校准的整题置信度；输入含题干文字，必须对照原图复核\"]"
+    }
+  ],
+  "question_bank_written": false
+}

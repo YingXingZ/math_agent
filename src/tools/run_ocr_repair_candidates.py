@@ -16,6 +16,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from workbench8014.ocr_repair_consensus import decide
 from workbench8014.source_evidence import ensure_source_evidence_schema
 
+# Windows PowerShell may still expose a GBK stdout.  Candidate content can
+# contain LaTeX symbols outside that code page; reporting must not abort after
+# the database transaction has committed.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+
 
 def now() -> str: return datetime.now(timezone.utc).isoformat()
 
@@ -36,7 +42,8 @@ def command_provider(name: str, command: str, image: Path) -> dict:
 def remote_mineru_provider(image: Path) -> dict:
     worker = Path(__file__).with_name('remote_mineru_ocr.py')
     try:
-        completed = subprocess.run([sys.executable, str(worker), str(image)], capture_output=True, text=True, timeout=300, check=True)
+        completed = subprocess.run([sys.executable, str(worker), str(image)], capture_output=True, text=True,
+                                   encoding='utf-8', errors='replace', timeout=300, check=True)
         result=json.loads(completed.stdout); return {"provider":"mineru","status":"completed","latex_text":str(result.get('latex_text') or ''),"confidence":float(result.get('confidence') or 0),"risks":result.get('risks') or [],"raw":result}
     except Exception as exc:
         return {"provider":"mineru","status":"failed","reason":str(exc)[:500]}
@@ -44,7 +51,8 @@ def remote_mineru_provider(image: Path) -> dict:
 def remote_formula_provider(image: Path) -> dict:
     worker = Path(__file__).with_name('remote_pp_formulanet_ocr.py')
     try:
-        completed = subprocess.run([sys.executable, str(worker), str(image)], capture_output=True, text=True, timeout=300, check=True)
+        completed = subprocess.run([sys.executable, str(worker), str(image)], capture_output=True, text=True,
+                                   encoding='utf-8', errors='replace', timeout=300, check=True)
         result=json.loads(completed.stdout); return {"provider":"pp_formulanet","status":"completed","latex_text":str(result.get('latex_text') or ''),"confidence":float(result.get('confidence') or 0),"risks":result.get('risks') or [],"raw":result}
     except Exception as exc:
         return {"provider":"pp_formulanet","status":"failed","reason":str(exc)[:500]}
@@ -69,18 +77,32 @@ def main() -> None:
     parser.add_argument('--mineru-remote', action='store_true', help='Use the configured A100 MinerU deployment helper')
     parser.add_argument('--formula-command', default=os.environ.get('PP_FORMULANET_COMMAND',''))
     parser.add_argument('--formula-remote', action='store_true', help='Use PP-FormulaNet_plus-L on the configured A100')
+    parser.add_argument('--providers', default='mineru,pp_formulanet,vlm', help='Comma-separated providers to run')
+    parser.add_argument('--anchor-id', type=int, action='append', help='Limit to one candidate anchor; repeatable')
     parser.add_argument('--limit', type=int, default=100); args=parser.parse_args()
     conn=sqlite3.connect(args.db); conn.row_factory=sqlite3.Row; ensure_source_evidence_schema(conn)
-    rows=conn.execute("""SELECT a.id anchor_id,a.problem_id,a.crop_path,s.section_no,p.problem_no FROM problem_source_anchors a
+    selected={item.strip() for item in args.providers.split(',') if item.strip()}
+    if not selected or not selected <= {'mineru','pp_formulanet','vlm'}:
+        parser.error('--providers must contain only mineru, pp_formulanet, vlm')
+    query="""SELECT a.id anchor_id,a.problem_id,a.crop_path,s.section_no,p.problem_no FROM problem_source_anchors a
       JOIN problems p ON p.id=a.problem_id JOIN sections s ON s.id=p.section_id
-      WHERE a.status='candidate' AND a.crop_path<>'' ORDER BY a.id LIMIT ?""",(args.limit,)).fetchall()
+      WHERE a.status='candidate' AND a.crop_path<>''"""
+    params=[]
+    if args.anchor_id:
+        query += " AND a.id IN (" + ",".join("?" for _ in args.anchor_id) + ")"
+        params.extend(args.anchor_id)
+    rows=conn.execute(query + " ORDER BY a.id LIMIT ?", (*params,args.limit)).fetchall()
     outcome=[]
     for row in rows:
         image=(args.image_root / row['crop_path']).resolve()
         if not image.is_file(): outcome.append({'anchor_id':row['anchor_id'],'status':'blocked','reason':'candidate_crop_missing'}); continue
-        mineru_result = remote_mineru_provider(image) if args.mineru_remote else command_provider('mineru',args.mineru_command,image)
-        formula_result = remote_formula_provider(image) if args.formula_remote else command_provider('pp_formulanet',args.formula_command,image)
-        results=[mineru_result,formula_result,vlm_provider(args.vlm_url,image,row['section_no'],str(row['problem_no']))]
+        results=[]
+        if 'mineru' in selected:
+            results.append(remote_mineru_provider(image) if args.mineru_remote else command_provider('mineru',args.mineru_command,image))
+        if 'pp_formulanet' in selected:
+            results.append(remote_formula_provider(image) if args.formula_remote else command_provider('pp_formulanet',args.formula_command,image))
+        if 'vlm' in selected:
+            results.append(vlm_provider(args.vlm_url,image,row['section_no'],str(row['problem_no'])))
         usable=[]
         for result in results:
             if result['status']=='completed':

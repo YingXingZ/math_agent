@@ -15,13 +15,17 @@ import sys
 import uuid
 from pathlib import Path
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+
 ROOT = Path(__file__).resolve().parents[2]
 SSH = ROOT / "src" / "tools" / "server_ssh.py"
 MODEL_DIR = "/opt/math-vlm/models/PP-FormulaNet_plus-L"
 
 
 def call(*args: str, timeout: int = 300) -> str:
-    result = subprocess.run([sys.executable, str(SSH), *args], capture_output=True, text=True, timeout=timeout)
+    result = subprocess.run([sys.executable, str(SSH), *args], capture_output=True, text=True,
+                            encoding="utf-8", errors="replace", timeout=timeout)
     if result.returncode:
         raise RuntimeError((result.stderr or result.stdout)[-1500:])
     return result.stdout

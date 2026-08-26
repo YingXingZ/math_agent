@@ -12,6 +12,14 @@ import time
 
 import paramiko
 
+# Remote OCR output contains LaTeX symbols such as U+2212.  Do not let a
+# Windows GBK console turn an otherwise successful worker invocation into a
+# false failure while printing its result.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
+
 HOST, PORT, USER, PW = "222.211.217.7", 10022, "root", "8vFdXMt@&s8cXM9D"
 
 
