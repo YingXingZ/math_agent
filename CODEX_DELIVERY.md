@@ -127,3 +127,5 @@ docs/                    设计/诊断/复核清单（garble_audit.csv、QUESTIO
 - 审计：`docs/route2_anchor_reviews/2026-08-26-three-provider-audit.json` 记录 MinerU 14/14、PP-FormulaNet 14/14、VLM 对这 14 个锚点的候选（含历史重跑共 28 条）；所有 14 条为 `NEEDS_TEACHER_REVIEW`。
 - 验证：隔离 DB 下的 HTTP 端到端检查已验证候选列表、候选裁图 200、确认操作，以及 `content_text/std_answer/full_solution` 均保持不变；目标相关 pytest 14/14 通过。保留的全量 pytest 中历史 `test_regression_scripts.py` 超出常规执行时长而被单独隔离，未作为本模块通过凭据。
 - 教师端现已升级为可编辑的 `content_text` / `std_answer` / `full_solution` 分栏。仅当教师填写题干与标准答案、二次确认并点击“确认并写回题库”时，才写入 `problems` 并设为 `verified`；同一事务会保存 `ocr_repair_writebacks` 的前后快照和教师备注。空标准答案、未显式 `confirm=true` 或未通过既有答案质量门禁均拒绝写回。
+- 2026-08-26 教师已确认的 Route2 14 条候选已全部经显式写回接口入库：`ocr_repair_decisions.committed=14`、`ocr_repair_writebacks=14`。批量写入只复用了教师确认后的现有字段，未生成或猜测数学内容。
+- 后续风险题取证已启动并生成 `docs/route2_anchor_reviews/2026-08-26-garble-evidence-plan.json`：当前实时队列为 120 条（旧 `garble_audit.csv` 是 102 条静态快照），44 条高风险；120 条均缺可验证 PDF 页或本地裁图，因而本批 `ready_for_teacher_review=0`。其中 89 条缺 8014 来源绑定，31 条有登记裁图路径但文件缺失。它们必须待补教材／答案页或 IMA 证据后才能生成候选。

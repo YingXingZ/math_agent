@@ -1,0 +1,1447 @@
+{
+  "database": "api.workbench.db",
+  "image_root": "answer_source_previews",
+  "counts": {
+    "requires_source_image": 97,
+    "complete": 380,
+    "total": 477
+  },
+  "candidates": [
+    {
+      "problem_id": "35fa94c8-803f-4b76-b3a9-70dedfcc0386",
+      "section_no": "1.2",
+      "problem_no": "8",
+      "sub_no": "",
+      "ptype": "proof",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "21b54542-a4f5-4930-843d-42b35f308083",
+      "section_no": "1.3",
+      "problem_no": "6",
+      "sub_no": "1",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "content_text"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "c3b234f0-6dde-4974-ae7e-f259889c8003",
+      "section_no": "1.3",
+      "problem_no": "6",
+      "sub_no": "4",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "content_text"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "61368021-67fc-4a03-8fb4-7ad5fdf5f414",
+      "section_no": "1.3",
+      "problem_no": "6",
+      "sub_no": "7",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "content_text"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "b2662385-cbdb-43d2-927d-533a64f8c8d5",
+      "section_no": "1.4",
+      "problem_no": "5",
+      "sub_no": "",
+      "ptype": "proof",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "de1c862d-e2f7-4f2d-b661-28de395efaf3",
+      "section_no": "1.6",
+      "problem_no": "11",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "ba4f1460-ce3d-4cc0-b0a4-e2c2c2475797",
+      "section_no": "1.6",
+      "problem_no": "5",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "d42f1ecd-72b3-4b4f-a803-1ff39bdaa842",
+      "section_no": "2.10",
+      "problem_no": "10",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 5,
+      "reason": "corrupt",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "book/2.10/p2_10_p10.png",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "0878d4c0-162d-4190-9062-c8c18b40b192",
+      "section_no": "2.2",
+      "problem_no": "5",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "877e2baa-7068-4819-a4e6-e044f13b03d5",
+      "section_no": "2.4",
+      "problem_no": "2",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 1,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "book/2.4/p2_4_p2.png",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "9aaf6eb7-0558-418c-b0fe-f8d5a4e52a81",
+      "section_no": "2.5",
+      "problem_no": "1",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 1,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "book/2.5/p2_5_p1.png",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "130c0081-a572-40f9-96ae-740d1e4b64c1",
+      "section_no": "2.5",
+      "problem_no": "3",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 1,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "book/2.5/p2_5_p3.png",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "8beaac1e-932a-41e1-af29-633321e22d07",
+      "section_no": "2.5",
+      "problem_no": "5",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "book/2.5/p2_5_p5.png",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "35ca265e-21a0-4fe0-9428-863ee0880f36",
+      "section_no": "2.8",
+      "problem_no": "3",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "corrupt",
+      "missing": [],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "35db2b98-09d2-4a7a-8bfb-86049e278d9a",
+      "section_no": "3.1",
+      "problem_no": "1",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 1,
+      "reason": "missing_fields",
+      "missing": [
+        "content_text"
+      ],
+      "crop_image_path": "book/3.1/p3_1_p1.png",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "55361019-6b19-48ca-a48d-9531e00a1ea1",
+      "section_no": "3.2",
+      "problem_no": "3",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "2d6af255-9f07-4a70-9751-9dfd2aa74ea5",
+      "section_no": "3.3",
+      "problem_no": "2",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "6339e1ae-0d49-4621-9cd7-6ce17a10dc34",
+      "section_no": "3.4",
+      "problem_no": "1",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "a5108521-6f90-46b1-bba5-3e50fb97398e",
+      "section_no": "3.4",
+      "problem_no": "2",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "afca8d97-9a98-4607-adb0-183f36f5cd0a",
+      "section_no": "3.5",
+      "problem_no": "5",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "corrupt",
+      "missing": [],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "038d8db1-15f9-492a-8f15-e48ebe223fd8",
+      "section_no": "3.5",
+      "problem_no": "6",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "554f403b-66f4-4a28-8c82-6970f78c14b6",
+      "section_no": "3.5",
+      "problem_no": "7",
+      "sub_no": "",
+      "ptype": "proof",
+      "difficulty": 3,
+      "reason": "corrupt",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "66ff715a-a49e-4514-9192-ae16b7336874",
+      "section_no": "3.5",
+      "problem_no": "8",
+      "sub_no": "",
+      "ptype": "proof",
+      "difficulty": 3,
+      "reason": "corrupt",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "1604f9d7-2250-4aad-8221-1c30c7e5dd17",
+      "section_no": "3.6",
+      "problem_no": "1",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 1,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "book/3.6/p3_6_p1.png",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "d12a6da4-af9e-42dd-a046-71594660b89b",
+      "section_no": "3.6",
+      "problem_no": "6",
+      "sub_no": "",
+      "ptype": "proof",
+      "difficulty": 3,
+      "reason": "corrupt",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "8a4fa2fe-5417-49b1-9a91-b5254637a4ef",
+      "section_no": "3.6",
+      "problem_no": "7",
+      "sub_no": "",
+      "ptype": "proof",
+      "difficulty": 3,
+      "reason": "corrupt",
+      "missing": [],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "1cf7ede9-dccc-46f1-b271-a1496075f821",
+      "section_no": "3.7",
+      "problem_no": "3",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "2cc0a476-16c4-46c1-9e35-35cb034d26f4",
+      "section_no": "3.7",
+      "problem_no": "4",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "72e229a6-8bcf-4017-8110-324f6a969be8",
+      "section_no": "3.7",
+      "problem_no": "5",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "92b6de71-945a-4d07-b861-9cdbe6da1d21",
+      "section_no": "3.7",
+      "problem_no": "8",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "21826906-fef2-43b5-8755-8e44135e3d1f",
+      "section_no": "3.8",
+      "problem_no": "4",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "corrupt",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "0f65e69e-e804-4954-b8b2-665500df066c",
+      "section_no": "3.8",
+      "problem_no": "8",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "746e32bc-12ed-455f-8e59-5a4b34569b04",
+      "section_no": "3.9",
+      "problem_no": "3",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "f5fcb406-b7a7-40ad-a101-430d4e22d5e8",
+      "section_no": "6.1",
+      "problem_no": "2",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "c9d846e4-61b3-43c5-843e-140f47b595b1",
+      "section_no": "6.2",
+      "problem_no": "3",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "3928d382-3e97-428d-830a-6a75e4b38365",
+      "section_no": "6.2",
+      "problem_no": "5",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "a8e48d2d-80ca-4e59-8d8e-ea4bc9bbaaba",
+      "section_no": "6.3",
+      "problem_no": "2",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "01452aec-1938-4c0f-ba37-b5930884b89e",
+      "section_no": "6.3",
+      "problem_no": "3",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "ee446a6c-292c-4660-8b80-aa31dd951929",
+      "section_no": "6.8",
+      "problem_no": "3",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "3955c09d-65a1-40b8-a7d2-6997edf38263",
+      "section_no": "6.8",
+      "problem_no": "4",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "0b58423e-ef63-4860-9fb6-1b65c2558321",
+      "section_no": "6.8",
+      "problem_no": "5",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "corrupt",
+      "missing": [],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "a75700ac-6a29-43c0-8042-0ed438d9870b",
+      "section_no": "6.8",
+      "problem_no": "6",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "34e77da6-e7b6-4d29-bbeb-4f45858418dc",
+      "section_no": "6.8",
+      "problem_no": "7",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "eb032fac-c301-4ff2-b4f6-38b6baf2fde4",
+      "section_no": "7.1",
+      "problem_no": "6",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "25b19e0b-f2da-41ed-b9cd-89da0acfacd8",
+      "section_no": "7.2",
+      "problem_no": "2",
+      "sub_no": "",
+      "ptype": "proof",
+      "difficulty": 3,
+      "reason": "corrupt",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "a7ddeeaf-538c-4df7-ac61-aef45a81fe24",
+      "section_no": "7.2",
+      "problem_no": "3",
+      "sub_no": "",
+      "ptype": "proof",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "fc0ccea5-33c8-4318-8016-1401f06f7ff6",
+      "section_no": "7.2",
+      "problem_no": "4",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "7bdbec89-af1b-41cc-bb9c-0de2264d5803",
+      "section_no": "7.2",
+      "problem_no": "5",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "6b166739-33f0-40a8-b4fa-13b5191c2632",
+      "section_no": "7.2",
+      "problem_no": "6",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "88345518-46c0-4588-8a4c-1f0cdc735677",
+      "section_no": "7.3",
+      "problem_no": "1",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "7b270493-c0a5-4f80-b962-a5cb4561afeb",
+      "section_no": "7.3",
+      "problem_no": "10",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "corrupt",
+      "missing": [],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "4bf49f6f-1865-4a54-90a8-c5f916ffd118",
+      "section_no": "7.3",
+      "problem_no": "12",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "corrupt",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "d9ca51f6-57d2-4d8c-ae2f-740f739c3907",
+      "section_no": "7.3",
+      "problem_no": "7",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "5e911544-7ea6-424e-9a48-94bb8d6370f3",
+      "section_no": "7.4",
+      "problem_no": "1",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "corrupt",
+      "missing": [],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "47ea6603-e173-4d94-b889-60e5de4b4141",
+      "section_no": "7.4",
+      "problem_no": "5",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "corrupt",
+      "missing": [],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "7193f306-7a75-4e7d-949d-1b0709ff643f",
+      "section_no": "7.5",
+      "problem_no": "1",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "ec3175a9-594b-44fe-a41e-5005090c9354",
+      "section_no": "7.5",
+      "problem_no": "3",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "b88efc4d-4f0d-425c-a731-dbeddd84c96b",
+      "section_no": "7.6",
+      "problem_no": "4",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "3bbfaed4-b105-45e3-b2dd-105b597349d5",
+      "section_no": "7.6",
+      "problem_no": "5",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "192a369e-4775-479e-b5bc-cd7125e8e8c5",
+      "section_no": "7.6",
+      "problem_no": "6",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "a3cee0c1-daed-41e2-9085-79b80426946d",
+      "section_no": "7.6",
+      "problem_no": "7",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "3df55b4e-d42b-4eca-8ba5-354934da0dc8",
+      "section_no": "7.6",
+      "problem_no": "8",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "67bba992-dc7b-4938-a56c-a14c453c6c6f",
+      "section_no": "8.1",
+      "problem_no": "4",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "501dce5d-e4d1-41ba-8ea6-ab2b9671f226",
+      "section_no": "8.1",
+      "problem_no": "5",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "7f0b932c-71b0-4504-bf45-1395c8742679",
+      "section_no": "8.1",
+      "problem_no": "7",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "27ec3559-2096-4d7e-a22c-79ddfa6efa75",
+      "section_no": "8.2",
+      "problem_no": "4",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "250adde8-1f0d-40f9-96ee-29179d6841c1",
+      "section_no": "8.2",
+      "problem_no": "5",
+      "sub_no": "",
+      "ptype": "proof",
+      "difficulty": 3,
+      "reason": "corrupt",
+      "missing": [],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "2a0cfe37-ddaf-42f0-baa6-d560c442106e",
+      "section_no": "8.2",
+      "problem_no": "9",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "corrupt",
+      "missing": [],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "8b906c96-79f5-4b54-a9da-8564c3d04efa",
+      "section_no": "8.3",
+      "problem_no": "4",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "52bfd8d9-25d2-41eb-a7cd-50ecb132201a",
+      "section_no": "8.4",
+      "problem_no": "3",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "48d517fe-788c-4c0b-aeb8-e95bf2fbf0e3",
+      "section_no": "8.4",
+      "problem_no": "4",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "corrupt",
+      "missing": [],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "7b7f89ee-c2d7-4be4-a964-20549462a03a",
+      "section_no": "8.6",
+      "problem_no": "2",
+      "sub_no": "",
+      "ptype": "proof",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "51ae1817-9636-479d-beb2-b5fc229f09d8",
+      "section_no": "8.6",
+      "problem_no": "3",
+      "sub_no": "",
+      "ptype": "proof",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "fc1b0ade-2919-4c38-9225-51fb682841aa",
+      "section_no": "8.6",
+      "problem_no": "5",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "corrupt",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "f57485ef-4e54-4ea4-a0dc-d45d95620daa",
+      "section_no": "8.6",
+      "problem_no": "6",
+      "sub_no": "",
+      "ptype": "proof",
+      "difficulty": 3,
+      "reason": "corrupt",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "e0b4542b-8b40-4228-9047-d5704afe61fd",
+      "section_no": "8.6",
+      "problem_no": "7",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "corrupt",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "af6adba2-5577-4954-88f1-dc09740b8a63",
+      "section_no": "8.6",
+      "problem_no": "8",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "corrupt",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "623384bb-dd3d-4b8d-ab7b-25bb25411b86",
+      "section_no": "8.6",
+      "problem_no": "9",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "99e73dc5-b883-4eed-968e-9eaf0bc9c677",
+      "section_no": "9.1",
+      "problem_no": "1",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "corrupt",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "b0b9e516-9057-4043-a407-8275c68827a0",
+      "section_no": "9.1",
+      "problem_no": "3",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "0c0401ac-94fb-46de-8cfe-3d08d7140d37",
+      "section_no": "9.1",
+      "problem_no": "5",
+      "sub_no": "",
+      "ptype": "proof",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "1e5e126b-686b-419b-9bfa-9d4d0c5ee69c",
+      "section_no": "9.1",
+      "problem_no": "6",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "corrupt",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "51077646-2047-4b9c-9569-c6d553b11f14",
+      "section_no": "9.2",
+      "problem_no": "1",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "corrupt",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "f2550d80-63d8-4bb3-99b9-1a0ef1193aef",
+      "section_no": "9.2",
+      "problem_no": "3",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "cc15b5de-ea07-44d3-ba30-ae5916ccbadb",
+      "section_no": "9.2",
+      "problem_no": "5",
+      "sub_no": "",
+      "ptype": "proof",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "d4775442-de91-42a9-82e7-eb05c292fe3a",
+      "section_no": "9.2",
+      "problem_no": "9",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "bec9b9c3-0eb4-4216-a753-9b2d3b6b44ea",
+      "section_no": "9.3",
+      "problem_no": "1",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "dbe5bc46-075c-4767-a90d-63bfd2b99f67",
+      "section_no": "9.3",
+      "problem_no": "2",
+      "sub_no": "",
+      "ptype": "proof",
+      "difficulty": 3,
+      "reason": "corrupt",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "8a800182-4b70-48c8-968f-d41e869f8fa7",
+      "section_no": "9.3",
+      "problem_no": "3",
+      "sub_no": "",
+      "ptype": "proof",
+      "difficulty": 3,
+      "reason": "corrupt",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "33837bdd-6595-495f-a2b8-391ee42736d8",
+      "section_no": "9.5",
+      "problem_no": "1",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "83adf917-32de-4a4d-be44-7709f041816f",
+      "section_no": "9.5",
+      "problem_no": "2",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "62abb3b1-02a4-4c68-a2e7-44eeaca8ef70",
+      "section_no": "9.5",
+      "problem_no": "3",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "corrupt",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "a4e11f04-83e4-4af3-940a-abc6619c0b6a",
+      "section_no": "9.7",
+      "problem_no": "11",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "9a599762-5bc8-4763-a2b8-4b8daad6dc65",
+      "section_no": "9.7",
+      "problem_no": "2",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "corrupt",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "3f097ca5-e677-4e23-b1c4-cf01a3dcb951",
+      "section_no": "9.7",
+      "problem_no": "3",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "8dbe9872-d69a-409a-a928-4894cd031964",
+      "section_no": "9.9",
+      "problem_no": "1",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "missing_fields",
+      "missing": [
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    },
+    {
+      "problem_id": "06fbfe69-8853-48ea-a0f3-fb79810b1b86",
+      "section_no": "9.9",
+      "problem_no": "2",
+      "sub_no": "",
+      "ptype": "calc",
+      "difficulty": 3,
+      "reason": "corrupt",
+      "missing": [
+        "content_text",
+        "std_answer"
+      ],
+      "crop_image_path": "",
+      "crop_available": false,
+      "disposition": "requires_source_image"
+    }
+  ]
+}
