@@ -30,6 +30,7 @@ async def publish_homework(
     sections: list[str],
     *,
     title: str,
+    class_id: int,
     class_name: str,
     due_at: datetime,
     question_count: int = 6,
@@ -60,6 +61,7 @@ async def publish_homework(
     result = assemble(
         sections,
         title=title,
+        class_id=class_id,
         class_name=class_name,
         due_at=due_at,
         question_count=question_count,

@@ -93,6 +93,16 @@ CREATE TABLE IF NOT EXISTS assignments (
   class_name TEXT NOT NULL, due_at TEXT NOT NULL, total_score INTEGER NOT NULL,
   status TEXT NOT NULL DEFAULT 'published', created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS classes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, semester TEXT NOT NULL DEFAULT '',
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(name, semester)
+);
+CREATE TABLE IF NOT EXISTS students (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, class_id INTEGER NOT NULL, student_no TEXT NOT NULL,
+  name TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(class_id, student_no)
+);
 CREATE TABLE IF NOT EXISTS assignment_questions (
   assignment_id INTEGER NOT NULL, question_id INTEGER NOT NULL, sort_order INTEGER NOT NULL,
   score INTEGER NOT NULL, PRIMARY KEY(assignment_id, question_id)
@@ -114,6 +124,7 @@ CREATE TABLE IF NOT EXISTS grading_experiences (
 );
 CREATE INDEX IF NOT EXISTS idx_questions_chapter_difficulty ON questions(chapter, difficulty);
 CREATE INDEX IF NOT EXISTS idx_assignments_class_due ON assignments(class_name, due_at);
+CREATE INDEX IF NOT EXISTS idx_students_class_no ON students(class_id, student_no);
 CREATE INDEX IF NOT EXISTS idx_submissions_assignment_student ON submissions(assignment_id, student_no);
 CREATE INDEX IF NOT EXISTS idx_grading_experiences_assignment ON grading_experiences(assignment_id);
 CREATE TABLE IF NOT EXISTS mineru_review_sessions (
@@ -219,6 +230,11 @@ def init_db() -> None:
         assign_cols = {row[1] for row in conn.execute("PRAGMA table_info(assignments)")}
         if "semester" not in assign_cols:
             conn.execute("ALTER TABLE assignments ADD COLUMN semester TEXT NOT NULL DEFAULT ''")
+        # A class id is deliberately nullable for legacy/demo assignments.  New
+        # assignments must have it; reports use it as the boundary between real
+        # class data and historical sample records.
+        if "class_id" not in assign_cols:
+            conn.execute("ALTER TABLE assignments ADD COLUMN class_id INTEGER")
         sub_cols = {row[1] for row in conn.execute("PRAGMA table_info(submissions)")}
         if "handwriting_score" not in sub_cols:
             conn.execute("ALTER TABLE submissions ADD COLUMN handwriting_score REAL")

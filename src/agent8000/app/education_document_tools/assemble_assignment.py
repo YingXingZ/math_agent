@@ -60,7 +60,7 @@ def _select_by_tier(rows: list[dict], question_count: int,
     return selected
 
 
-def assemble(sections: list[str], *, title: str, class_name: str, due_at: datetime,
+def assemble(sections: list[str], *, title: str, class_id: int, class_name: str, due_at: datetime,
              question_count: int = 6, basic_ratio: float = 0.5, advanced_ratio: float = 0.35,
              build_pdf: bool = True, out_dir: str | None = None) -> dict[str, Any]:
     """Build a homework assignment from cached, stratified problems.
@@ -95,9 +95,9 @@ def assemble(sections: list[str], *, title: str, class_name: str, due_at: dateti
     score = POINTS_PER_QUESTION
     with connection() as conn:
         cursor = conn.execute(
-            "INSERT INTO assignments(title,chapter,class_name,due_at,total_score) "
-            "VALUES(?,?,?,?,?)",
-            (title, "、".join(sections), class_name, due_at.isoformat(), score * len(selected)),
+            "INSERT INTO assignments(title,chapter,class_name,class_id,due_at,total_score) "
+            "VALUES(?,?,?,?,?,?)",
+            (title, "、".join(sections), class_name, class_id, due_at.isoformat(), score * len(selected)),
         )
         assignment_id = cursor.lastrowid
         conn.executemany(

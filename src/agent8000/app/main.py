@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from html import escape
+from io import BytesIO
 from pathlib import Path
 from typing import Literal
 import json
@@ -138,7 +139,7 @@ class QuestionUpdateIn(BaseModel):
 class AssignmentIn(BaseModel):
     title: str
     chapter: str
-    class_name: str
+    class_id: int = Field(gt=0)
     due_at: datetime
     semester: str = ""
     question_count: int = Field(ge=1, le=30, default=6)
@@ -153,8 +154,16 @@ class ReviewDecisionIn(BaseModel):
 
 class AssignmentUpdateIn(BaseModel):
     title: str = Field(min_length=1)
-    class_name: str = Field(min_length=1)
     due_at: datetime
+
+
+class ClassIn(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    semester: str = Field(default="", max_length=40)
+
+
+class StudentListIn(BaseModel):
+    students: list[dict]
 
 
 class MineruStageIn(BaseModel):
@@ -915,6 +924,150 @@ def garble_queue(review_status: str | None = None, source: Literal["audit", "liv
     return {"items": items, "note": f"共 {len(items)} 道{label}待修订题目"}
 
 
+def _require_class(conn: sqlite3.Connection, class_id: int) -> sqlite3.Row:
+    row = conn.execute("SELECT id,name,semester FROM classes WHERE id=?", (class_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "班级不存在；请先在“班级与名单”中创建班级")
+    return row
+
+
+def _require_roster(conn: sqlite3.Connection, class_id: int) -> None:
+    if not conn.execute("SELECT 1 FROM students WHERE class_id=? LIMIT 1", (class_id,)).fetchone():
+        raise HTTPException(422, "该班尚未导入学生名单，不能发布作业")
+
+
+def _normalise_students(students: list[dict]) -> tuple[list[tuple[str, str]], int]:
+    """Validate a roster without silently guessing identity columns."""
+    clean: list[tuple[str, str]] = []
+    invalid = 0
+    seen: set[str] = set()
+    for row in students:
+        no = str(row.get("student_no", "")).strip()
+        name = str(row.get("name", "")).strip()
+        if not no or not name or not _STUDENT_NO_RE.fullmatch(no) or no in seen:
+            invalid += 1
+            continue
+        seen.add(no)
+        clean.append((no, name))
+    return clean, invalid
+
+
+def _parse_roster_file(filename: str, raw: bytes) -> list[dict]:
+    """Read an explicit 学号/姓名 roster from CSV or XLSX; never infer names."""
+    suffix = Path(filename or "").suffix.lower()
+    rows: list[list[object]] = []
+    if suffix == ".xlsx":
+        try:
+            from openpyxl import load_workbook
+        except ImportError as exc:  # pragma: no cover - deployment dependency
+            raise HTTPException(503, "服务器未安装 Excel 导入依赖 openpyxl，请改用 UTF-8 CSV") from exc
+        try:
+            book = load_workbook(BytesIO(raw), read_only=True, data_only=True)
+            sheet = book.active
+            rows = [list(row) for row in sheet.iter_rows(values_only=True)]
+        except Exception as exc:
+            raise HTTPException(422, "Excel 文件无法读取；请确认是 .xlsx 格式") from exc
+    elif suffix == ".csv":
+        text = None
+        for encoding in ("utf-8-sig", "gb18030"):
+            try:
+                text = raw.decode(encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+        if text is None:
+            raise HTTPException(422, "CSV 编码无法读取，请另存为 UTF-8 CSV")
+        rows = list(csv.reader(text.splitlines()))
+    else:
+        raise HTTPException(422, "仅支持 .xlsx 或 .csv 名单文件")
+    if not rows:
+        raise HTTPException(422, "名单文件为空")
+    headers = [str(v or "").strip().lower().replace(" ", "") for v in rows[0]]
+    no_names = {"学号", "student_no", "studentno", "studentnumber"}
+    name_names = {"姓名", "name", "student_name", "studentname"}
+    try:
+        no_index = next(i for i, h in enumerate(headers) if h in no_names)
+        name_index = next(i for i, h in enumerate(headers) if h in name_names)
+    except StopIteration as exc:
+        raise HTTPException(422, "首行必须包含“学号”和“姓名”两列；其他列可保留") from exc
+    return [
+        {"student_no": str(row[no_index] or "").strip(), "name": str(row[name_index] or "").strip()}
+        for row in rows[1:]
+        if len(row) > max(no_index, name_index)
+    ]
+
+
+def _save_roster(class_id: int, students: list[dict]) -> dict:
+    clean, invalid = _normalise_students(students)
+    with connection() as conn:
+        _require_class(conn, class_id)
+        inserted = updated = 0
+        for student_no, name in clean:
+            existing = conn.execute(
+                "SELECT id,name FROM students WHERE class_id=? AND student_no=?", (class_id, student_no)
+            ).fetchone()
+            if existing:
+                if existing["name"] != name:
+                    conn.execute("UPDATE students SET name=? WHERE id=?", (name, existing["id"]))
+                    updated += 1
+                continue
+            conn.execute(
+                "INSERT INTO students(class_id,student_no,name) VALUES(?,?,?)", (class_id, student_no, name)
+            )
+            inserted += 1
+    return {"inserted": inserted, "updated": updated, "invalid_or_duplicate": invalid,
+            "accepted": len(clean)}
+
+
+@app.get("/api/classes")
+def list_classes():
+    with connection() as conn:
+        rows = conn.execute(
+            """SELECT c.id,c.name,c.semester,c.created_at,COUNT(DISTINCT st.id) AS student_count,
+                      COUNT(DISTINCT a.id) AS assignment_count
+               FROM classes c
+               LEFT JOIN students st ON st.class_id=c.id
+               LEFT JOIN assignments a ON a.class_id=c.id
+               GROUP BY c.id ORDER BY c.semester DESC,c.name"""
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+@app.post("/api/classes", status_code=201)
+def create_class(payload: ClassIn):
+    name, semester = payload.name.strip(), payload.semester.strip()
+    with connection() as conn:
+        try:
+            cur = conn.execute("INSERT INTO classes(name,semester) VALUES(?,?)", (name, semester))
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(409, "该学期已存在同名班级") from exc
+    return {"id": cur.lastrowid, "name": name, "semester": semester}
+
+
+@app.get("/api/classes/{class_id}/students")
+def list_class_students(class_id: int):
+    with connection() as conn:
+        _require_class(conn, class_id)
+        rows = conn.execute(
+            "SELECT id,student_no,name,created_at FROM students WHERE class_id=? ORDER BY student_no", (class_id,)
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+@app.post("/api/classes/{class_id}/students/import")
+def import_roster_json(class_id: int, payload: StudentListIn):
+    return _save_roster(class_id, payload.students)
+
+
+@app.post("/api/classes/{class_id}/students/import-file")
+async def import_roster_file(class_id: int, file: UploadFile = File(...)):
+    filename = file.filename or "名单"
+    raw = await file.read()
+    if len(raw) > 10 * 1024 * 1024:
+        raise HTTPException(413, "名单文件不能超过 10 MB")
+    return {"filename": filename, **_save_roster(class_id, _parse_roster_file(filename, raw))}
+
+
 @app.post("/api/assignments", status_code=201)
 async def create_assignment(payload: AssignmentIn):
     if payload.basic_ratio + payload.advanced_ratio > 1:
@@ -923,6 +1076,8 @@ async def create_assignment(payload: AssignmentIn):
               ["提高"] * round(payload.question_count * payload.advanced_ratio))
     levels += ["综合"] * (payload.question_count - len(levels))
     with connection() as conn:
+        class_row = _require_class(conn, payload.class_id)
+        _require_roster(conn, payload.class_id)
         picked, used = [], set()
         for level in levels:
             row = conn.execute("SELECT * FROM questions WHERE chapter=? AND difficulty=? AND review_status='published' AND id NOT IN ({}) ORDER BY RANDOM() LIMIT 1".format(",".join("?" * len(used)) if used else "0"), [payload.chapter, level, *used]).fetchone()
@@ -931,7 +1086,8 @@ async def create_assignment(payload: AssignmentIn):
             if row: picked.append(dict(row)); used.add(row["id"])
         if not picked: raise HTTPException(404, "该章节暂无已发布题目")
         score = POINTS_PER_QUESTION
-        cur = conn.execute("INSERT INTO assignments(title,chapter,class_name,due_at,total_score,semester) VALUES(?,?,?,?,?,?)", (payload.title, payload.chapter, payload.class_name, payload.due_at.isoformat(), score * len(picked), payload.semester or ""))
+        semester = payload.semester.strip() or class_row["semester"]
+        cur = conn.execute("INSERT INTO assignments(title,chapter,class_name,class_id,due_at,total_score,semester) VALUES(?,?,?,?,?,?,?)", (payload.title, payload.chapter, class_row["name"], payload.class_id, payload.due_at.isoformat(), score * len(picked), semester))
         assignment_id = cur.lastrowid
         conn.executemany(
             "INSERT INTO assignment_questions(assignment_id,question_id,sort_order,score,original_no) VALUES(?,?,?,?,?)",
@@ -983,12 +1139,16 @@ async def create_evidence_backed_assignment(payload: AssignmentIn):
     # either retry or open the draft directly from the local cache without
     # waiting on the slow path.
     ASSIGNMENT_DRAFT_TIMEOUT = float(os.environ.get("ASSIGNMENT_DRAFT_TIMEOUT", "90"))
+    with connection() as conn:
+        class_row = _require_class(conn, payload.class_id)
+        _require_roster(conn, payload.class_id)
     try:
         pipeline = await asyncio.wait_for(
             publish_homework(
                 sections=_parse_sections(payload.chapter),
                 title=payload.title,
-                class_name=payload.class_name,
+                class_id=payload.class_id,
+                class_name=class_row["name"],
                 due_at=payload.due_at,
                 question_count=payload.question_count,
                 basic_ratio=payload.basic_ratio,
@@ -1028,10 +1188,14 @@ async def create_evidence_backed_assignment(payload: AssignmentIn):
 @app.post("/api/agent/pipeline/publish", status_code=201)
 async def pipeline_publish(payload: AssignmentIn):
     """Full pipeline surface: returns sync + stratify + assemble diagnostics."""
+    with connection() as conn:
+        class_row = _require_class(conn, payload.class_id)
+        _require_roster(conn, payload.class_id)
     return await publish_homework(
         sections=_parse_sections(payload.chapter),
         title=payload.title,
-        class_name=payload.class_name,
+        class_id=payload.class_id,
+        class_name=class_row["name"],
         due_at=payload.due_at,
         question_count=payload.question_count,
         basic_ratio=payload.basic_ratio,
@@ -1040,9 +1204,14 @@ async def pipeline_publish(payload: AssignmentIn):
 
 
 @app.get("/api/assignments")
-def list_assignments(class_name: str | None = None):
+def list_assignments(class_name: str | None = None, include_legacy: bool = False):
     sql, args = "SELECT * FROM assignments", []
-    if class_name: sql += " WHERE class_name=?"; args.append(class_name)
+    clauses = [] if include_legacy else ["class_id IS NOT NULL"]
+    if class_name:
+        clauses.append("class_name=?")
+        args.append(class_name)
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
     with connection() as conn: return [dict(r) for r in conn.execute(sql + " ORDER BY due_at DESC", args)]
 
 
@@ -1050,8 +1219,8 @@ def list_assignments(class_name: str | None = None):
 def update_assignment(assignment_id: int, payload: AssignmentUpdateIn):
     with connection() as conn:
         changed = conn.execute(
-            "UPDATE assignments SET title=?, class_name=?, due_at=? WHERE id=?",
-            (payload.title.strip(), payload.class_name.strip(), payload.due_at.isoformat(), assignment_id),
+            "UPDATE assignments SET title=?, due_at=? WHERE id=?",
+            (payload.title.strip(), payload.due_at.isoformat(), assignment_id),
         ).rowcount
     if not changed:
         raise HTTPException(404, "作业不存在")
@@ -1171,8 +1340,18 @@ async def submit_homework(assignment_id: int, background_tasks: BackgroundTasks,
 
     # 3) 防重复提交：同一作业+学号若已有正在批改（queued/running）的任务则拒绝
     with connection() as conn:
-        if not conn.execute("SELECT 1 FROM assignments WHERE id=?", (assignment_id,)).fetchone():
+        assignment = conn.execute("SELECT id,class_id FROM assignments WHERE id=?", (assignment_id,)).fetchone()
+        if not assignment:
             raise HTTPException(404, "作业不存在")
+        if assignment["class_id"] is None:
+            raise HTTPException(409, "这是历史演示作业，不能再接收提交；请从已建班级重新发布作业")
+        enrolled = conn.execute(
+            "SELECT name FROM students WHERE class_id=? AND student_no=?", (assignment["class_id"], student_no)
+        ).fetchone()
+        if not enrolled:
+            raise HTTPException(403, "该学号不在本班名单中，请联系教师核对班级名单")
+        if not student_name:
+            student_name = enrolled["name"]
         if conn.execute(
             """SELECT 1 FROM submissions s JOIN grading_jobs j ON j.submission_id=s.id
                WHERE s.assignment_id=? AND s.student_no=? AND j.status IN ('queued','running') LIMIT 1""",
@@ -1233,7 +1412,7 @@ def list_reviews():
                       s.feedback, s.submitted_at, j.status AS grading_status, j.result_json, a.title
                FROM submissions s JOIN assignments a ON a.id=s.assignment_id
                LEFT JOIN grading_jobs j ON j.submission_id=s.id
-               WHERE s.needs_review=1 OR j.status IN ('queued','running','failed')
+               WHERE a.class_id IS NOT NULL AND (s.needs_review=1 OR j.status IN ('queued','running','failed'))
                ORDER BY s.submitted_at DESC"""
         ).fetchall()
     items = []
@@ -1312,6 +1491,7 @@ def review_quota():
                FROM grading_experiences ge
                JOIN submissions s ON s.id=ge.submission_id
                JOIN assignments a ON a.id=ge.assignment_id
+               JOIN classes c ON c.id=a.class_id
                GROUP BY a.class_name, a.semester"""
         ).fetchall()
     items = []
@@ -1332,7 +1512,7 @@ def weak_points(class_name: str | None = None, semester: str | None = None, top:
     with connection() as conn:
         qmap = {row["id"]: (row["knowledge_points"] or row["chapter"])
                 for row in conn.execute("SELECT id, knowledge_points, chapter FROM questions")}
-        clauses, params = [], []
+        clauses, params = ["a.class_id IS NOT NULL"], []
         if class_name:
             clauses.append("a.class_name=?"); params.append(class_name)
         if semester:
@@ -1341,7 +1521,8 @@ def weak_points(class_name: str | None = None, semester: str | None = None, top:
         rows = conn.execute(
             f"""SELECT ge.evidence_json FROM grading_experiences ge
                 JOIN submissions s ON s.id=ge.submission_id
-                JOIN assignments a ON a.id=ge.assignment_id {where}""",
+                JOIN assignments a ON a.id=ge.assignment_id
+                JOIN classes c ON c.id=a.class_id {where}""",
             params,
         ).fetchall()
     agg: dict[str, dict] = {}
@@ -1372,7 +1553,7 @@ def weak_points(class_name: str | None = None, semester: str | None = None, top:
 def semester_summary(class_name: str | None = None, semester: str | None = None):
     """学期末分数汇总：按学生聚合总分/平均分/排名，含班级均分、分布与书写整洁度。"""
     with connection() as conn:
-        clauses = ["s.status='graded'"]
+        clauses = ["s.status='graded'", "a.class_id IS NOT NULL"]
         params = []
         if class_name:
             clauses.append("a.class_name=?"); params.append(class_name)
@@ -1383,6 +1564,7 @@ def semester_summary(class_name: str | None = None, semester: str | None = None)
             f"""SELECT s.student_no, s.student_name, s.score, s.handwriting_score,
                        a.class_name, a.semester, a.total_score
                 FROM submissions s JOIN assignments a ON a.id=s.assignment_id
+                JOIN classes c ON c.id=a.class_id
                 WHERE {where}""",
             params,
         ).fetchall()
@@ -1417,14 +1599,14 @@ def semester_summary(class_name: str | None = None, semester: str | None = None)
 async def summary():
     with connection() as conn:
         local = dict(conn.execute("""SELECT (SELECT COUNT(*) FROM questions) question_count,
-          (SELECT COUNT(*) FROM assignments WHERE status='published') assignment_count,
-          (SELECT COUNT(*) FROM submissions) submission_count,
+          (SELECT COUNT(*) FROM assignments WHERE status='published' AND class_id IS NOT NULL) assignment_count,
+          (SELECT COUNT(*) FROM submissions s JOIN assignments a ON a.id=s.assignment_id WHERE a.class_id IS NOT NULL) submission_count,
           (SELECT COUNT(*) FROM grading_jobs WHERE status='queued') review_queue""").fetchone())
         hw = conn.execute("SELECT AVG(handwriting_score) FROM submissions WHERE handwriting_score IS NOT NULL").fetchone()[0]
         below = conn.execute(
             """SELECT COUNT(*) FROM (SELECT a.class_name, a.semester
                 FROM grading_experiences ge JOIN submissions s ON s.id=ge.submission_id
-                JOIN assignments a ON a.id=ge.assignment_id GROUP BY a.class_name, a.semester
+                JOIN assignments a ON a.id=ge.assignment_id JOIN classes c ON c.id=a.class_id GROUP BY a.class_name, a.semester
                 HAVING COUNT(DISTINCT ge.id) < ?)""", (REVIEW_QUOTA_PER_CLASS,)).fetchone()[0]
     evidence = await evidence_status()
     return {
