@@ -135,3 +135,9 @@ docs/                    设计/诊断/复核清单（garble_audit.csv、QUESTIO
 - OCR Repair 写回接口允许教师保存多行 `std_answer`（例如多组傅里叶系数或方程组），不再把换行本身误判为 OCR 串题；仍保留空值、乱码、页眉和超过 3000 字符的跨题内容门禁。
 - 多行标准答案不会进入自动评分：`grading_ready` 仍会将其留在人工复核路径，避免改变学生端自动判分语义。
 - `http://127.0.0.1:8014/ocr-repair` 的题干、标准答案、完整解答编辑框均提供输入即刷新的 MathJax LaTeX 预览；写回前仍须教师对照原图并显式确认。
+
+## 12. 2026-08-26 Windows 单机试点落地
+
+- `src/agent8000/deploy/start_windows.bat` 已改为从仓库位置推导 8000/8014 的代码、数据库与候选图路径，移除过期的 `D:/workbuddy` 启动器依赖；8014 仍经正式启动器加载。
+- 新增 `healthcheck_windows.ps1` 和 `backup_databases.ps1`，分别用于启动后健康检查与题库操作前的双 SQLite 备份；单机操作说明见 `src/agent8000/deploy/LOCAL_PILOT.md`。
+- 已实测本机 8000 capabilities、8014 health 和 OCR Repair 页面均返回 HTTP 200。正式对学生开放仍需要受控服务器/HTTPS、认证和管理台访问限制；不能将 8000/8014 端口直接公网暴露。

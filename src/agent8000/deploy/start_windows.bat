@@ -1,30 +1,30 @@
 @echo off
-REM ===== 高数作业助手 生产启动脚本 (Windows) =====
-REM 分别拉起 8014 工作台与 8000 智能体；VLM 在远程，无需本机启动。
+REM ===== 高数教材答案 Agent：Windows 单机试点启动器 =====
+REM 从仓库位置推导路径；不要复制旧的 D:\workbuddy 绝对路径。
 setlocal
-set WORKBENCH_DIR=D:\My File\大四\高数教材答案
-set AGENT_DIR=%WORKBENCH_DIR%\高数作业助手
-set WB_LAUNCHER=D:\workbuddy\2026-08-06-15-31-48\run_workbench_8014.py
-set WORKBENCH_DB=%WORKBENCH_DIR%\api.workbench.db
-set IMAGE_ROOT=D:\workbuddy\2026-08-06-15-31-48\extract_img
-set VENV_PY=C:\Users\YXZ\.workbuddy\binaries\python\envs\default\Scripts\python.exe
+set "DEPLOY_DIR=%~dp0"
+for %%I in ("%DEPLOY_DIR%..\..\..") do set "REPO_ROOT=%%~fI"
+set "AGENT_DIR=%REPO_ROOT%\src\agent8000"
+set "WB_LAUNCHER=%REPO_ROOT%\src\workbench8014\run_workbench_8014.py"
+set "WORKBENCH_DB=%REPO_ROOT%\api.workbench.db"
+set "IMAGE_ROOT=%REPO_ROOT%\answer_source_previews"
+set "OCR_REPAIR_IMAGE_ROOT=%REPO_ROOT%\answer_source_previews"
+set "DATABASE_PATH=%AGENT_DIR%\data\homework.db"
+set "EVIDENCE_API_URL=http://127.0.0.1:8014/api"
+set "VENV_PY=C:\Users\YXZ\.workbuddy\binaries\python\envs\default\Scripts\python.exe"
 
-if not exist "%WB_LAUNCHER%" ( echo [错误] 找不到 8014 启动器: %WB_LAUNCHER% & pause & exit /b 1 )
-if not exist "%WORKBENCH_DB%" ( echo [错误] 找不到 WORKBENCH_DB: %WORKBENCH_DB% & pause & exit /b 1 )
+if not exist "%VENV_PY%" (echo [错误] 找不到 Python: %VENV_PY% & pause & exit /b 1)
+if not exist "%WB_LAUNCHER%" (echo [错误] 找不到 8014 启动器: %WB_LAUNCHER% & pause & exit /b 1)
+if not exist "%WORKBENCH_DB%" (echo [错误] 找不到 8014 数据库: %WORKBENCH_DB% & pause & exit /b 1)
+if not exist "%DATABASE_PATH%" (echo [错误] 找不到 8000 数据库: %DATABASE_PATH% & pause & exit /b 1)
 
-REM 1) 8014 工作台（必须用 run_workbench_8014.py；固化 WORKBENCH_DB / IMAGE_ROOT，否则裁切图 404）
-REM 注意：必须用 venv python（%VENV_PY%），managed 3.13 裸环境缺 fastapi 会启动失败。
-start "workbench-8014" %VENV_PY% %WB_LAUNCHER%
-
-REM 2) 8000 智能体
-cd /d %AGENT_DIR%
-start "agent-8000" %VENV_PY% -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+REM 8014 必须经启动器加载，不能裸起 uvicorn。
+start "math-workbench-8014" cmd /k "set WORKBENCH_DB=%WORKBENCH_DB%&& set IMAGE_ROOT=%IMAGE_ROOT%&& set OCR_REPAIR_IMAGE_ROOT=%OCR_REPAIR_IMAGE_ROOT%&& cd /d %REPO_ROOT%&& %VENV_PY% %WB_LAUNCHER%"
+start "math-agent-8000" cmd /k "set DATABASE_PATH=%DATABASE_PATH%&& set EVIDENCE_API_URL=%EVIDENCE_API_URL%&& cd /d %AGENT_DIR%&& %VENV_PY% -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1"
 
 echo.
-echo 已启动：工作台 8014 + 智能体 8000
-echo VLM 在远程 222.211.217.7:18080（须网络可达；远程须 bind 0.0.0.0）
-echo 健康检查：
-echo   curl http://127.0.0.1:8000/api/agent/capabilities
-echo   curl http://127.0.0.1:8014/api/health
-echo 关闭：任务管理器结束 workbench-8014 / agent-8000 窗口对应的 python 进程。
+echo 已请求启动 8014 工作台与 8000 智能体。请等待数秒后运行：
+echo powershell -ExecutionPolicy Bypass -File "%DEPLOY_DIR%healthcheck_windows.ps1"
+echo 学生/教师主入口：http://127.0.0.1:8000/
+echo OCR 复核入口：http://127.0.0.1:8014/ocr-repair
 pause
