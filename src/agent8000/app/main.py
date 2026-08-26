@@ -1088,11 +1088,11 @@ def printable_assignment(assignment_id: int):
     <style>@page{{size:A4;margin:18mm}}body{{font-family:'Microsoft YaHei',sans-serif;color:#111;line-height:1.65}}header{{border-bottom:2px solid #1e3a5f}}h1{{text-align:center}}.meta{{display:flex;justify-content:space-between}}section{{break-inside:avoid;margin-top:20px}}.space{{height:115px;border-bottom:1px dashed #cbd5e1}}</style>
     <script>
     MathJax = {{
-      tex: {{ inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']] }},
+      tex: {{ inlineMath: [['$', '$'], ['\\\\(', '\\\\)']], displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']] }},
       svg: {{ fontCache: 'global' }}
     }};
     </script>
-    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.min.js"></script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
     <header><h1>{escape(assignment['title'])}</h1><div class='meta'><span>班级：{escape(assignment['class_name'])}</span><span>姓名：__________</span><span>学号：__________</span></div><p>章节：{escape(assignment['chapter'])}　截止：{escape(assignment['due_at'])}　总分：{assignment['total_score']}</p></header>{items}</html>"""
 
 
