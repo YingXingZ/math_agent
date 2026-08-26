@@ -293,8 +293,11 @@ def answer_quality_issue(answer: str, ptype: str, full_solution: str = "") -> st
         return "标准答案包含页眉或章节标题"
     if ptype == "calc" and not re.search(r"[0-9A-Za-z\\\\]|[∞∞]", answer):
         return "计算题答案不是可判定的数学表达式"
-    if ptype == "calc" and any(mark in answer for mark in ("~", "由", "仰", "石", "豆", "叫")):
-        return "计算题答案含 OCR 噪声字符"
+    # Do not treat ordinary Chinese characters (for example “由”) or a tilde
+    # used in mathematical notation as OCR corruption.  This old heuristic
+    # rejected teacher-entered, valid multi-line derivations.  Actual encoding
+    # corruption remains covered by _OCR_GARBLED above, and teacher writeback
+    # still requires explicit confirmation against the source image.
     if full_solution and len(full_solution) > 12000:
         return "完整解答过长，疑似跨题拼接"
     return ""
