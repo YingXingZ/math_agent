@@ -141,3 +141,7 @@ docs/                    设计/诊断/复核清单（garble_audit.csv、QUESTIO
 - `src/agent8000/deploy/start_windows.bat` 已改为从仓库位置推导 8000/8014 的代码、数据库与候选图路径，移除过期的 `D:/workbuddy` 启动器依赖；8014 仍经正式启动器加载。
 - 新增 `healthcheck_windows.ps1` 和 `backup_databases.ps1`，分别用于启动后健康检查与题库操作前的双 SQLite 备份；单机操作说明见 `src/agent8000/deploy/LOCAL_PILOT.md`。
 - 已实测本机 8000 capabilities、8014 health 和 OCR Repair 页面均返回 HTTP 200。正式对学生开放仍需要受控服务器/HTTPS、认证和管理台访问限制；不能将 8000/8014 端口直接公网暴露。
+
+## 13. 2026-08-26 章节标题清理
+
+- 已在备份后将 28 个历史章节标题中的“（答案书补录）”移除，统一显示为“习题 X.X”；该标签只是过去的来源记录，不代表待补录任务。本次不改题目、答案或审核状态。

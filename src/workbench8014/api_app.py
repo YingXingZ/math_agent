@@ -2114,7 +2114,7 @@ def adopt_unmatched_answer_document_anchors(document_id: str, req: AdoptUnmatche
         if not section:
             section_id = str(uuid.uuid4())
             conn.execute("INSERT INTO sections(id,textbook_id,section_no,title) VALUES(?,?,?,?)",
-                         (section_id, textbook_id, section_no, f"习题 {section_no}（答案书补录）"))
+                         (section_id, textbook_id, section_no, f"习题 {section_no}"))
         else:
             section_id = section["id"]
         existing = conn.execute("""
