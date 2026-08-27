@@ -1751,6 +1751,42 @@ def grading_evidence(submission_id: int, request: Request):
     return payload
 
 
+@app.post("/api/submissions/{submission_id}/regrade")
+async def retry_grading(submission_id: int, background_tasks: BackgroundTasks, request: Request):
+    """Retry AI grading of an already archived submission without another upload.
+
+    A transient VLM/tunnel outage must never turn into a teacher asking a
+    student to upload the same homework again.  The result is still review
+    first; this endpoint only replaces the failed *candidate* result.
+    """
+    actor = require_roles(request, {"admin", "teacher"})
+    with connection() as conn:
+        submission = conn.execute(
+            """SELECT s.id,s.assignment_id,c.teacher_user_id FROM submissions s
+               JOIN assignments a ON a.id=s.assignment_id JOIN classes c ON c.id=a.class_id
+               WHERE s.id=?""",
+            (submission_id,),
+        ).fetchone()
+        if not submission:
+            raise HTTPException(404, "提交不存在")
+        scope = teacher_id_for_scope(actor)
+        if scope is not None and submission["teacher_user_id"] != scope:
+            raise HTTPException(404, "提交不存在")
+        job = conn.execute("SELECT id,status FROM grading_jobs WHERE submission_id=?", (submission_id,)).fetchone()
+        if not job:
+            raise HTTPException(409, "该提交没有可重试的初评任务")
+        if job["status"] in {"queued", "running"}:
+            raise HTTPException(409, "该提交正在进行 AI 初评，请稍候")
+        conn.execute("UPDATE grading_jobs SET status='queued', result_json=NULL WHERE id=?", (job["id"],))
+        conn.execute(
+            "UPDATE submissions SET status='submitted', score=NULL, feedback='正在重新调用 AI 初评。', needs_review=1, handwriting_score=NULL WHERE id=?",
+            (submission_id,),
+        )
+    background_tasks.add_task(run_grading_job, job["id"])
+    audit(actor, "submission.regrade", "submission", submission_id, submission["teacher_user_id"])
+    return {"ok": True, "grading_job_id": job["id"], "message": "已重新提交 AI 初评；原作业已保留，无需重新上传。"}
+
+
 @app.get("/api/submissions/{submission_id}/file")
 def original_submission_file(submission_id: int, request: Request):
     """Serve only the original file belonging to this submission for review."""
