@@ -192,6 +192,65 @@ class StudentActivateIn(BaseModel):
     password: str = Field(min_length=10, max_length=200)
 
 
+DEMO_CLASS_NAME = "演示班级（不计入正式报表）"
+DEMO_SEMESTER = "DEMO"
+DEMO_STUDENT_NO = "DEMO001"
+DEMO_STUDENT_NAME = "演示学生"
+
+
+def _create_demo_package(conn: sqlite3.Connection, actor: dict) -> dict:
+    """Create a reusable, isolated grade-flow demo without publishing a question."""
+    teacher_id = actor["id"] if actor["role"] == "teacher" else None
+    class_row = conn.execute("SELECT * FROM classes WHERE name=? AND semester=?", (DEMO_CLASS_NAME, DEMO_SEMESTER)).fetchone()
+    if class_row is None:
+        class_id = conn.execute("INSERT INTO classes(name,semester,teacher_user_id) VALUES(?,?,?)", (DEMO_CLASS_NAME, DEMO_SEMESTER, teacher_id)).lastrowid
+    else:
+        class_id = class_row["id"]
+    conn.execute("INSERT OR IGNORE INTO students(class_id,student_no,name) VALUES(?,?,?)", (class_id, DEMO_STUDENT_NO, DEMO_STUDENT_NAME))
+    question = conn.execute("SELECT id FROM questions WHERE content=? AND review_status='blocked' LIMIT 1", ("【演示测试题】计算 1+0 的值。",)).fetchone()
+    if question is None:
+        question_id = conn.execute(
+            """INSERT INTO questions(content,chapter,difficulty,question_type,answer,rubric,review_status,owner_teacher_id)
+               VALUES(?,?,?,?,?,?,?,?)""",
+            ("【演示测试题】计算 1+0 的值。", "DEMO", "基础", "计算题", "1", "写出结果 1，得 10 分。", "blocked", teacher_id),
+        ).lastrowid
+    else:
+        question_id = question["id"]
+    assignment = conn.execute("SELECT id FROM assignments WHERE title='演示：自动批改流程' AND is_demo=1 LIMIT 1").fetchone()
+    if assignment is None:
+        assignment_id = conn.execute(
+            """INSERT INTO assignments(title,chapter,class_name,class_id,due_at,total_score,status,semester,is_demo)
+               VALUES(?,?,?,?,?,?,?,?,1)""",
+            ("演示：自动批改流程", "DEMO", DEMO_CLASS_NAME, class_id, "2099-12-31T23:59:59+00:00", 10, "published", DEMO_SEMESTER),
+        ).lastrowid
+        conn.execute("INSERT INTO assignment_questions(assignment_id,question_id,sort_order,score,original_no) VALUES(?,?,?,?,?)", (assignment_id, question_id, 1, 10, "1"))
+    else:
+        assignment_id = assignment["id"]
+    return {"class_id": class_id, "assignment_id": assignment_id, "student_no": DEMO_STUDENT_NO,
+            "student_name": DEMO_STUDENT_NAME, "question": "计算 1+0 的值", "expected_answer": "1"}
+
+
+@app.post("/api/admin/demo-package", status_code=201)
+def create_demo_package(request: Request):
+    """Create a disposable-looking demo package. It is explicitly excluded from reports."""
+    actor = require_roles(request, {"admin", "teacher"})
+    with connection() as conn:
+        package = _create_demo_package(conn, actor)
+    audit(actor, "demo.create", "demo_package", package["assignment_id"], actor["id"] if actor["role"] == "teacher" else None)
+    return {**package, "sample_download_url": "/api/admin/demo-package/handwriting-sample",
+            "submit_url": f"/submit?assignment_id={package['assignment_id']}",
+            "note": "演示数据仅用于测试，不进入正式教学报表。"}
+
+
+@app.get("/api/admin/demo-package/handwriting-sample")
+def download_demo_handwriting_sample(request: Request):
+    require_roles(request, {"admin", "teacher"})
+    path = Path(__file__).with_name("demo_handwriting_sample.png")
+    if not path.is_file():
+        raise HTTPException(404, "演示手写样本文件不存在")
+    return FileResponse(path, filename="高数智能体_手写作业演示样本.png", media_type="image/png")
+
+
 class MineruStageIn(BaseModel):
     role: Literal["textbook", "answer_book"]
     name: str = Field(min_length=1, max_length=120)
@@ -1754,10 +1813,11 @@ def review_quota(request: Request):
                JOIN submissions s ON s.id=ge.submission_id
                JOIN assignments a ON a.id=ge.assignment_id
                JOIN classes c ON c.id=a.class_id
+               WHERE COALESCE(a.is_demo,0)=0
             """
         )
         args: list[object] = []
-        if scope is not None: sql += " WHERE c.teacher_user_id=?"; args.append(scope)
+        if scope is not None: sql += " AND c.teacher_user_id=?"; args.append(scope)
         rows = conn.execute(sql + " GROUP BY a.class_name, a.semester", args).fetchall()
     items = []
     for r in rows:
@@ -1779,7 +1839,7 @@ def weak_points(request: Request, class_name: str | None = None, semester: str |
     with connection() as conn:
         qmap = {row["id"]: (row["knowledge_points"] or row["chapter"])
                 for row in conn.execute("SELECT id, knowledge_points, chapter FROM questions")}
-        clauses, params = ["a.class_id IS NOT NULL"], []
+        clauses, params = ["a.class_id IS NOT NULL", "COALESCE(a.is_demo,0)=0"], []
         if class_name:
             clauses.append("a.class_name=?"); params.append(class_name)
         if semester:
@@ -1824,7 +1884,7 @@ def semester_summary(request: Request, class_name: str | None = None, semester: 
     actor = require_roles(request, {"admin", "teacher"})
     scope = teacher_id_for_scope(actor)
     with connection() as conn:
-        clauses = ["s.status='graded'", "a.class_id IS NOT NULL"]
+        clauses = ["s.status='graded'", "a.class_id IS NOT NULL", "COALESCE(a.is_demo,0)=0"]
         params = []
         if class_name:
             clauses.append("a.class_name=?"); params.append(class_name)
@@ -1874,11 +1934,12 @@ async def summary(request: Request):
     scope = teacher_id_for_scope(actor)
     with connection() as conn:
         suffix, args = ("", []) if scope is None else (" AND class_id IN (SELECT id FROM classes WHERE teacher_user_id=?)", [scope])
+        demo_suffix = " AND COALESCE(is_demo,0)=0"
         local = dict(conn.execute(f"""SELECT (SELECT COUNT(*) FROM questions) question_count,
-          (SELECT COUNT(*) FROM assignments WHERE status='published' AND class_id IS NOT NULL{suffix}) assignment_count,
-          (SELECT COUNT(*) FROM submissions s JOIN assignments a ON a.id=s.assignment_id WHERE a.class_id IS NOT NULL{suffix}) submission_count,
+          (SELECT COUNT(*) FROM assignments WHERE status='published' AND class_id IS NOT NULL{demo_suffix}{suffix}) assignment_count,
+          (SELECT COUNT(*) FROM submissions s JOIN assignments a ON a.id=s.assignment_id WHERE a.class_id IS NOT NULL AND COALESCE(a.is_demo,0)=0{suffix}) submission_count,
           (SELECT COUNT(*) FROM grading_jobs WHERE status='queued') review_queue""", args * 2).fetchone())
-        hw_where = "a.class_id IS NOT NULL AND s.handwriting_score IS NOT NULL" + (" AND c.teacher_user_id=?" if scope is not None else "")
+        hw_where = "a.class_id IS NOT NULL AND COALESCE(a.is_demo,0)=0 AND s.handwriting_score IS NOT NULL" + (" AND c.teacher_user_id=?" if scope is not None else "")
         hw = conn.execute(
             """SELECT AVG(s.handwriting_score) FROM submissions s
                JOIN assignments a ON a.id=s.assignment_id
@@ -1887,7 +1948,7 @@ async def summary(request: Request):
         below = conn.execute(
             """SELECT COUNT(*) FROM (SELECT a.class_name, a.semester
                 FROM grading_experiences ge JOIN submissions s ON s.id=ge.submission_id
-                JOIN assignments a ON a.id=ge.assignment_id JOIN classes c ON c.id=a.class_id""" + below_where +
+                JOIN assignments a ON a.id=ge.assignment_id JOIN classes c ON c.id=a.class_id WHERE COALESCE(a.is_demo,0)=0""" + (" AND c.teacher_user_id=?" if scope is not None else "") +
                 " GROUP BY a.class_name, a.semester HAVING COUNT(DISTINCT ge.id) < ?)",
             args + [REVIEW_QUOTA_PER_CLASS]).fetchone()[0]
     evidence = await evidence_status()

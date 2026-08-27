@@ -262,6 +262,8 @@ def init_db() -> None:
         # class data and historical sample records.
         if "class_id" not in assign_cols:
             conn.execute("ALTER TABLE assignments ADD COLUMN class_id INTEGER")
+        if "is_demo" not in assign_cols:
+            conn.execute("ALTER TABLE assignments ADD COLUMN is_demo INTEGER NOT NULL DEFAULT 0")
         class_cols = {row[1] for row in conn.execute("PRAGMA table_info(classes)")}
         if "teacher_user_id" not in class_cols:
             conn.execute("ALTER TABLE classes ADD COLUMN teacher_user_id INTEGER")
