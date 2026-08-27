@@ -27,6 +27,27 @@ def _math_equal(student_answer: str, standard_answer: str) -> dict[str, Any]:
         from grading_engine import expr_equal
 
         equal, confidence, method = expr_equal(student_answer, standard_answer)
+        if equal:
+            return {"available": True, "equal": equal, "confidence": confidence, "method": method}
+
+        # Handwritten calculation work is commonly recognised as a complete
+        # equality (for example ``1+0=1``), while the answer key stores only
+        # the final value (``1``).  Compare its right-hand side only for a
+        # single plain equality.  Do not apply this to inequalities, chained
+        # equations, set membership, or prose: those carry mathematical
+        # structure that must remain in the normal conservative path.
+        raw = student_answer.strip().replace("＝", "=")
+        if (raw.count("=") == 1 and not any(token in raw for token in ("<", ">", "≤", "≥", "≠", "∈", "∉"))):
+            _left, rhs = raw.split("=", 1)
+            if _left.strip() and rhs.strip():
+                rhs_equal, rhs_confidence, rhs_method = expr_equal(rhs.strip(), standard_answer)
+                if rhs_equal:
+                    return {
+                        "available": True,
+                        "equal": True,
+                        "confidence": rhs_confidence,
+                        "method": f"等式右端与标准答案一致（{rhs_method}）",
+                    }
         return {"available": True, "equal": equal, "confidence": confidence, "method": method}
     except Exception as exc:
         return {"available": False, "equal": None, "confidence": 0, "method": f"判等不可用：{str(exc)[:100]}"}
@@ -154,7 +175,7 @@ async def grade_submission(submission_id: int) -> dict[str, Any]:
             review_reasons.append("Qwen 识别失败")
         if not standard_answer:
             review_reasons.append("缺少标准答案")
-        if row["question_type"] != "calc":
+        if normalize_question_type(row["question_type"]) != "calc":
             review_reasons.append("证明/非计算题需教师复核")
         if float(qwen.get("confidence", 0) or 0) < 0.85:
             review_reasons.append("Qwen 置信度不足")
