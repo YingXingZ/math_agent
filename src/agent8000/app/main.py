@@ -1550,6 +1550,38 @@ def printable_assignment(assignment_id: int, request: Request):
     <header><h1>{escape(assignment['title'])}</h1><div class='meta'><span>班级：{escape(assignment['class_name'])}</span><span>姓名：__________</span><span>学号：__________</span></div><p>章节：{escape(assignment['chapter'])}　截止：{escape(assignment['due_at'])}　总分：{assignment['total_score']}</p></header>{items}</html>"""
 
 
+@app.get("/api/assignments/{assignment_id}/submissions")
+def assignment_submissions(assignment_id: int, request: Request):
+    """Teacher's complete result list, including auto-graded submissions.
+
+    The review queue intentionally contains only uncertain work.  This endpoint
+    is separate so successful automatic grading does not become invisible.
+    """
+    actor = require_roles(request, {"admin", "teacher"})
+    with connection() as conn:
+        assignment = _require_assignment(conn, assignment_id, actor)
+        rows = conn.execute(
+            """SELECT s.id,s.student_no,s.student_name,s.status,s.score,s.needs_review,s.submitted_at,
+                      j.status AS grading_status,j.result_json
+               FROM submissions s LEFT JOIN grading_jobs j ON j.submission_id=s.id
+               WHERE s.assignment_id=? ORDER BY s.submitted_at DESC, s.id DESC""",
+            (assignment_id,),
+        ).fetchall()
+    items = []
+    for row in rows:
+        item = dict(row)
+        result = json.loads(item.pop("result_json") or "{}")
+        question_results = result.get("results") or []
+        item["total_score"] = result.get("total_score", item["score"])
+        item["max_score"] = result.get("max_score", assignment["total_score"])
+        item["recognized_summary"] = "；".join(
+            str(q.get("recognized_work") or "未识别") for q in question_results
+        )
+        item["qwen_error"] = result.get("qwen_error", "")
+        items.append(item)
+    return {"assignment_id": assignment_id, "title": assignment["title"], "submissions": items}
+
+
 def _load_assignment_items(assignment_id: int, actor: dict | None = None) -> tuple[dict, list[dict]]:
     with connection() as conn:
         assignment = _require_assignment(conn, assignment_id, actor)
