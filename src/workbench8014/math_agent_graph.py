@@ -179,7 +179,7 @@ def verify_answer(state: MathAgentState, skill_registry: SkillRegistry | None = 
     question_type = state.get("question_type", "calc")
     if question_type == "proof":
         proof = proof_step_assessment(state.get("student_answer", ""), state.get("teacher_feedback", ""), force_proof=True, student_steps=state.get("student_steps", ""))
-        verification = {"correct": None, "confidence": 0.0, "method": "证明题关键步骤核对"}
+        verification = {"correct": None, "evidence_level": "manual_proof_rubric", "evidence_strength": 0.0, "method": "证明题关键步骤核对"}
         first_uncertain = proof["subquestions"][0]["status"] != "correct"
         action = "teacher_review" if (first_uncertain or proof["part2_status"] == "uncertain" or proof["teacher_feedback_conflict"]) else "diagnose_misconception"
         return {"verification": verification, "proof_assessment": proof, "action": action}
@@ -189,7 +189,7 @@ def verify_answer(state: MathAgentState, skill_registry: SkillRegistry | None = 
     ))
     verification = result.model_dump(exclude_none=True)
     proof = proof_step_assessment(state.get("student_answer", ""), state.get("teacher_feedback", ""), student_steps=state.get("student_steps", ""))
-    action = "diagnose_misconception" if (result.confidence or 0) >= 0.85 else "independent_solve"
+    action = "diagnose_misconception" if (result.evidence_strength or 0) >= 0.70 else "independent_solve"
     return {"verification": verification, "proof_assessment": proof, "action": action}
 
 
@@ -228,11 +228,12 @@ def compare_solutions(state: MathAgentState, skill_registry: SkillRegistry | Non
         student_answer=solved_answer, standard_answer=state["standard_answer"]
     ))
     model_confidence = float(solution.get("confidence") or 0)
-    consistent = bool(verdict.correct) and (verdict.confidence or 0) >= 0.85 and model_confidence >= 0.70
+    consistent = bool(verdict.correct) and (verdict.evidence_strength or 0) >= 0.70 and model_confidence >= 0.70
     return {
         "solution_comparison": {
-            "consistent": consistent, "confidence": verdict.confidence,
-            "method": verdict.method, "solver_confidence": model_confidence,
+            "consistent": consistent, "evidence_level": verdict.evidence_level,
+            "evidence_strength": verdict.evidence_strength, "method": verdict.method,
+            "solver_confidence": model_confidence,
         },
         "action": "diagnose_misconception" if consistent else "teacher_review",
     }
@@ -294,11 +295,11 @@ def teach_student(state: MathAgentState) -> dict:
     if mode not in {"diagnose", "hint", "solution"}:
         mode = "diagnose"
     if verification["correct"]:
-        base = "你的答案正确：{}（置信度 {:.2f}）。".format(verification["method"], verification["confidence"])
+        base = "你的答案正确：{}（证据等级：{}）。".format(verification["method"], verification.get("evidence_level", "未标注"))
     elif state.get("solution_comparison", {}).get("consistent"):
         base = "表达式格式未识别，但数学结果正确：独立求解与标准答案已通过符号判等。"
     else:
-        base = "答案暂不正确：{}（置信度 {:.2f}）。".format(verification["method"], verification["confidence"])
+        base = "答案暂不正确：{}（证据等级：{}）。".format(verification["method"], verification.get("evidence_level", "未标注"))
 
     if mode == "hint":
         next_step = (items[0]["label"] + "：" + items[0]["next_step"]) if items else "请先写出关键中间步骤，再逐项核对符号、幂次和条件。"

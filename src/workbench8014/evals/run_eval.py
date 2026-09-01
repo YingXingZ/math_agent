@@ -9,14 +9,14 @@ from skills.symbolic_verification import symbolic_verification
 CASES = Path(__file__).with_name("math_agent_eval_cases.jsonl")
 
 def route_for(confidence):
-    return "diagnose_misconception" if (confidence or 0) >= 0.85 else "independent_solve"
+    return "diagnose_misconception" if (confidence or 0) >= 0.70 else "independent_solve"
 
 def run():
     cases=[json.loads(line) for line in CASES.read_text(encoding="utf-8").splitlines() if line.strip()]
     failures=[]; ct=cp=rp=dt=dp=0
     for case in cases:
         verdict=symbolic_verification(SymbolicVerificationInput(student_answer=case["student_answer"],standard_answer=case["standard_answer"]))
-        route=route_for(verdict.confidence)
+        route=route_for(verdict.evidence_strength)
         if route == case["expected_route"]: rp+=1
         else: failures.append(case["id"]+": route expected "+case["expected_route"]+", got "+route)
         if case["expected_correct"] is not None:

@@ -33,7 +33,7 @@ REQUIRED_LABEL = {"correct", "expected_route", "expected_diagnosis", "requires_t
 
 
 def route(confidence: float | None) -> str:
-    return "diagnose_misconception" if (confidence or 0.0) >= 0.85 else "independent_solve"
+    return "diagnose_misconception" if (confidence or 0.0) >= 0.70 else "independent_solve"
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -104,7 +104,7 @@ def evaluate(cases_path: Path = CASES, thresholds_path: Path = THRESHOLDS) -> di
                 false_positive_count += 1
                 failures.append(f"{identifier}: unsafe false positive")
 
-        predicted_route = route(verification.confidence)
+        predicted_route = route(verification.evidence_strength)
         if predicted_route == label["expected_route"]:
             route_matches += 1
         else:

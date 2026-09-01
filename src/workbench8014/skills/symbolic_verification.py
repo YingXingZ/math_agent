@@ -9,7 +9,7 @@ SOURCE_ROOT = Path(__file__).resolve().parents[2]
 if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
 
-from grading_engine import expr_equal, normalize_expr
+from grading_engine import expr_equal_evidence, normalize_expr
 
 from .registry import registry
 from .schemas import SymbolicVerificationInput, VerificationResult
@@ -23,21 +23,26 @@ def symbolic_verification(payload: SymbolicVerificationInput) -> VerificationRes
         return VerificationResult(
             success=False,
             correct=None,
-            confidence=0.30,
+            confidence=None,
+            evidence_level="parse_or_evaluation_failed",
+            evidence_strength=0.0,
             method="检测到非数学文本",
             evidence=["学生作答包含中文说明或无法辨认文本，不能进行符号判等。"],
             warnings=["需要调用独立求解/视觉识别，或转教师复核。"],
             error_code="NON_MATHEMATICAL_ANSWER",
         )
-    correct, confidence, method = expr_equal(payload.student_answer, payload.standard_answer)
+    comparison = expr_equal_evidence(payload.student_answer, payload.standard_answer)
     return VerificationResult(
         success=True,
-        correct=correct,
-        confidence=confidence,
-        method=method,
+        correct=comparison.correct,
+        confidence=None,
+        evidence_level=comparison.evidence_level,
+        evidence_strength=comparison.evidence_strength,
+        sample_set_id=comparison.sample_set_id or None,
+        method=comparison.method,
         normalized_student_answer=normalize_expr(payload.student_answer) or None,
         # 不把标准答案或其归一化形式放进返回值，避免经 API 泄露。
-        evidence=[f"判定方法：{method}"],
-        warnings=[] if confidence >= 0.85 else ["表达式无法被可靠解析，需要独立求解或教师复核。"],
-        error_code=None if confidence >= 0.85 else "LOW_CONFIDENCE_VERIFICATION",
+        evidence=[f"判定方法：{comparison.method}", f"证据等级：{comparison.evidence_level}"],
+        warnings=[] if comparison.evidence_strength >= 0.80 else ["表达式无法被可靠解析，需要独立求解或教师复核。"],
+        error_code=None if comparison.evidence_strength >= 0.80 else "INSUFFICIENT_DETERMINISTIC_EVIDENCE",
     )

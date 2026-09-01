@@ -20,6 +20,10 @@ class SymbolicVerificationInput(BaseModel):
 class VerificationResult(SkillResult):
     correct: bool | None = None
     method: str | None = None
+    # Deterministic verification emits evidence, not a calibrated probability.
+    evidence_level: str = "parse_or_evaluation_failed"
+    evidence_strength: float = Field(default=0.0, ge=0.0, le=1.0)
+    sample_set_id: str | None = None
     normalized_student_answer: str | None = None
     normalized_standard_answer: str | None = None
 

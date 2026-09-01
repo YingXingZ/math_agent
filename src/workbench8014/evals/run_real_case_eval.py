@@ -10,7 +10,7 @@ from skills.misconception_diagnosis import misconception_diagnosis
 from math_agent_graph import proof_step_assessment
 CASES=Path(__file__).with_name("real_cases")/"sanitized_cases.jsonl"
 
-def route(c): return "diagnose_misconception" if (c or 0)>=0.85 else "independent_solve"
+def route(c): return "diagnose_misconception" if (c or 0)>=0.70 else "independent_solve"
 def run():
     rows=[json.loads(line) for line in CASES.read_text(encoding="utf-8").splitlines() if line.strip()]
     failures=[]
@@ -22,7 +22,7 @@ def run():
         # Proof cases are not valid inputs for symbolic-expression equivalence;
         # their expected truth is checked by the critical-step regression below.
         if x.get("regression") != "proof_key_evidence_must_not_be_called_missing" and v.correct is not x["expected_correct"]: failures.append(x["id"]+": correctness mismatch")
-        if route(v.confidence)!=x["expected_route"]: failures.append(x["id"]+": route mismatch")
+        if route(v.evidence_strength)!=x["expected_route"]: failures.append(x["id"]+": route mismatch")
         if x.get("expected_diagnosis"):
             d=misconception_diagnosis(MisconceptionDiagnosisInput(student_answer=x["student_answer"],standard_answer=x["standard_answer"],problem_text=x.get("problem_text",""),verification_correct=v.correct))
             if x["expected_diagnosis"] not in {i.code for i in d.diagnoses}: failures.append(x["id"]+": diagnosis mismatch")

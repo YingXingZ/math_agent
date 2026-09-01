@@ -52,3 +52,21 @@ def test_non_equivalent_expressions(student, standard):
 def test_ocr_superscript_should_be_equivalent():
     equal, _, _ = ge.expr_equal("x²+2x+1", "(x+1)^2")
     assert equal is True
+
+
+def test_deterministic_sampling_is_reproducible_and_auditable():
+    first = ge.expr_equal_evidence("x^2", "x^3")
+    second = ge.expr_equal_evidence("x^2", "x^3")
+    assert first == second
+    assert first.evidence_level == "deterministic_samples_mismatch"
+    assert first.sample_set_id.startswith("rational-grid-v1:")
+    assert first.valid_sample_count >= 8
+
+def test_tools_engine_is_only_a_canonical_compatibility_export():
+    import importlib.util
+    from pathlib import Path
+    wrapper_path = Path(__file__).resolve().with_name("grading_engine.py")
+    spec = importlib.util.spec_from_file_location("tools_grading_engine_wrapper", wrapper_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.normalize_expr("x^2") == ge.normalize_expr("x^2")

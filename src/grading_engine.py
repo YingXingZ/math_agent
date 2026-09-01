@@ -7,7 +7,7 @@
   3. 每个判定都带置信度，低置信度优先推给教师复核
 """
 from __future__ import annotations
-import re, json, sys, os, base64
+import re, json, sys, os, base64, hashlib
 from dataclasses import dataclass, field, asdict
 from typing import Optional, List, Dict, Any
 
@@ -20,6 +20,38 @@ from sympy.parsing.sympy_parser import (
 TRANSFORMS = standard_transformations + (
     implicit_multiplication_application, convert_xor,
 )
+
+# “strength” denotes deterministic evidence strength, not a calibrated
+# probability. It must never be displayed as “the probability of correctness”.
+EVIDENCE_STRENGTH_BY_LEVEL = {
+    "symbolic_identity": 1.00,
+    "constant_exact_numeric": 0.95,
+    "constant_approximation": 0.80,
+    "deterministic_samples_all_match": 0.80,
+    "deterministic_samples_mismatch": 0.80,
+    "string_identity_parse_failed": 0.35,
+    "parse_or_evaluation_failed": 0.00,
+    "manual_proof_rubric": 0.00,
+}
+DETERMINISTIC_SAMPLE_SET_VERSION = "rational-grid-v1"
+_SAMPLE_RATIONALS = (
+    sp.Rational(2, 1), sp.Rational(3, 2), sp.Rational(5, 3),
+    sp.Rational(7, 2), sp.Rational(11, 3), sp.Rational(13, 4),
+    sp.Rational(17, 5), sp.Rational(19, 6), sp.Rational(23, 7),
+    sp.Rational(29, 5), sp.Rational(31, 6), sp.Rational(37, 7),
+)
+
+
+@dataclass(frozen=True)
+class EqualityEvidence:
+    correct: bool
+    evidence_level: str
+    evidence_strength: float
+    method: str
+    sample_set_id: str = ""
+    valid_sample_count: int = 0
+    matched_sample_count: int = 0
+
 
 # ============ 数据结构 ============
 
@@ -177,62 +209,87 @@ def to_sympy(text: str):
         return None
 
 
-def expr_equal(a: str, b: str, tol: float = 1e-6) -> tuple[bool, float, str]:
-    """
-    判断两个表达式是否等价
-    返回 (是否相等, 置信度, 判定方式)
-    """
+def _deterministic_substitutions(symbols: list[sp.Symbol], a: str, b: str, count: int = 12):
+    """Generate reproducible rational substitutions from normalised input."""
+    digest = hashlib.sha256((normalize_expr(a) + "\x1f" + normalize_expr(b)).encode("utf-8")).hexdigest()
+    seed = int(digest[:16], 16)
+    sample_set_id = f"{DETERMINISTIC_SAMPLE_SET_VERSION}:{digest[:12]}"
+    for index in range(count):
+        substitutions = {}
+        for symbol_index, symbol in enumerate(symbols):
+            grid_index = (seed + index * 7 + symbol_index * 11) % len(_SAMPLE_RATIONALS)
+            substitutions[symbol] = _SAMPLE_RATIONALS[grid_index]
+        yield sample_set_id, substitutions
+
+
+def expr_equal_evidence(a: str, b: str, tol: float = 1e-6) -> EqualityEvidence:
+    """Compare expressions and return auditable evidence, never a probability."""
     ea, eb = to_sympy(a), to_sympy(b)
     if ea is None or eb is None:
-        # 退化为字符串比较
         na, nb = normalize_expr(a), normalize_expr(b)
         if na and na == nb:
-            return True, 0.55, "字符串完全一致（表达式解析失败）"
-        return False, 0.30, "表达式解析失败，无法判定"
+            level = "string_identity_parse_failed"
+            return EqualityEvidence(True, level, EVIDENCE_STRENGTH_BY_LEVEL[level], "字符串完全一致（表达式解析失败）")
+        level = "parse_or_evaluation_failed"
+        return EqualityEvidence(False, level, EVIDENCE_STRENGTH_BY_LEVEL[level], "表达式解析失败，无法判定")
 
-    # 1) 符号化简判等
     try:
         diff = sp.simplify(ea - eb)
         if diff == 0:
-            return True, 0.99, "符号化简判等"
+            level = "symbolic_identity"
+            return EqualityEvidence(True, level, EVIDENCE_STRENGTH_BY_LEVEL[level], "符号化简判等")
     except Exception:
         pass
 
-    # 2) 数值判等（分级容差：区分"精确" / "合理近似" / "错误"）
     try:
         va, vb = complex(sp.N(ea)), complex(sp.N(eb))
         denom = max(1.0, abs(vb))
         rel = abs(va - vb) / denom
         if rel < tol:
-            return True, 0.95, "数值判等"
-        # 学生手写常给小数近似（如 0.6667 ≈ 2/3），按相对误差宽容判定
+            level = "constant_exact_numeric"
+            return EqualityEvidence(True, level, EVIDENCE_STRENGTH_BY_LEVEL[level], "常数数值一致")
         if rel < 1e-3:
-            return True, 0.80, (f"数值近似判等（相对误差 {rel:.2e}，"
-                                f"学生答 {va.real:.6g} vs 标准 {vb.real:.6g}）")
-        return False, 0.95, f"数值不等 ({va.real:.6g} vs {vb.real:.6g})"
+            level = "constant_approximation"
+            return EqualityEvidence(True, level, EVIDENCE_STRENGTH_BY_LEVEL[level], f"常数近似一致（相对误差 {rel:.2e}）")
+        level = "constant_exact_numeric"
+        return EqualityEvidence(False, level, EVIDENCE_STRENGTH_BY_LEVEL[level], f"常数数值不等 ({va.real:.6g} vs {vb.real:.6g})")
     except Exception:
         pass
 
-    # 3) 随机取点判等（含自由变量的表达式）
     try:
-        syms = sorted(ea.free_symbols | eb.free_symbols, key=str)
-        if syms:
-            import random
-            hits = 0
-            for _ in range(12):
-                sub = {s: sp.Rational(random.randint(2, 40), random.randint(1, 7))
-                       for s in syms}
-                da = complex(sp.N(ea.subs(sub)))
-                db = complex(sp.N(eb.subs(sub)))
-                if abs(da - db) < 1e-6 * max(1.0, abs(da)):
-                    hits += 1
-            if hits >= 11:
-                return True, 0.90, f"随机取点判等 ({hits}/12)"
-            return False, 0.85, f"随机取点不等 ({hits}/12)"
+        symbols = sorted(ea.free_symbols | eb.free_symbols, key=str)
+        if symbols:
+            valid = matched = 0
+            sample_set_id = ""
+            for sample_set_id, substitution in _deterministic_substitutions(symbols, a, b):
+                try:
+                    da, db = complex(sp.N(ea.subs(substitution))), complex(sp.N(eb.subs(substitution)))
+                    if not all(value == value and abs(value) != float("inf") for value in (da.real, da.imag, db.real, db.imag)):
+                        continue
+                    valid += 1
+                    if abs(da - db) < tol * max(1.0, abs(da), abs(db)):
+                        matched += 1
+                except Exception:
+                    continue
+            if valid >= 8 and matched == valid:
+                level = "deterministic_samples_all_match"
+                return EqualityEvidence(True, level, EVIDENCE_STRENGTH_BY_LEVEL[level],
+                    f"确定性取点一致 ({matched}/{valid})", sample_set_id, valid, matched)
+            if valid >= 1 and matched < valid:
+                level = "deterministic_samples_mismatch"
+                return EqualityEvidence(False, level, EVIDENCE_STRENGTH_BY_LEVEL[level],
+                    f"确定性取点不一致 ({matched}/{valid})", sample_set_id, valid, matched)
     except Exception:
         pass
 
-    return False, 0.40, "无法可靠判定"
+    level = "parse_or_evaluation_failed"
+    return EqualityEvidence(False, level, EVIDENCE_STRENGTH_BY_LEVEL[level], "无法形成足够的确定性数学证据")
+
+
+def expr_equal(a: str, b: str, tol: float = 1e-6) -> tuple[bool, float, str]:
+    """Compatibility shim: returned float is evidence strength, never probability."""
+    result = expr_equal_evidence(a, b, tol)
+    return result.correct, result.evidence_strength, result.method
 
 
 # ============ 非符号型专用比对器 ============
