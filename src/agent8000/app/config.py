@@ -16,7 +16,8 @@ class Settings(BaseSettings):
     dify_workflow_id: str = ""
     # The existing 8014 workbench is the authoritative evidence store for
     # textbooks, answer PDFs, Qwen results and symbolic verification.
-    evidence_api_url: str = "http://127.0.0.1:8014/api"
+    evidence_api_url: str = "http://evidence-service:8014/api"
+    evidence_api_key: str = ""
     # Switch model backends at deployment time. local_qwen keeps the current
     # A100-compatible HTTP service; qwen_api calls a Qwen-compatible API.
     llm_provider: str = "local_qwen"

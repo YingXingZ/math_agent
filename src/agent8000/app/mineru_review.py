@@ -18,6 +18,7 @@ from typing import Any
 import httpx
 
 from .config import settings
+from .evidence_client import client as evidence_client, url as evidence_url
 from .db import connection
 from .knowledge_bridge import retrieve_problem, retrieve_section_problems
 from .question_validation import validate_question
@@ -294,9 +295,9 @@ async def approve_item(
     }
 
     # 1) Write back to 8014 first; do not touch local state until it succeeds.
-    put_url = settings.evidence_api_url.rstrip("/") + f"/problems/{item['source_problem_id']}/answer"
+    put_url = evidence_url("").rstrip("/") + f"/problems/{item['source_problem_id']}/answer"
     try:
-        async with httpx.AsyncClient(timeout=25) as client:
+        async with evidence_client(timeout=25) as client:
             response = await client.put(put_url, json=payload)
             response.raise_for_status()
     except httpx.TimeoutException as exc:

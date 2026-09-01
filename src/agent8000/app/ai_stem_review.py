@@ -16,6 +16,7 @@ from typing import Any
 import httpx
 
 from .config import settings
+from .evidence_client import client as evidence_client, url as evidence_url
 from .db import connection, normalize_question_type
 
 
@@ -192,9 +193,9 @@ async def approve_candidate(
 
     # 1) Write back to 8014 (authoritative source) FIRST.  Do not touch local
     #    state until the upstream write succeeds, mirroring the MinerU pattern.
-    put_url = settings.evidence_api_url.rstrip("/") + f"/problems/{source_id}/content"
+    put_url = evidence_url("").rstrip("/") + f"/problems/{source_id}/content"
     try:
-        async with httpx.AsyncClient(timeout=25) as client:
+        async with evidence_client(timeout=25) as client:
             response = await client.put(put_url, json={"content_text": final_content})
             response.raise_for_status()
     except httpx.TimeoutException as exc:

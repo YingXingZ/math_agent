@@ -32,7 +32,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query, Body
+from fastapi import FastAPI, HTTPException, Query, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
@@ -44,14 +44,23 @@ DB = os.environ.get("WORKBENCH_DB", os.path.join(os.path.dirname(__file__), "api
 JOB_STORE = {}  # job_id -> {status, progress, result, error}
 IMAGE_ROOT = os.environ.get("IMAGE_ROOT", "extract_img")
 
-# CORS：允许任意来源（含 file:// 打开的本地 HTML）。开发态，无凭证。
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# 8014 is an internal evidence service. Development remains local-friendly;
+# production requires a service key and explicit browser origins.
+WORKBENCH_MODE = os.environ.get("WORKBENCH_MODE", "development").strip().lower()
+INTERNAL_API_KEY = os.environ.get("WORKBENCH_INTERNAL_API_KEY", "")
+ALLOWED_ORIGINS = [x.strip() for x in os.environ.get("WORKBENCH_CORS_ORIGINS", "").split(",") if x.strip()]
+if WORKBENCH_MODE == "production" and not INTERNAL_API_KEY:
+    raise RuntimeError("WORKBENCH_INTERNAL_API_KEY is required in production")
+app.add_middleware(CORSMiddleware, allow_origins=ALLOWED_ORIGINS if WORKBENCH_MODE == "production" else ["http://127.0.0.1:8014", "http://localhost:8014"], allow_credentials=False, allow_methods=["GET","POST","PUT","DELETE"], allow_headers=["Content-Type","X-Internal-API-Key","X-Request-ID"])
+
+@app.middleware("http")
+async def internal_service_auth(request: Request, call_next):
+    if WORKBENCH_MODE == "production" and request.url.path.startswith("/api/") and request.url.path != "/api/health":
+        import hmac
+        supplied = request.headers.get("X-Internal-API-Key", "")
+        if not hmac.compare_digest(supplied, INTERNAL_API_KEY):
+            return JSONResponse(status_code=401, content={"detail":"internal service authentication required"})
+    return await call_next(request)
 
 
 # --------------------------------------------------------------------------- #

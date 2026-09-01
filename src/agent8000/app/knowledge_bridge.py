@@ -16,12 +16,13 @@ from pathlib import Path
 import httpx
 
 from .config import settings
+from .evidence_client import client as evidence_client, url as evidence_url
 
 
 async def evidence_status() -> dict[str, Any]:
-    base = settings.evidence_api_url.rstrip("/")
+    base = evidence_url("").rstrip("/")
     try:
-        async with httpx.AsyncClient(timeout=8) as client:
+        async with evidence_client(timeout=8) as client:
             textbooks, documents, problems = await _gather(client, base)
         problem_rows = problems.get("items", problems) if isinstance(problems, dict) else problems
         problem_count = (problems.get("total") if isinstance(problems, dict) else None) or len(problem_rows or [])
@@ -43,8 +44,8 @@ async def evidence_status() -> dict[str, Any]:
 
 async def list_evidence_sections() -> list[dict[str, str]]:
     """Return selectable textbook sections from the 8014 evidence source."""
-    base = settings.evidence_api_url.rstrip("/")
-    async with httpx.AsyncClient(timeout=15) as client:
+    base = evidence_url("").rstrip("/")
+    async with evidence_client(timeout=15) as client:
         textbooks_response = await client.get(base + "/textbooks")
         textbooks_response.raise_for_status()
         textbooks = textbooks_response.json() or []
@@ -76,8 +77,8 @@ async def _gather(client: httpx.AsyncClient, base: str):
 
 async def retrieve_section_problems(section_no: str, limit: int = 30) -> dict[str, Any]:
     """Retrieve assignment-ready evidence without mutating the source library."""
-    base = settings.evidence_api_url.rstrip("/")
-    async with httpx.AsyncClient(timeout=15) as client:
+    base = evidence_url("").rstrip("/")
+    async with evidence_client(timeout=15) as client:
         response = await client.get(base + "/problems", params={"section_no": section_no, "page": 1, "size": limit})
         response.raise_for_status()
         payload = response.json()
@@ -96,8 +97,8 @@ async def retrieve_section_problems(section_no: str, limit: int = 30) -> dict[st
 
 async def retrieve_problem(problem_id: str) -> dict[str, Any]:
     """Fetch a single problem's latest state from 8014 after it has been updated."""
-    base = settings.evidence_api_url.rstrip("/")
-    async with httpx.AsyncClient(timeout=15) as client:
+    base = evidence_url("").rstrip("/")
+    async with evidence_client(timeout=15) as client:
         response = await client.get(base + f"/problems/{problem_id}")
         response.raise_for_status()
         item = response.json()
@@ -224,9 +225,9 @@ async def rescue_formula_from_crop(crop_image_path: str, base: str | None = None
     same ``validate_question`` gate and require teacher confirmation before any
     publication state changes.
     """
-    base = base or settings.evidence_api_url.rstrip("/")
+    base = base or evidence_url("").rstrip("/")
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with evidence_client(timeout=15) as client:
             image_response = await client.get(base + "/images/" + quote(str(crop_image_path), safe="/"))
             image_response.raise_for_status()
             image_bytes = image_response.content
@@ -267,13 +268,13 @@ async def build_image_solve_candidate(item: dict[str, Any]) -> dict[str, Any]:
     crop = (item.get("evidence") or {}).get("crop_image_path")
     if not crop:
         return {"status": "unavailable", "reason": "没有原题截图"}
-    base = settings.evidence_api_url.rstrip("/")
+    base = evidence_url("").rstrip("/")
     qwen_base = settings.qwen_grading_url.rsplit("/", 1)[0]
     try:
         # VLM is currently flaky; keep the per-call deadline short so a dead
         # server fails fast into the Pix2Text OCR fallback instead of stalling
         # the whole section sync for ~10 minutes per problem.
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with evidence_client(timeout=15) as client:
             image_response = await asyncio.wait_for(client.get(base + "/images/" + quote(str(crop), safe="/")), timeout=15)
             image_response.raise_for_status()
             image_bytes = image_response.content

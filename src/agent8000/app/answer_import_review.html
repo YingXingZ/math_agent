@@ -96,7 +96,7 @@ async function loadItems(){
     let [rows,session]=await Promise.all([api('/api/mineru/review-sessions/'+sid+'/items'),loadSession()]);
     $('items').innerHTML=rows.map(x=>{
       let crop=x.evidence.question_crop_image_path;
-      let img=crop?`<p><b>8014 原题截图</b><br><img class="crop" src="http://127.0.0.1:8014/api/images/${encodeURI(crop)}"></p>`:'';
+      let img=crop?`<p><b>原题截图（经内部代理）</b><br><img class="crop" src="/api/evidence/images/${encodeURI(crop)}"></p>`:'';
       let badge = x.status==='approved'?'<span class="badge approved">已确认</span>':x.status==='rejected'?'<span class="badge rejected">已拒绝</span>':'<span class="badge pending">待审核</span>';
       let disabled = x.source_problem_id?'':'';
       return `<article class="item ${x.status||''} ${x.source_problem_id?'':'bad'}">

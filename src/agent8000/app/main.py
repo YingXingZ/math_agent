@@ -14,7 +14,7 @@ import sqlite3
 import httpx
 import time
 import uuid
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 
 # --- LaTeX helpers for HTML rendering ----------------------------------------
@@ -95,6 +95,7 @@ from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from .config import settings
+from .evidence_client import client as evidence_client, url as evidence_url
 from .db import connection, init_db, queue_due_grading as enqueue_due_grading, normalize_question_type
 from .auth import audit, current_user, ensure_bootstrap_admin, login, require_roles, teacher_id_for_scope, token_hash
 from .dify import run_workflow
@@ -957,7 +958,7 @@ def get_question(question_id: int, request: Request):
 
 
 @app.put("/api/questions/{question_id}")
-def update_question(question_id: int, payload: QuestionUpdateIn, request: Request):
+async def update_question(question_id: int, payload: QuestionUpdateIn, request: Request):
     """Manual edit of an existing question.  Provided fields are written; missing
     fields are left untouched.  Saving is NOT blocked by the math validator — we
     only surface a non-fatal warning when the new content looks suspicious."""
@@ -1001,7 +1002,7 @@ def update_question(question_id: int, payload: QuestionUpdateIn, request: Reques
     # source of truth stays consistent with the manual correction.
     sync_status = {"synced": False, "skipped": "未请求同步"}
     if payload.sync_8014:
-        sync_status = _sync_to_8014(row["source_problem_id"], fields)
+        sync_status = await _sync_to_8014(row["source_problem_id"], fields)
     # Non-fatal validation hint so the teacher knows if the text looks off.
     validation_warning = None
     try:
@@ -1030,48 +1031,45 @@ def update_question(question_id: int, payload: QuestionUpdateIn, request: Reques
 _GARBLE_AUDIT_CSV = Path(settings.garble_audit_csv)
 _LEGACY_OCR_MARKERS = re.compile(r"[锟�叫咱呗]")
 
-# 8014 证据库（独立 SQLite）。本地 questions 通过 source_problem_id 指回它的
-# problems.id；人工订正时若 sync_8014=True，则把对应字段写回这里，保持证据源一致。
-# Deployments can override this repository default with WORKBENCH_DB_PATH.
-_WORKBENCH_DB = Path(settings.workbench_db_path)
-
-
-def _sync_to_8014(source_problem_id: object, fields: dict) -> dict:
-    """Best-effort write of edited fields back to the 8014 evidence DB.
-
-    Returns a status dict the endpoint surfaces to the teacher; NEVER raises, so a
-    8014 hiccup can't break the local save that already committed.
-    Maps: content->content_text, answer->std_answer, rubric->full_solution.
-    Clears answer_invalid_reason when the answer/solution is fixed.
-    """
+# 8014 is an internal evidence service.  Never open its SQLite database from
+# 8001: all cross-service writes use the authenticated client below.
+async def _sync_to_8014(source_problem_id: object, fields: dict) -> dict:
+    """Best-effort evidence-service sync for teacher edits; never blocks local save."""
     if not source_problem_id:
         return {"synced": False, "skipped": "本题无 source_problem_id，8014 中无对应记录"}
-    if not _WORKBENCH_DB.exists():
-        return {"synced": False, "skipped": "未找到 8014 资料库文件"}
-    col_map = {"content": "content_text", "answer": "std_answer", "rubric": "full_solution"}
-    updates = {tgt: fields[src] for src, tgt in col_map.items() if src in fields}
-    if not updates:
-        return {"synced": False, "skipped": "未提供可同步到 8014 的字段"}
     try:
-        wb = sqlite3.connect(str(_WORKBENCH_DB), timeout=5)
-        try:
-            cur = wb.execute("SELECT id FROM problems WHERE id=?", (source_problem_id,)).fetchone()
-            if not cur:
-                return {"synced": False, "reason": f"8014 中找不到 id={source_problem_id} 的记录"}
-            set_sql = ", ".join(f"{k}=?" for k in updates)
-            if "std_answer" in updates or "full_solution" in updates:
-                set_sql += ", answer_invalid_reason=NULL"
-            wb.execute(
-                f"UPDATE problems SET {set_sql} WHERE id=?",
-                list(updates.values()) + [source_problem_id],
-            )
-            wb.commit()
-        finally:
-            wb.close()
+        async with evidence_client(timeout=25) as client:
+            if "content" in fields:
+                response = await client.put(evidence_url(f"/problems/{source_problem_id}/content"), json={"content_text": fields["content"]})
+                response.raise_for_status()
+            answer_payload = {target: fields[source] for source, target in {"answer": "std_answer", "rubric": "full_solution"}.items() if source in fields}
+            if answer_payload:
+                response = await client.put(evidence_url(f"/problems/{source_problem_id}/answer"), json=answer_payload)
+                response.raise_for_status()
         return {"synced": True, "problem_id": str(source_problem_id)}
-    except Exception as e:  # noqa: BLE001 - must not block the local save
-        return {"synced": False, "reason": f"写回 8014 失败：{e}"}
+    except httpx.TimeoutException:
+        return {"synced": False, "reason": "8014 内部服务响应超时"}
+    except httpx.HTTPStatusError as exc:
+        return {"synced": False, "reason": f"8014 写回失败：HTTP {exc.response.status_code}"}
+    except Exception as exc:  # noqa: BLE001 - local edit is already persisted
+        return {"synced": False, "reason": f"8014 写回异常：{str(exc)[:160]}"}
 
+
+@app.get("/api/evidence/images/{image_path:path}")
+async def get_evidence_image(image_path: str, request: Request):
+    """Authenticated 8001 proxy for private 8014 source images."""
+    require_roles(request, {"admin", "teacher"})
+    if not image_path or image_path.startswith(("/", "\\")) or ".." in image_path.split("/"):
+        raise HTTPException(400, "无效的图片路径")
+    try:
+        async with evidence_client(timeout=30) as client:
+            response = await client.get(evidence_url("/images/" + quote(image_path, safe="/")))
+            response.raise_for_status()
+        return Response(content=response.content, media_type=response.headers.get("content-type", "image/jpeg"))
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(exc.response.status_code, "证据图片不存在或不可访问") from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, "证据图片服务暂不可用") from exc
 
 
 def _live_garble_reasons(question: dict) -> tuple[str, list[str]]:
@@ -3317,8 +3315,8 @@ class LearningAnswerIn(BaseModel):
 async def learning_problems():
     """Return only student-safe problem fields from the authoritative 8014 library."""
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            response = await client.get(settings.evidence_api_url.rstrip("/") + "/problems", params={"size": 500})
+        async with evidence_client(timeout=20) as client:
+            response = await client.get(evidence_url("").rstrip("/") + "/problems", params={"size": 500})
             response.raise_for_status()
         items = response.json().get("items", [])
     except httpx.HTTPError as exc:
@@ -3376,9 +3374,9 @@ async def _pending_candidate(candidate_id: int) -> dict:
     # A repair-batch item can already have been published once (or hidden by
     # candidate de-duplication).  Always resolve its frozen ID directly rather
     # than searching only the mutable pending queue.
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with evidence_client(timeout=30) as client:
         response = await client.get(
-            settings.evidence_api_url.rstrip("/") + f"/answer-import-candidates/{candidate_id}"
+            evidence_url("").rstrip("/") + f"/answer-import-candidates/{candidate_id}"
         )
     if response.status_code == 404:
         raise HTTPException(404, "未找到该题库候选")
@@ -3391,9 +3389,9 @@ async def _pending_candidate(candidate_id: int) -> dict:
 async def teacher_question_bank_review_queue(request: Request):
     """Authenticated teacher queue; candidate OCR/AI data never reaches students."""
     require_roles(request, {"admin", "teacher"})
-    async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.get(settings.evidence_api_url.rstrip("/") + "/answer-import-candidates", params={"status": "pending", "limit": 300})
-        coverage = await client.get(settings.evidence_api_url.rstrip("/") + "/answer-library/coverage")
+    async with evidence_client(timeout=30) as client:
+        response = await client.get(evidence_url("").rstrip("/") + "/answer-import-candidates", params={"status": "pending", "limit": 300})
+        coverage = await client.get(evidence_url("").rstrip("/") + "/answer-library/coverage")
     if response.status_code >= 400:
         raise HTTPException(502, "题库候选服务暂不可用")
     items = response.json().get("items", [])
@@ -3439,8 +3437,8 @@ async def teacher_create_candidates(req: CandidateBatchStartIn, request: Request
         raise HTTPException(413, "一次最多上传 30 张图片")
     payload = {"section_no": req.section_no.strip(), "images_base64": req.images_base64,
                "filename": req.filename or "teacher-answer-upload", "only_unverified": True}
-    async with httpx.AsyncClient(timeout=120) as client:
-        response = await client.post(settings.evidence_api_url.rstrip("/") + "/answer-library/section-batch", json=payload)
+    async with evidence_client(timeout=120) as client:
+        response = await client.post(evidence_url("").rstrip("/") + "/answer-library/section-batch", json=payload)
     if response.status_code >= 400:
         raise HTTPException(response.status_code, response.json().get("detail", "创建候选失败"))
     return response.json()
@@ -3449,8 +3447,8 @@ async def teacher_create_candidates(req: CandidateBatchStartIn, request: Request
 @app.post("/api/teacher/question-bank/candidates/{candidate_id}/run-ai-review")
 async def teacher_run_candidate_ai_review(candidate_id: int, request: Request):
     require_roles(request, {"admin", "teacher"})
-    async with httpx.AsyncClient(timeout=620) as client:
-        response = await client.post(settings.evidence_api_url.rstrip("/") + f"/answer-import-candidates/{candidate_id}/ai-review")
+    async with evidence_client(timeout=620) as client:
+        response = await client.post(evidence_url("").rstrip("/") + f"/answer-import-candidates/{candidate_id}/ai-review")
     if response.status_code >= 400:
         raise HTTPException(response.status_code, response.json().get("detail", "AI 核验失败"))
     return response.json()
@@ -3478,8 +3476,8 @@ async def teacher_publish_candidate(candidate_id: int, req: CandidatePublishIn, 
         "ptype": req.ptype if req.ptype in {"calc", "proof"} else (ai.get("ptype") if ai.get("ptype") in {"calc", "proof"} else item.get("ptype")),
         "note": (("教师人工 LaTeX 修订确认；" if req.manual_correction else "教师确认发布；") + req.note.strip())[:2000],
     }
-    async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.post(settings.evidence_api_url.rstrip("/") + f"/answer-import-candidates/{candidate_id}/review", json=payload)
+    async with evidence_client(timeout=30) as client:
+        response = await client.post(evidence_url("").rstrip("/") + f"/answer-import-candidates/{candidate_id}/review", json=payload)
     if response.status_code >= 400:
         raise HTTPException(response.status_code, response.json().get("detail", "发布失败"))
 
@@ -3607,10 +3605,10 @@ async def teacher_question_bank_coverage(request: Request):
     """Return source-level coverage without exposing raw import internals to the daily UI."""
     require_roles(request, {"admin", "teacher"})
     rows = []
-    async with httpx.AsyncClient(timeout=45) as client:
+    async with evidence_client(timeout=45) as client:
         for status in ("approved", "pending", "rejected"):
             response = await client.get(
-                settings.evidence_api_url.rstrip("/") + "/answer-import-candidates",
+                evidence_url("").rstrip("/") + "/answer-import-candidates",
                 params={"status": status, "limit": 300},
             )
             if response.status_code >= 400:
@@ -3643,7 +3641,7 @@ async def _process_repair_batch(batch_id: int) -> None:
         ).fetchall()
     current: dict[int, dict] = {}
     total = len(rows)
-    async with httpx.AsyncClient(timeout=620) as client:
+    async with evidence_client(timeout=620) as client:
         for index, row in enumerate(rows, start=1):
             candidate_id = int(row["candidate_id"])
             try:
@@ -3651,17 +3649,17 @@ async def _process_repair_batch(batch_id: int) -> None:
                 # pending list de-duplicates candidate rows, so it must never
                 # be used to resolve these historical IDs.
                 response = await client.get(
-                    settings.evidence_api_url.rstrip("/") + f"/answer-import-candidates/{candidate_id}"
+                    evidence_url("").rstrip("/") + f"/answer-import-candidates/{candidate_id}"
                 )
                 if response.status_code >= 400:
                     continue
                 item = response.json()
                 if item.get("ai_review_status") != "completed":
                     await client.post(
-                        settings.evidence_api_url.rstrip("/") + f"/answer-import-candidates/{candidate_id}/ai-review"
+                        evidence_url("").rstrip("/") + f"/answer-import-candidates/{candidate_id}/ai-review"
                     )
                     response = await client.get(
-                        settings.evidence_api_url.rstrip("/") + f"/answer-import-candidates/{candidate_id}"
+                        evidence_url("").rstrip("/") + f"/answer-import-candidates/{candidate_id}"
                     )
                     if response.status_code < 400:
                         item = response.json()
@@ -3784,8 +3782,8 @@ def rebuild_repair_batch_qwen(batch_id: int, request: Request):
 @app.post("/api/teacher/question-bank/repair-batches")
 async def create_repair_batch(req:RepairBatchCreateIn,request:Request,background_tasks:BackgroundTasks):
     actor=require_roles(request,{"admin","teacher"}); _ensure_repair_batch_schema()
-    async with httpx.AsyncClient(timeout=30) as client:
-        response=await client.get(settings.evidence_api_url.rstrip("/")+"/answer-import-candidates",params={"status":"pending","limit":req.candidate_limit})
+    async with evidence_client(timeout=30) as client:
+        response=await client.get(evidence_url("").rstrip("/")+"/answer-import-candidates",params={"status":"pending","limit":req.candidate_limit})
     if response.status_code>=400: raise HTTPException(502,"题库候选服务暂不可用")
     items=response.json().get("items",[])
     if not items: raise HTTPException(409,"没有待处理候选，无法创建修复批次")
@@ -3847,10 +3845,10 @@ async def confirm_repair_batch(batch_id:int,req:RepairBatchConfirmIn,request:Req
     for r in pass_rows:
         snap=json.loads(r["snapshot_json"]); publish_items.append({"candidate_id":r["candidate_id"],"content_text":r["normalized_content"],"std_answer":r["normalized_answer"],"full_solution":r["normalized_solution"],"ptype":snap.get("ptype")})
     published=0; failures=[]
-    async with httpx.AsyncClient(timeout=35) as client:
+    async with evidence_client(timeout=35) as client:
         for x in publish_items:
             payload={"action":"approved","content_text":x["content_text"],"std_answer":x["std_answer"],"full_solution":x["full_solution"] or "","ptype":x.get("ptype") if x.get("ptype") in {"calc","proof"} else "calc","note":"修复批次教师抽样确认发布"}
-            response=await client.post(settings.evidence_api_url.rstrip("/")+f"/answer-import-candidates/{x['candidate_id']}/review",json=payload)
+            response=await client.post(evidence_url("").rstrip("/")+f"/answer-import-candidates/{x['candidate_id']}/review",json=payload)
             if response.status_code<400:
                 published+=1
                 with connection() as conn: conn.execute("UPDATE question_repair_batch_items SET publish_status='published' WHERE batch_id=? AND candidate_id=?",(batch_id,x["candidate_id"]))
@@ -3877,12 +3875,12 @@ async def provisional_import_repair_batch(batch_id: int, req: RepairBatchProvisi
                 and len(str(x.get("content_text") or "").strip()) >= 12
                 and bool(str(x.get("std_answer") or "").strip())]
     imported, failures = 0, []
-    async with httpx.AsyncClient(timeout=35) as client:
+    async with evidence_client(timeout=35) as client:
         for item in eligible:
             payload = {"action": "provisional", "content_text": item["content_text"],
                        "std_answer": item["std_answer"], "full_solution": item.get("full_solution") or "",
                        "ptype": "calc", "note": "批量来源图重建：待核验题库，不启用自动评分"}
-            response = await client.post(settings.evidence_api_url.rstrip("/") + f"/answer-import-candidates/{item['candidate_id']}/review", json=payload)
+            response = await client.post(evidence_url("").rstrip("/") + f"/answer-import-candidates/{item['candidate_id']}/review", json=payload)
             if response.status_code < 400:
                 imported += 1
                 with connection() as conn:
@@ -4179,8 +4177,8 @@ async def review_released_mistake(submission_id: int, question_id: int, req: Mis
         teacher_feedback = str(item.get("feedback") or "")
     started = time.perf_counter()
     try:
-        async with httpx.AsyncClient(timeout=620) as client:
-            response = await client.post(settings.evidence_api_url.rstrip("/") + f"/agent/problems/{source_problem_id}/learn", json={"student_answer": student_answer or "未识别到作答", "student_steps": req.student_steps, "mode": req.mode, "teacher_feedback": teacher_feedback})
+        async with evidence_client(timeout=620) as client:
+            response = await client.post(evidence_url("").rstrip("/") + f"/agent/problems/{source_problem_id}/learn", json={"student_answer": student_answer or "未识别到作答", "student_steps": req.student_steps, "mode": req.mode, "teacher_feedback": teacher_feedback})
     except httpx.HTTPError as exc:
         raise HTTPException(502, "错题复盘 Agent 暂不可用") from exc
     latency_ms = round((time.perf_counter() - started) * 1000, 1)
@@ -4253,8 +4251,8 @@ async def review_released_mistake_image(submission_id: int, question_id: int, re
         teacher_feedback = str(item.get("feedback") or "")
     started = time.perf_counter()
     try:
-        async with httpx.AsyncClient(timeout=620) as client:
-            response = await client.post(settings.evidence_api_url.rstrip("/") + f"/agent/problems/{source_problem_id}/learn-image", json={"image_base64": req.image_base64, "mode": req.mode, "teacher_feedback": teacher_feedback, "student_steps": req.student_steps})
+        async with evidence_client(timeout=620) as client:
+            response = await client.post(evidence_url("").rstrip("/") + f"/agent/problems/{source_problem_id}/learn-image", json={"image_base64": req.image_base64, "mode": req.mode, "teacher_feedback": teacher_feedback, "student_steps": req.student_steps})
     except httpx.HTTPError as exc:
         _record_handwriting_failure(actor["id"], submission_id, question_id, source_problem_id, "proof" if "证明" in str(question["question_type"] or "") else "calc", req.mode, round((time.perf_counter() - started) * 1000, 1), "PERCEPTION_UNAVAILABLE")
         raise HTTPException(502, "手写错题复盘 Agent 暂不可用") from exc
@@ -4304,9 +4302,9 @@ async def review_released_mistake_step_images(submission_id: int, question_id: i
         teacher_feedback = str(item.get("feedback") or "")
     started = time.perf_counter()
     try:
-        async with httpx.AsyncClient(timeout=620) as client:
+        async with evidence_client(timeout=620) as client:
             response = await client.post(
-                settings.evidence_api_url.rstrip("/") + f"/agent/problems/{source_problem_id}/learn-step-images",
+                evidence_url("").rstrip("/") + f"/agent/problems/{source_problem_id}/learn-step-images",
                 json={"image_base64_list": req.image_base64_list, "mode": req.mode, "teacher_feedback": teacher_feedback, "student_steps": req.student_steps},
             )
     except httpx.HTTPError as exc:
@@ -4369,9 +4367,9 @@ async def verify_mistake_reattempt(submission_id: int, question_id: int, req: Mi
             raise HTTPException(409, "请先从本题的 Agent 反馈进入重做验证")
         source_problem_id = question["source_problem_id"]
     try:
-        async with httpx.AsyncClient(timeout=620) as client:
+        async with evidence_client(timeout=620) as client:
             response = await client.post(
-                settings.evidence_api_url.rstrip("/") + f"/agent/problems/{source_problem_id}/learn",
+                evidence_url("").rstrip("/") + f"/agent/problems/{source_problem_id}/learn",
                 json={"student_answer": req.answer, "mode": "diagnose", "student_steps": ""},
             )
     except httpx.HTTPError as exc:
@@ -4430,9 +4428,9 @@ async def verify_mistake_reattempt_image(submission_id: int, question_id: int, r
             raise HTTPException(409, "请先从本题的 Agent 反馈进入重做验证")
         source_problem_id = question["source_problem_id"]
     try:
-        async with httpx.AsyncClient(timeout=620) as client:
+        async with evidence_client(timeout=620) as client:
             response = await client.post(
-                settings.evidence_api_url.rstrip("/") + f"/agent/problems/{source_problem_id}/learn-image",
+                evidence_url("").rstrip("/") + f"/agent/problems/{source_problem_id}/learn-image",
                 json={"image_base64": req.image_base64, "mode": "diagnose", "student_steps": ""},
             )
     except httpx.HTTPError as exc:
@@ -4491,8 +4489,8 @@ async def learn_problem(problem_id: str, req: LearningAnswerIn):
     raise HTTPException(410, "预提交通用练习复盘已关闭；请从教师发布的错题详情页进入。")
     # legacy code below is intentionally unreachable
     try:
-        async with httpx.AsyncClient(timeout=620) as client:
-            response = await client.post(settings.evidence_api_url.rstrip("/") + f"/agent/problems/{problem_id}/learn", json={"student_answer": req.student_answer, "mode": req.mode})
+        async with evidence_client(timeout=620) as client:
+            response = await client.post(evidence_url("").rstrip("/") + f"/agent/problems/{problem_id}/learn", json={"student_answer": req.student_answer, "mode": req.mode})
     except httpx.HTTPError as exc:
         raise HTTPException(502, "学习 Agent 暂不可用") from exc
     if response.status_code >= 400:
@@ -4514,8 +4512,8 @@ async def learn_problem_image(problem_id: str, req: LearningImageIn):
     raise HTTPException(410, "预提交通用练习复盘已关闭；请从教师发布的错题详情页进入。")
     # legacy code below is intentionally unreachable
     try:
-        async with httpx.AsyncClient(timeout=620) as client:
-            response = await client.post(settings.evidence_api_url.rstrip("/") + f"/agent/problems/{problem_id}/learn-image", json={"image_base64": req.image_base64, "mode": req.mode})
+        async with evidence_client(timeout=620) as client:
+            response = await client.post(evidence_url("").rstrip("/") + f"/agent/problems/{problem_id}/learn-image", json={"image_base64": req.image_base64, "mode": req.mode})
     except httpx.HTTPError as exc:
         raise HTTPException(502, "手写数学识别暂不可用") from exc
     if response.status_code >= 400:
