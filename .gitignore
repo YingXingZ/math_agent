@@ -32,3 +32,13 @@ data/uploads/**/*.png
 data/uploads/**/*.pdf
 qwen_pages/
 .pytest_cache/
+
+# Production/runtime state (never commit student work or local databases)
+runtime-data/
+src/workbench8014/api.workbench.db
+src/agent8000/data/
+src/agent8000/.env.before-*
+src/agent8000/app/*.bak-*
+src/agent8000/app/*.before-*
+src/agent8000/math_agent/
+src/workbench8014/evals/real_cases/*_backup.jsonl

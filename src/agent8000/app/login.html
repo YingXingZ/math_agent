@@ -1,3 +1,23 @@
 <!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>登录｜高数教材智能体</title><style>body{font:16px "Microsoft YaHei",sans-serif;background:#f6f8fc;color:#102a43;margin:0;display:grid;place-items:center;min-height:100vh}.card{background:#fff;border:1px solid #e4ebf3;border-radius:16px;padding:28px;width:min(420px,92vw);box-shadow:0 12px 32px #102a4314}label{display:block;font-weight:700;margin-top:14px}input{box-sizing:border-box;width:100%;padding:10px;border:1px solid #cdd9e6;border-radius:8px;margin-top:6px;font:inherit}button{margin-top:20px;background:#2563eb;color:#fff;border:0;border-radius:8px;padding:11px 16px;font-weight:700;cursor:pointer}.hint{color:#60758a;line-height:1.7}.error{color:#b91c1c;margin-top:12px}</style>
-<main class="card"><h1>高数教材智能体</h1><p class="hint">教师与学生均使用分配的账号登录。学生首次使用请先打开教师发放的邀请码链接。</p><form id="form"><label>登录名<input name="username" autocomplete="username" required></label><label>密码<input name="password" type="password" autocomplete="current-password" required></label><button>登录</button></form><div id="msg" class="error"></div></main><script>document.querySelector('#form').onsubmit=async e=>{e.preventDefault();const f=new FormData(e.target);const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.fromEntries(f))});if(!r.ok){document.querySelector('#msg').textContent=(await r.json()).detail||'登录失败';return}const x=await r.json();location.href=x.user.role==='student'?'/submit':'/'}</script></html>
+<title>登录｜高数教材智能体</title><style>
+:root{--ink:#102a43;--muted:#60758a;--blue:#2563eb;--line:#cdd9e6}
+*{box-sizing:border-box}body{font:16px "Microsoft YaHei",sans-serif;background:#f6f8fc;color:var(--ink);margin:0;display:grid;place-items:center;min-height:100dvh;padding:24px 16px}
+.card{background:#fff;border:1px solid #e4ebf3;border-radius:18px;padding:30px;width:min(420px,100%);box-shadow:0 12px 32px #102a4314}
+h1{margin:0;font-size:28px}.hint{color:var(--muted);line-height:1.7;margin:14px 0 0}label{display:block;font-weight:700;margin-top:18px}
+input{width:100%;padding:12px;border:1px solid var(--line);border-radius:10px;margin-top:7px;font:inherit;min-height:46px;background:#fff}
+button{margin-top:24px;background:var(--blue);color:#fff;border:0;border-radius:10px;padding:12px 18px;font:inherit;font-weight:700;cursor:pointer;min-height:46px}button:disabled{opacity:.65;cursor:wait}.error{color:#b91c1c;margin-top:12px;min-height:1.5em}
+@media (max-width:640px){body{background:#fff;padding:0;display:block}.card{min-height:100dvh;width:100%;border:0;border-radius:0;box-shadow:none;padding:88px 24px 32px}h1{font-size:26px}.hint{font-size:15px}button{width:100%;font-size:17px}.error{font-size:15px}}
+</style>
+<main class="card"><h1>高数教材智能体</h1><p class="hint">教师与学生均使用分配的账号登录。学生首次使用请先打开教师发放的邀请码链接。</p><form id="form" autocomplete="off"><label>登录名<input id="username" name="username" autocomplete="off" required></label><label>密码<input id="password" name="password" type="password" autocomplete="off" required></label><button id="loginButton" type="submit">登录</button></form><div id="msg" class="error" role="alert"></div></main><script>
+const form=document.querySelector('#form'),msg=document.querySelector('#msg'),button=document.querySelector('#loginButton');
+const params=new URLSearchParams(location.search);
+const requestedNext=params.get('next')||'';
+if(/^\/submit(?:[/?#]|$)/.test(requestedNext)){
+  document.querySelector('h1').textContent='登录后提交作业';
+  document.querySelector('.hint').textContent='请使用教师分配的学生账号登录。登录成功后将自动回到本次作业提交页。';
+}
+if(params.has('username')||params.has('password')){params.delete('username');params.delete('password');const safe=params.toString();history.replaceState(null,'',location.pathname+(safe?'?'+safe:''));}
+form.reset();
+setTimeout(()=>{document.querySelector('#username').value='';document.querySelector('#password').value='';},0);
+form.onsubmit=async e=>{e.preventDefault();msg.textContent='';button.disabled=true;button.textContent='登录中…';try{const f=new FormData(form);const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:String(f.get('username')||'').trim(),password:String(f.get('password')||'')})});if(!r.ok){let detail='登录失败，请检查账号和密码';try{detail=(await r.json()).detail||detail}catch(_e){}msg.textContent=detail;return}const x=await r.json(),next=new URLSearchParams(location.search).get('next')||'',studentNext=/^\/(mistakes|learn|submit)(?:[/?#]|$)/.test(next)?next:'/mistakes';location.replace(x.user.role==='student'?studentNext:'/')}catch(_err){msg.textContent='网络连接异常，请稍后重试。'}finally{button.disabled=false;button.textContent='登录';}};
+</script></html>

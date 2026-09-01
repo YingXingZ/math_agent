@@ -1,0 +1,29 @@
+name: agent-regression
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r agent8000/requirements.txt
+      - run: python -m pytest workbench8014/tests tools/test_langgraph_math_agent.py -q
+      - run: python workbench8014/evals/run_eval.py
+      - run: python workbench8014/evals/run_real_case_eval.py
+      - run: python workbench8014/evals/run_teacher_labeled_eval.py --report ../artifacts/teacher_labeled_eval_report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: teacher-labeled-evaluation-report
+          path: artifacts/teacher_labeled_eval_report.json
+          if-no-files-found: warn

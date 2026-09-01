@@ -32,8 +32,8 @@ if str(TOOLS_ROOT) not in sys.path:
 
 from build_worksheet import WorksheetBuilder  # noqa: E402  (workspace engine)
 
-FONT_SONG = r"C:/Windows/Fonts/simsun.ttc"
-FONT_HEI = r"C:/Windows/Fonts/simhei.ttf"
+FONT_SONG = str(Path(__file__).resolve().parents[1] / "assets" / "fonts" / "NotoSansCJKsc-Regular.otf")
+FONT_HEI = str(Path(__file__).resolve().parents[1] / "assets" / "fonts" / "NotoSansCJKsc-Regular.otf")
 CONTENT_W = 595.28 - 56.7 - 45.4  # matches build_worksheet.py CONTENT_W
 
 # Pre-compile the LaTeX detector.  We only treat tokens that look like real
@@ -69,15 +69,23 @@ def _normalise_mathtext(tex: str) -> str:
     )
 
 
-def _answer_space_for(question_type: str, content: str) -> int:
-    """Heuristic answer-box height (pt). Proofs need more room than calculations."""
+def _answer_space_for(question_type: str, content: str, *, is_subpart: bool = False) -> int:
+    """Heuristic answer-box height (pt), including visible sub-parts."""
+    if is_subpart:
+        return 110
     if question_type == "证明题":
-        return 165
-    if "证明" in (content or ""):
-        return 150
-    if question_type in ("应用题", "综合题"):
-        return 130
-    return 110
+        base = 270
+    elif "证明" in (content or ""):
+        base = 245
+    elif question_type in ("应用题", "综合题"):
+        base = 220
+    else:
+        base = 180
+    # Leave enough handwriting room for genuine multi-step work.  A generous
+    # cap lets a long compound problem flow to a new page rather than forcing
+    # students to squeeze their derivation into one small box.
+    subparts = len(re.findall(r"(?:^|\n)\s*[（(]\s*\d+\s*[)）]", content or ""))
+    return min(500, base + max(0, subparts - 1) * 78)
 
 
 # ---------------------------------------------------------------------------
@@ -132,13 +140,34 @@ _SOURCE_PROBLEM_PREFIX_RE = re.compile(r"^\s*\d+\s*[.．、]\s*")
 
 
 def display_problem_no(row: dict[str, Any], index: int) -> str:
-    """Use the assignment sequence, never the source textbook number."""
-    return str(row.get("sort_order") or (index + 1))
+    """Show a traceable textbook locator such as 1.1 第10题."""
+    raw = str(row.get("original_no") or row.get("source_problem_no") or row.get("sort_order") or (index + 1)).strip()
+    chapter = str(row.get("chapter") or "").strip()
+    if "第" in raw and "题" in raw:
+        return raw
+    return f"{chapter} 第{raw}题".strip() if chapter else f"第{raw}题"
 
 
-def strip_source_problem_prefix(content: str) -> str:
+def clean_assignment_math(content: str) -> str:
+    """Remove OCR-created bare $$ lines for printable assignment output only."""
+    text = (content or '').replace('\r', '')
+    text = re.sub(r'(?m)^\s*\$\$\s*$', '', text)
+    # If OCR left one final delimiter after removing blank delimiter lines,
+    # discard only that unmatched tail; valid $$...$$ pairs remain intact.
+    if text.count('$$') % 2:
+        text = text.rsplit('$$', 1)[0]
+    return re.sub(r'\n{3,}', '\n\n', text).strip()
+
+
+def strip_source_problem_prefix(content: str, original_no: str = '') -> str:
     """Avoid rendering both the worksheet number and the textbook number."""
-    return _SOURCE_PROBLEM_PREFIX_RE.sub("", (content or "").replace("\r", "").lstrip(), count=1)
+    text = _SOURCE_PROBLEM_PREFIX_RE.sub("", clean_assignment_math(content).lstrip(), count=1)
+    # A selected part is labelled in the worksheet header, e.g. 2.2 第2题（7）.
+    # Its source text commonly starts with (7); remove that duplicate marker.
+    marker = re.search(r'[（(]\s*(\d+)\s*[)）]\s*$', str(original_no or ''))
+    if marker:
+        text = re.sub(r'^\s*[（(]\s*' + re.escape(marker.group(1)) + r'\s*[)）]\s*', '', text, count=1)
+    return text.strip()
 
 
 def render_problem_image(content: str, original_no: str, out_path: str | Path,
@@ -160,7 +189,7 @@ def render_problem_image(content: str, original_no: str, out_path: str | Path,
     page.insert_font(fontname="hei", fontfile=FONT_HEI)
     margin = 6.0
     label = f"{original_no}. " if original_no else ""
-    body = strip_source_problem_prefix(content)
+    body = strip_source_problem_prefix(content, original_no)
 
     y = margin
     max_x = CONTENT_W - margin
@@ -297,7 +326,10 @@ def _items_to_render(assignment: dict[str, Any], items: list[dict[str, Any]],
             "original_no": original_no,
             "content": content,
             "img_path": img_path,
-            "answer_space": _answer_space_for(str(row.get("question_type") or ""), content),
+            "answer_space": _answer_space_for(
+                str(row.get("question_type") or ""), content,
+                is_subpart=bool(row.get("subpart_no")),
+            ),
         })
     return descriptors
 

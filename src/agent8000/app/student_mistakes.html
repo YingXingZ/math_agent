@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><title>我的错题复盘</title>
+<script>window.MathJax={tex:{inlineMath:[["$","$"],["\\(","\\)"]]},svg:{fontCache:"global"},startup:{typeset:false}};</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+body{font:16px "Microsoft YaHei";background:#f6f8fc;color:#102a43;margin:0}.box{max-width:850px;margin:5vh auto;padding:20px}.card{background:#fff;border:1px solid #e4ebf3;border-radius:14px;padding:20px;margin:14px 0}.item{border-top:1px solid #e8eef5;padding:16px 0}.hint{color:#60758a;line-height:1.6}.actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:10px}button{background:#2563eb;color:#fff;border:0;border-radius:8px;padding:9px 13px;font-weight:bold;cursor:pointer}button.secondary{background:#475569}button.solution{background:#7c3aed}.out,.status{white-space:pre-wrap;background:#eef6ff;padding:12px;border-radius:8px;margin-top:10px;line-height:1.65}.conflict{background:#fff3cd;color:#7a4b00}
+mjx-container{max-width:100%!important;overflow-x:auto!important;font-size:110%!important}mjx-container[jax="SVG"] svg{max-width:100%!important;height:auto!important}.logout{position:fixed;right:20px;top:14px;background:#475569;margin:0;z-index:2}
+</style>
+<button class="logout" type="button" onclick="logout()">退出登录</button><main class="box"><a href="/student">← 我的作业</a><h1>我的错题复盘</h1><p class="hint">只显示教师已发布的错题。若原始反馈与作答证据冲突，系统会明确标记为待教师确认。</p><div id="list" class="card">加载中…</div></main>
+<script>
+async function logout(){
+  if(!confirm('确认退出当前账号？'))return;
+  try{await fetch('/api/auth/logout',{method:'POST'});}finally{location.replace('/login');}
+}
+const box=document.querySelector('#list');
+const text=(label,value)=>{const p=document.createElement('p');p.textContent=label+value;return p};
+function proofEvidence(value){
+  const s=String(value||'').replace(/[\s$\\{}()\[\]，,。；;：:]/g,'').toLowerCase();
+  return s.includes('h-x=f-x-fx=-hx')||(s.includes('h-x')&&s.includes('f-x-fx')&&s.includes('-hx'));
+}
+function preliminary(question){
+  const raw=String(question.recognized_work||'');
+  if(!proofEvidence(raw)) return null;
+  const n=raw.replace(/[\s$\\{}()\[\]，,。；;：:]/g,'').toLowerCase();
+  const hasFormula=n.includes('fx=')&&n.includes('gx')&&n.includes('hx')&&(raw.includes('1/2')||n.includes('12')||n.includes('frac12'));
+  const hasConclusion=raw.includes('偶函数')&&raw.includes('奇函数')&&(raw.includes('表示')||raw.includes('和'));
+  const part2=hasFormula&&hasConclusion?'confirmed':'missing';
+  const feedback=String(question.feedback||'').replace(/\s/g,'');
+  const stalePart1=/没有正确地证明h|未证明h|h\(x\)是否奇函数|未能正确/.test(feedback);
+  const negativePart2=/第（2）问错误|第\(2\)问错误|未完成第（2）问|未完成第\(2\)问|缺少分解公式/.test(feedback);
+  const conflict=stalePart1||(part2==='confirmed'&&negativePart2);
+  const text=part2==='confirmed'
+    ?'第（1）问和第（2）问均已识别到关键证据：奇偶性证明、分解公式与结论完整。'+(conflict?'\n\n评分证据冲突，待教师确认：原始反馈与当前识别证据不一致。':'')
+    :'第（1）问识别为正确。第（2）问当前作答中未识别到分解公式与结论。\n你可以直接查看提示或完整推导，无需等待教师确认。';
+  return {conflict,text};
+}
+function studentVisibleText(value){
+  return String(value||'暂无反馈').split(/\n\n(?:成绩状态|分问核对|运行记录)：/)[0].trim();
+}
+function normalizeStudentMath(value){
+  return studentVisibleText(value).replace(/\\\\(?=[()[\]])/g,'\\')
+    .replace(/\\\[/g,()=> '$$').replace(/\\\]/g,()=> '$$')
+    .replace(/\\\(/g,()=> '$').replace(/\\\)/g,()=> '$');
+}
+async function showResult(payload,out){
+  const safe=normalizeStudentMath(payload.response);
+  out.textContent=safe;
+  // Only Agent output is typeset.  Never typeset the full card, student OCR,
+  // teacher feedback, or status banners: those fields may contain raw OCR
+  // escaping that can create an oversized MathJax SVG.
+  try{
+    if(window.MathJax?.typesetPromise){
+      MathJax.typesetClear?.([out]);
+      await MathJax.typesetPromise([out]);
+    }
+  }catch(_){out.textContent=safe}
+}
+async function recordOutcome(traceId,outcome,box){
+  const response=await fetch('/api/student/agent-traces/'+encodeURIComponent(traceId)+'/outcome',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({outcome})});
+  if(response.ok) box.textContent='已记录学习结果：'+({reworked:'已重做',corrected:'已改对',requested_solution:'查看了完整推导',not_resolved:'仍未解决'}[outcome]||outcome);
+}
+async function verifyReattempt(submissionId,questionId,traceId,input,status){
+  const answer=String(input.value||'').trim();
+  if(!answer){status.textContent='请先输入你重做后的答案或关键结论。';return}
+  status.textContent='正在用数学工具验证这次重做…';
+  try{
+    const response=await fetch('/api/student/released-submissions/'+submissionId+'/mistakes/'+questionId+'/reattempt',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prior_trace_id:traceId,answer})});
+    const payload=await response.json();
+    if(!response.ok) throw Error(payload.detail||'验证失败');
+    status.textContent=payload.message+(payload.verification?.method?'（'+payload.verification.method+'）':'');
+  }catch(error){status.textContent='重做验证失败：'+error.message}
+}
+async function verifyReattemptImage(submissionId,questionId,traceId,file,status){
+  if(!file){status.textContent='请先选择一张重做后的手写图片。';return}
+  status.textContent='正在识别并验证这次手写重做…';
+  try{
+    const response=await fetch('/api/student/released-submissions/'+submissionId+'/mistakes/'+questionId+'/reattempt-image',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prior_trace_id:traceId,image_base64:await toBase64(file)})});
+    const payload=await response.json();
+    if(!response.ok) throw Error(payload.detail||'验证失败');
+    const confidence=payload.recognition_confidence;
+    status.textContent=payload.message+(confidence!==undefined&&confidence!==null?'（识别置信度 '+Math.round(Number(confidence)*100)+'%）':'');
+  }catch(error){status.textContent='手写重做验证失败：'+error.message}
+}
+function addOutcomeButtons(trace,out,submissionId,questionId){
+  if(!trace?.trace_id) return;
+  out.parentElement.querySelectorAll('.learning-outcome').forEach(node=>node.remove());
+  const box=document.createElement('div');box.className='learning-outcome hint';box.textContent='这次复盘后：';
+  [['reworked','我去重做'],['corrected','我已改对'],['not_resolved','我还没解决']].forEach(([outcome,label])=>{const b=document.createElement('button');b.className='secondary';b.textContent=label;b.onclick=()=>recordOutcome(trace.trace_id,outcome,box);box.append(' ',b)});
+  const retry=document.createElement('div');retry.className='learning-outcome hint';retry.textContent='重做后可在此验证：';
+  const input=document.createElement('textarea');input.rows=2;input.placeholder='输入你重做后的答案或关键结论（不会展示标准答案）';input.style.width='100%';input.style.marginTop='6px';
+  const verify=document.createElement('button');verify.className='secondary';verify.textContent='验证本次重做';verify.onclick=()=>verifyReattempt(submissionId,questionId,trace.trace_id,input,retry);
+  retry.append(input,verify);
+  const imageLabel=document.createElement('label');imageLabel.textContent='上传重做后的手写图片验证是否改对（不回写已发布成绩）：';imageLabel.style.display='block';imageLabel.style.marginTop='10px';
+  const imageInput=document.createElement('input');imageInput.type='file';imageInput.accept='image/jpeg,image/png';imageInput.style.display='block';imageInput.style.marginTop='6px';
+  imageInput.onchange=()=>imageInput.files[0]&&verifyReattemptImage(submissionId,questionId,trace.trace_id,imageInput.files[0],retry);
+  retry.append(imageLabel,imageInput);
+  out.after(retry);out.after(box);
+}
+async function review(submissionId,questionId,mode,out,steps){
+  out.textContent='Agent 正在复盘…';
+  try{
+    const response=await fetch('/api/student/released-submissions/'+submissionId+'/mistakes/'+questionId+'/review',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode,student_steps:steps?.value||""})});
+    const payload=await response.json();
+    if(!response.ok) throw Error(payload.detail||'调用失败');
+    await showResult(payload,out);
+    addOutcomeButtons(payload.trace,out,submissionId,questionId);
+  }catch(error){out.textContent='Agent 暂不可用：'+error.message}
+}
+async function toBase64(file){
+  return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=reject;reader.readAsDataURL(file)});
+}
+async function reviewImage(submissionId,questionId,file,out,steps){
+  out.textContent='正在识别手写公式…';
+  try{
+    const response=await fetch('/api/student/released-submissions/'+submissionId+'/mistakes/'+questionId+'/review-image',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'diagnose',student_steps:steps?.value||'',image_base64:await toBase64(file)})});
+    const payload=await response.json();
+    if(!response.ok) throw Error(payload.detail||'识别失败');
+    await showResult(payload,out);
+    addOutcomeButtons(payload.trace,out,submissionId,questionId);
+  }catch(error){out.textContent='手写识别失败：'+error.message}
+}
+async function reviewStepImages(submissionId,questionId,files,out,steps){
+  const images=Array.from(files||[]);
+  if(!images.length){out.textContent='请至少选择一张步骤图。';return}
+  if(images.length>6){out.textContent='一次最多上传 6 张步骤图。';return}
+  out.textContent='正在按顺序识别步骤图并分析错因…';
+  try{
+    const image_base64_list=await Promise.all(images.map(toBase64));
+    const response=await fetch('/api/student/released-submissions/'+submissionId+'/mistakes/'+questionId+'/review-step-images',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'diagnose',student_steps:steps?.value||'',image_base64_list})});
+    const payload=await response.json();
+    if(!response.ok) throw Error(payload.detail||'步骤识别失败');
+    payload.response='已按顺序识别 '+(payload.recognized_step_count||0)+' / '+(payload.uploaded_step_count||images.length)+' 张步骤图。\\n\\n'+(payload.response||'');
+    await showResult(payload,out);
+    addOutcomeButtons(payload.trace,out,submissionId,questionId);
+  }catch(error){out.textContent='分步作答诊断失败：'+error.message}
+}
+function addMistake(parent,submission,question,index){
+  const item=document.createElement('div');item.className='item';
+  item.append(Object.assign(document.createElement('b'),{textContent:'错题 '+(index+1)}));
+  item.append(text('题目：',question.content||'题干暂缺'));
+  const pre=preliminary(question);
+  item.append(text(pre?.conflict?'原始教师反馈（待系统复核）：':'老师反馈：',question.feedback||'暂无'));
+  item.append(text('识别到你的作答：',question.recognized_work||'未识别'));
+  if(pre){const status=document.createElement('div');status.className='status '+(pre.conflict?'conflict':'');status.textContent=pre.text;item.append(status)}
+  if(question.source_problem_id){
+    const steps=document.createElement('textarea');steps.placeholder='可选：补充你的关键中间步骤（例如换元、求导、端点比较），Agent 会据此分析错因。';steps.rows=3;steps.style.width='100%';steps.style.marginTop='12px';
+    const actions=document.createElement('div');actions.className='actions';
+    const out=document.createElement('div');out.className='out';out.textContent='选择一种复盘方式开始。';
+    [['diagnose','分析我错在哪',''],['hint','给我下一步提示','secondary'],['solution','查看完整推导','solution']].forEach(([mode,label,style])=>{const button=document.createElement('button');button.textContent=label;button.className=style;button.onclick=()=>review(submission.id,question.question_id,mode,out,steps);actions.append(button)});
+    const upload=document.createElement('input');upload.type='file';upload.accept='image/jpeg,image/png';upload.onchange=()=>upload.files[0]&&reviewImage(submission.id,question.question_id,upload.files[0],out,steps);
+    const stepUpload=document.createElement('input');stepUpload.type='file';stepUpload.accept='image/jpeg,image/png';stepUpload.multiple=true;stepUpload.onchange=()=>stepUpload.files.length&&reviewStepImages(submission.id,question.question_id,stepUpload.files,out,steps);
+    item.append(text('','补充关键中间步骤（可选）：'),steps,actions,text('','上传完整分步作答图片（可选，最多 6 张，按选择顺序识别）：'),stepUpload,text('','补充一张关键步骤图（仅用于更准确诊断，不修改原成绩）：'),upload,out);
+  }else item.append(text('','该错题尚未关联可靠原题，暂不启用 Agent 复盘。'));
+  parent.append(item);
+}
+async function load(){
+  const submissionsResponse=await fetch('/api/student/released-submissions');
+  if(!submissionsResponse.ok){box.textContent='请先以学生账号登录。';return}
+  const submissions=await submissionsResponse.json();
+  if(!submissions.length){box.textContent='老师暂未发布作业结果。';return}
+  box.textContent='';
+  for(const submission of submissions){
+    const section=document.createElement('section');const title=document.createElement('h2');title.textContent=submission.title+' · 总评 '+(submission.score??'待确认')+' / '+(submission.max_score??100)+' 分';section.append(title);
+    const breakdown=document.createElement('p');breakdown.className='hint';breakdown.textContent='成绩构成：提交完成度 '+(submission.completion_score??0)+' / 20；答题质量 '+(submission.quality_score??'—')+' / '+(submission.quality_max_score??80)+'。';section.append(breakdown);
+    const mistakesResponse=await fetch('/api/student/released-submissions/'+submission.id+'/mistakes');
+    const mistakes=await mistakesResponse.json();
+    if(!mistakesResponse.ok)section.append(text('',mistakes.detail||'错题加载失败'));
+    else if(!mistakes.mistakes?.length)section.append(text('','本次没有需要复盘的错题。'));
+    else mistakes.mistakes.forEach((question,index)=>addMistake(section,submission,question,index));
+    box.append(section);
+  }
+}
+load().catch(error=>{box.textContent='加载失败：'+error.message});
+</script></html>

@@ -77,6 +77,9 @@ def normalize_expr(text: str) -> str:
     if text is None:
         return ""
     s = str(text).strip()
+    # OCR often emits Unicode superscripts (x²) instead of ASCII powers (x^2).
+    superscript_map = str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻", "0123456789+-")
+    s = re.sub(r"(?<=[A-Za-z0-9_)])([⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻]+)", lambda match: "^" + match.group(1).translate(superscript_map), s)
     # Normalize unicode subscripts so x₀ / x_0 / x0 compare consistently.
     s = s.translate(str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789"))
     for k, v in _CLEAN_MAP.items():

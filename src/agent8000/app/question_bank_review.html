@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>本周备课题单</title>
+<style>
+body{font:15px "Microsoft YaHei";background:#f6f8fc;color:#102a43;margin:0}.box{max-width:1100px;margin:5vh auto}.card{background:#fff;border:1px solid #e4ebf3;border-radius:12px;padding:18px;margin:12px 0}.pass{border-left:5px solid #16a34a}.sample{border-left:5px solid #2563eb}.exception{border-left:5px solid #ea580c}.hint{color:#60758a;line-height:1.6}button{background:#2563eb;color:#fff;border:0;border-radius:7px;padding:9px 13px;cursor:pointer;margin:5px}textarea{width:100%;min-height:70px;font:14px monospace;margin:6px 0}.preview{background:#f8fbff;padding:10px;min-height:40px;border-radius:6px;white-space:pre-wrap}
+</style>
+<script>window.MathJax={tex:{inlineMath:[["$","$"],["\\(","\\)"]],displayMath:[["$$","$$"],["\\[","\\]"]]},svg:{fontCache:"global"},startup:{typeset:false}};</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<main class="box"><a href="/">← 返回教师工作台</a><h1>本周备课题单</h1><p class="hint">这里只处理近期要布置的题：先确认可直接使用的题，再处理少量需要修改的题。未确认的题不会进入学生作业。</p><div class="card"><h2>整理本周候选题</h2><p class="hint">系统会先检查题干、答案和推导是否可用；你只需抽样确认可用题，并修订少量需要确认的题。</p><button onclick="createBatch()">生成本周备课题单</button><span id="batchMsg" class="hint"></span></div><section id="coverage" class="card hint">正在读取题库覆盖情况…</section><div id="batches" class="card">加载备课题单…</div><div id="detail"></div><section id="exceptions"></section></main>
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+async function api(url,options){const r=await fetch(url,options),x=await r.json();if(!r.ok)throw Error(x.detail||'请求失败');return x}
+function normalizePreview(value){
+  // OCR imports may contain literal \\( and \\[ (double-escaped
+  // delimiters). Collapse one escape layer before feeding MathJax.
+  let text=String(value??'').replace(/\r/g,'').replace(/\\\\(?=[()[\]])/g,'\\');
+  text=text.replace(/\\\[/g,()=> '$$').replace(/\\\]/g,()=> '$$')
+           .replace(/\\\(/g,()=> '$').replace(/\\\)/g,()=> '$');
+  return text.split('\n').map(line=>{
+    const raw=line.trim(); if(!raw) return '';
+    // Preserve already-delimited TeX rather than wrapping it a second time.
+    if(/\$/.test(raw)) return raw;
+    const label=(raw.match(/^\s*(?:[（(]\d+[）)]\s*){1,2}/)||[''])[0];
+    const formula=raw.slice(label.length).trim();
+    if(formula.includes('\\') || (label && /[=^_]/.test(formula))) return label+'\\['+formula+'\\]';
+    return raw;
+  }).join('\n');
+}
+function math(element){
+  const render=()=>{try{MathJax.typesetClear([element]);MathJax.typesetPromise([element]).catch(()=>{element.textContent='LaTeX 预览失败：请修正公式分隔符或括号。'})}catch(_){element.textContent='LaTeX 正在加载，请稍后再试。'}};
+  if(window.MathJax?.startup?.promise) MathJax.startup.promise.then(render);
+  else setTimeout(()=>window.MathJax?.startup?.promise?.then(render),120);
+}
+function previewHtml(q){return '题干：'+esc(normalizePreview(q.content_text))+'\n\n答案：'+esc(normalizePreview(q.std_answer))+'\n\n推导：'+esc(normalizePreview(q.full_solution||''))}
+let activeBatchId=null;
+async function createBatch(){try{const x=await api('/api/teacher/question-bank/repair-batches',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});$('#batchMsg').textContent=x.message;await loadBatches();openBatch(x.batch_id)}catch(e){alert(e.message)}}
+async function loadBatches(){try{const x=await api('/api/teacher/question-bank/repair-batches');$('#batches').innerHTML='<h2>备课题单</h2>'+(x.items.map(b=>'<button onclick="openBatch('+b.id+')">题单 #'+b.id+' · 可直接使用 '+b.pass_count+' 题 · 请抽样确认 '+b.sample_count+' 题 · 需要确认 '+b.exception_count+' 题</button>').join('')||'<p class="hint">还没有备课题单。点击上方按钮后再开始确认。</p>')}catch(e){$('#batches').textContent='加载失败：'+e.message}}
+function questionTitle(q){const reason=(q.reasons||[]).join('；');if(/OCR 文本结构异常|题干过短|来源图缺失/.test(reason))return esc(q.section_no)+' · 题号待确认（OCR 片段）';return esc(q.section_no)+' · 第 '+esc(q.problem_no)+' 题'}
+function sampleCard(q){return '<article class="card sample"><b>'+questionTitle(q)+'</b><p class="hint">题干、答案与推导已通过基础检查。请阅读题目内容，确认可用于本周作业。</p><div class="preview">'+previewHtml(q)+'</div><details><summary>查看核验信息</summary><p class="hint">置信度 '+Number(q.confidence).toFixed(2)+'；渲染 '+(q.render_ok?'通过':'失败')+'；答案校验 '+(q.answer_consistent?'通过':'失败')+'</p></details></article>'}
+function exceptionCard(q){return '<details class="card exception"><summary><b>'+questionTitle(q)+'</b> · '+esc(q.reasons.join('；'))+'</summary><p class="hint">只有在自动识别结果仍不足以入库时才需要编辑。来源图 '+(q.source_image_count||0)+' 张，核验置信度 '+Number(q.confidence||0).toFixed(2)+'。</p><label>题干<textarea id="stem'+q.candidate_id+'">'+esc(q.content_text)+'</textarea></label><label>标准答案 LaTeX<textarea id="answer'+q.candidate_id+'">'+esc(q.std_answer)+'</textarea></label><label>完整推导 LaTeX<textarea id="solution'+q.candidate_id+'">'+esc(q.full_solution||'')+'</textarea></label><button onclick="preview('+q.candidate_id+')">实时渲染预览</button><button onclick="publish('+q.candidate_id+')">修改后重新提交入库</button><div id="preview'+q.candidate_id+'" class="preview"></div></details>'}
+function compactQuestionRows(items){
+  return '<ul class="hint">'+items.map(q=>'<li>'+questionTitle(q)+(q.publish_status==='verified_auto'?' · 已自动验证':' · 已教师确认')+'</li>').join('')+'</ul>';
+}
+function updatedBlock(items,counts){
+  if(!items.length)return '<section class="card"><h2>已入库 / 已更新</h2><p class="hint">本批还没有已入库题。</p></section>';
+  return '<section class="card pass"><h2>已入库 / 已更新 · '+items.length+' 题</h2><p class="hint">其中教师重新提交/确认 '+Number(counts.teacher_published||0)+' 题，二次验证通过 '+Number(counts.auto_verified||0)+' 题。它们已保存，无需再次上传，可参与题库检索与组卷。</p><details><summary>查看题目清单</summary>'+compactQuestionRows(items)+'</details></section>';
+}
+function provisionalBlock(items,rebuilding){
+  if(!items.length)return '<section class="card pass"><h2>自动暂存，尚未核验</h2><p class="hint">当前没有暂存题。</p></section>';
+  return '<section class="card exception"><h2>自动暂存，尚未核验 · '+items.length+' 题</h2><p class="hint"><b>不需要重新上传图片。</b>每题的来源图、Qwen 识别题干、答案和风险标记都已经保存。后台会继续二次验证；只有你想将某题用于自动批改，或需要修正题干时，才展开它编辑并重新提交。</p>'+exceptionGroups(items,rebuilding)+'</section>';
+}
+function exceptionGroups(items,rebuilding){
+  if(!items.length)return '<div class="card pass">没有需要暂存的异常题。</div>';
+  const groups={};
+  items.forEach(q=>{const key=(q.reasons&&q.reasons[0])||'其他识别异常';(groups[key]??=[]).push(q)});
+  const autoRows=items.filter(q=>rebuilding&&(q.reasons||[]).includes('Qwen 尚未重建')&&(q.source_image_count||0)>0);
+  const held=items.filter(q=>!autoRows.includes(q));
+  const progressNote=autoRows.length?'<p class="hint">另有 '+autoRows.length+' 题正在从来源图自动重建，暂不显示，也无需你处理。</p>':'';
+  if(!held.length)return progressNote+'<div class="card pass">当前异常题均在后台自动重建；没有需要你处理的题。</div>';
+  const cards=Object.entries(groups).filter(([,rows])=>rows.some(q=>!autoRows.includes(q))).sort((a,b)=>b[1].length-a[1].length).map(([reason,rows])=>{
+    const visible=rows.filter(q=>!autoRows.includes(q));
+    if(!visible.length)return '';
+    return '<details class="card exception"><summary><b>'+esc(reason)+'</b> · '+visible.length+' 题（已暂存）</summary><p class="hint">默认不纳入题库。只有当你本周确实要布置其中某道题时，才需要打开后修订并纳入。</p><div>'+visible.map(exceptionCard).join('')+'</div></details>';
+  }).join('');
+  return progressNote+'<details class="card"><summary><b>已自动暂存 '+held.length+' 道异常题</b>（不影响本周组卷）</summary><p class="hint">系统不会把这些不可靠的题展示给学生，也不会把它们算作你的日常待办。下面仅保留一个“按需修订”入口。</p>'+cards+'</details>';
+}
+async function loadCoverage(){
+  try{
+    const x=await api('/api/teacher/question-bank/coverage');
+    const t=x.totals||{},sources=x.sources||[];
+    $('#coverage').innerHTML='<h2>题库覆盖情况</h2><p>已纳入可用题库 <b>'+Number(t.approved||0)+'</b> 题；待整理 <b>'+Number(t.pending||0)+'</b> 题；不建议使用 <b>'+Number(t.rejected||0)+'</b> 题。</p>'+(sources.length?'<details><summary>按导入来源查看</summary><ul>'+sources.map(s=>'<li>'+esc(s.source)+'：可用 '+s.approved+'，待整理 '+s.pending+'，不建议使用 '+s.rejected+'</li>').join('')+'</ul></details>':'');
+  }catch(e){$('#coverage').textContent='题库覆盖统计暂时不可用：'+e.message}
+}
+async function openBatch(id){activeBatchId=id;try{const x=await api('/api/teacher/question-bank/repair-batches/'+id),b=x.batch;const rebuilding=b.status==='rebuilding';const progress=rebuilding?(b.notes||'正在从来源图重建，可离开本页，稍后刷新查看结果。'):'';const held=x.exceptions.filter(q=>!(rebuilding&&(q.reasons||[]).includes('Qwen 尚未重建')&&(q.source_image_count||0)>0));$('#detail').innerHTML='<section class="card"><h2>当前备课题单</h2><p class="hint">'+esc(progress)+'</p><p class="hint">共 '+b.total_count+' 题：可直接使用 '+b.pass_count+' 题；请抽样确认 '+x.samples.length+' 题；'+(rebuilding?'已自动暂存 '+held.length+' 题，其他题正在自动重建；这些都不影响本周组卷。':'已自动暂存 '+b.exception_count+' 题，不会进入本周可用题库。')+'</p>'+(!rebuilding&&held.length?'<div class="card sample"><b>批量纳入待核验题库</b><p class="hint">有来源图且已恢复题干、答案的题可一次保存到待核验题库；可按章节检索和选题，但不会自动评分。</p><button onclick="provisionalImport('+b.id+')">一键纳入待核验题库</button></div>':'')+'<h3>请抽样确认</h3>'+x.samples.map(sampleCard).join('')+'<label><input id="checked" type="checkbox"> 我已核对上述抽样题，可以纳入可用题库</label><button onclick="confirmBatch('+b.id+')">确认并纳入可用题库</button></section>';const updated=x.updated||[];const pending=[...(x.provisional||[]),...(x.exceptions||[])];$('#exceptions').innerHTML=updatedBlock(updated,x.updated_counts||{})+provisionalBlock(pending,rebuilding);document.querySelectorAll('.preview').forEach(math);if(rebuilding)setTimeout(()=>openBatch(id),15000)}catch(e){alert(e.message)}}
+async function rebuildQwenBatch(id){if(!confirm('系统会按顺序使用每题已上传的来源图重建答案和推导，共耗时较长，但不会自动入库或覆盖教师内容。是否加入队列？'))return;try{const x=await api('/api/teacher/question-bank/repair-batches/'+id+'/rebuild-qwen',{method:'POST'});alert(x.message);await loadBatches();await openBatch(id)}catch(e){alert(e.message)}}
+async function provisionalImport(id){if(!confirm('确认把本批已恢复题目批量纳入待核验题库？这些题不会启用自动评分。'))return;try{const x=await api('/api/teacher/question-bank/repair-batches/'+id+'/provisional-import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:true})});alert('已纳入待核验题库 '+x.imported+' 题；仍无法恢复 '+x.manual_remaining+' 题。');await openBatch(id);await loadCoverage()}catch(e){alert(e.message)}}
+function preview(id){const q={content_text:$('#stem'+id).value,std_answer:$('#answer'+id).value,full_solution:$('#solution'+id).value};const out=$('#preview'+id);out.innerHTML=previewHtml(q);math(out)}
+async function publish(id){if(!confirm('确认人工修订后发布？'))return;try{const x=await api('/api/teacher/question-bank/candidates/'+id+'/publish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:true,manual_correction:true,content_text:$('#stem'+id).value,std_answer:$('#answer'+id).value,full_solution:$('#solution'+id).value,note:'批次例外人工修订'})});alert('已纳入可用题库；该题现在可以用于组卷。');await loadBatches();await loadCoverage();if(activeBatchId)await openBatch(activeBatchId)}catch(e){if(String(e.message).includes('未找到该题库候选'))alert('题库服务刚完成刷新，请先刷新本页面再重试。你刚填写的内容还在当前页面中；若刷新前需要保留，请先复制文本。');else alert(e.message)}}
+async function confirmBatch(id){if(!$('#checked').checked)return alert('请先确认已抽样核对');if(!confirm('确认将已检查题目纳入可用题库吗？仍需确认的题不会被加入。'))return;try{const x=await api('/api/teacher/question-bank/repair-batches/'+id+'/confirm',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({samples_checked:true})});alert('已纳入可用题库 '+x.published+' 题；仍保留 '+x.exceptions_kept+' 题等待确认。');await loadBatches();openBatch(id)}catch(e){alert(e.message)}}
+loadBatches();loadCoverage();
+</script></html>

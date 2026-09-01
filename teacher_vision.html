@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>高数教材智能体</title>
+<style>
+:root{--ink:#102a43;--muted:#60758a;--blue:#2563eb;--line:#e4ebf3;--bg:#f6f8fc;--green:#087f75}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);font:15px "Microsoft YaHei",sans-serif;color:var(--ink)}
+header{padding:18px max(5vw,24px);display:flex;justify-content:space-between;align-items:center;background:#fff;border-bottom:1px solid var(--line)}
+.brand{font-weight:800;font-size:21px}.tag{background:#e6fffb;color:var(--green);padding:5px 10px;border-radius:99px;font-size:12px;font-weight:700}.hero{background:linear-gradient(135deg,#102a43,#1b5278);color:#fff;padding:52px max(8vw,28px)}.hero h1{font-size:38px;margin:12px 0}.hero p{max-width:730px;line-height:1.8;color:#d5e6f2}.wrap{max-width:1200px;margin:auto;padding:28px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(235px,1fr));gap:16px}.card{background:white;border:1px solid var(--line);border-radius:16px;padding:20px;box-shadow:0 8px 24px #102a4308}.card h2{font-size:18px;margin:11px 0 8px}.card p{color:var(--muted);line-height:1.65;min-height:50px}.btn{border:0;border-radius:9px;padding:10px 14px;background:var(--blue);color:#fff;font-weight:700;cursor:pointer}.btn.secondary{background:#eff6ff;color:#1d4ed8}.btn:disabled{opacity:.55;cursor:not-allowed}.stats{margin-top:24px}.metric{font-size:29px;font-weight:800;color:var(--green)}.hint{color:var(--muted);font-size:13px}.panel{margin-top:22px}.hidden{display:none}label{display:block;font-size:13px;font-weight:700;margin-top:10px}input,select{width:100%;margin-top:5px;border:1px solid #cdd9e6;border-radius:8px;padding:9px;font:inherit}.row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.notice{padding:14px 16px;background:#eef6ff;border-radius:12px;line-height:1.7}.list{margin-top:12px;display:grid;gap:10px}.item{padding:13px;border:1px solid var(--line);border-radius:10px;display:flex;gap:12px;justify-content:space-between;align-items:center;flex-wrap:wrap}
+.eqprev{min-height:46px;max-height:320px;overflow:auto;background:#fff;border:1px dashed #cdd9e6;border-radius:10px;padding:10px 12px;line-height:1.7;font-size:15px}.eqprev:empty::before{content:"（空）";color:#94a3b8}
+</style>
+<body>
+<script>window.MathJax={tex:{inlineMath:[['$','$'],['\\(','\\)']],displayMath:[['$$','$$'],['\\[','\\]']]},svg:{fontCache:'global'},startup:{typeset:false}};</script>
+<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<header><div class="brand">▣ 高数教材智能体 <span class="tag">教师端 v1</span></div><div class="hint">教师只选任务，Agent 处理识别、检索与核验</div><button class="btn secondary" style="margin-left:auto" onclick="createDemoPackage()">🧪 一键演示包</button><button class="btn secondary" onclick="openPanel('classes')">👥 班级与名单</button><button class="btn" onclick="openPanel('editq')">✎ 题目直接编辑</button></header>
+<section class="hero"><span class="tag">任务型界面 · 复核优先</span><h1>把备课、作业与批改交给同一个教学 Agent</h1><p>上传或选择教材材料后，智能体根据任务检索题目与参考资料，生成候选结果；涉及成绩或不确定内容时，自动转交教师确认。无需先完成整本答案库。</p></section>
+<main class="wrap"><section class="grid" id="tasks"></section>
+<section class="panel card hidden" id="builder"><h2>智能生成作业</h2><p class="hint">输入 8014 的章节编号（如 1.1）。Agent 会先同步该章节的教材题目、标准答案与证据，再按难度分层组卷。</p><div id="buildResult" class="list" style="margin-bottom:14px"></div><div class="row"><label>作业名称<input id="title" placeholder="如：1.1 函数周作业"></label><label>章节编号<input id="chapter" placeholder="如：1.1"></label></div><div class="row"><label>班级<select id="classId"><option value="">请先创建班级并导入名单</option></select></label><label>截止时间<input id="due" type="datetime-local"></label></div><div class="row"><label>题目数<input id="count" type="number" min="1" max="30" value="6"></label><label>基础比例<input id="basic" type="number" min="0" max="1" step=".05" value=".5"></label></div><button id="btnCreateAsg" class="btn secondary" style="margin-top:16px" onclick="syncSection()">只同步本章节题目</button> <button id="btnCreateAsgMain" class="btn" style="margin-top:16px" onclick="createAssignment()">同步知识库并生成作业草案</button></section>
+<section class="panel card hidden" id="classes"><h2>班级与名单</h2><p class="hint">先建班，再导入 Excel/CSV 名单。之后发布的作业和报表会严格按该名单统计；历史演示数据不会混入真实报表。</p><div class="row"><label>班级名称<input id="newClassName" placeholder="如：高数 2026 级 1 班"></label><label>学期<input id="newClassSemester" placeholder="如：2026-2027-1"></label></div><button class="btn" style="margin-top:12px" onclick="createClass()">创建班级</button><div id="classManager" class="list"></div></section>
+<section class="panel card hidden" id="materials"><h2>教材资料库</h2><div class="notice">教材 PDF、答案 PDF 与教师确认结果都属于后台证据来源。它们会按需检索，不再要求逐题补全后才能生成作业或批改。</div><div id="knowledgeStatus" class="list"></div><p class="hint">原 8014 工作台仍是资料维护中心；这里显示连接状态，后续每次组卷和批改会附带检索到的证据。</p><a class="btn secondary" href="http://127.0.0.1:8014/" target="_blank">打开后台资料中心</a></section>
+<section class="panel card hidden" id="answer_import"><h2>MinerU 答案导入审核</h2><p class="hint">MinerU 解析答案 PDF 后生成结构化候选；教师逐题审核，确认后再写回 8014 正式答案库，并同步到本地缓存供组卷使用。</p><div id="pendingSync" class="list"></div><a class="btn" href="/answer-import-review" target="_blank">打开答案导入审核页</a></section>
+<section class="panel card hidden" id="review"><h2>发布、提交与教师复核</h2><p class="hint">图片作业提交后先由 Qwen 识别，再用数学判等交叉校验；不确定结果只进入这里，不自动发布成绩。</p><div id="assignmentList" class="list"></div><h3 style="margin-top:22px">待教师复核</h3><div id="reviewList" class="list"></div></section>
+<section class="panel card hidden" id="reports"><h2>教学报表</h2><p class="hint">复核配额、薄弱知识点建议、学期末分数汇总与书写整洁度维度。数据来自教师已裁定的复核与已批改提交。</p><div id="reviewQuotaBox" class="notice">加载中…</div><h3 style="margin-top:22px">薄弱知识点建议</h3><div id="weakPointsBox" class="list"></div><h3 style="margin-top:22px">学期末分数汇总</h3><div class="row"><label>班级<input id="rpClass" placeholder="留空 = 全部班级"></label><label>学期<input id="rpSemester" placeholder="留空 = 全部学期"></label></div><button class="btn secondary" style="margin-top:12px" onclick="loadSemesterSummary()">查询汇总</button><div id="semesterBox" class="list"></div></section>
+<section class="panel card hidden" id="ai_stem"><h2>AI 题干候选复核</h2><p class="hint">这些是 VLM 已从裁切图识别题干、但双模型交叉校验未通过（或无法判定）的题目，按「不确定不自动发布」原则停在待审。勾选后可批量确认，或单条编辑题干 / 答案再批准；确认即写回 8014 正式答案库并进入本地可组卷缓存。</p><div style="display:flex;gap:10px;margin:12px 0;flex-wrap:wrap"><button class="btn secondary" onclick="toggleAllStem()">全选 / 全不选</button><button class="btn" onclick="approveSelected()">批准选中</button><button class="btn secondary" onclick="rejectSelected()">拒绝选中</button><button class="btn secondary" onclick="loadAiStem()">刷新</button></div><div id="aiStemList" class="list"></div></section>
+<section class="panel card hidden" id="editq">
+  <h2>题目内容直接编辑</h2>
+  <p class="hint">用于人工修订 OCR 乱码或订正内容。修改即写回本地题库（questions 表），并实时反映在作业单与批改中。保存不会被数学校验拦截；若文本疑似仍有问题，下方会给出提示。</p>
+  <div class="row">
+    <label>题号<input id="eqId" type="number" placeholder="如 250"></label>
+    <div style="display:flex;gap:8px;align-items:flex-end">
+      <button class="btn" onclick="loadQuestion()">加载</button>
+      <button class="btn secondary" onclick="queueNext()">下一条疑似乱码题 →</button>
+    </div>
+  </div>
+  <label>题干 content<textarea id="eqContent" rows="6" style="width:100%;font:inherit;margin-top:4px" oninput="previewEq()"></textarea></label>
+  <label>标准答案 answer<textarea id="eqAnswer" rows="3" style="width:100%;font:inherit;margin-top:4px" oninput="previewEq()"></textarea></label>
+  <label>评分参考 rubric<textarea id="eqRubric" rows="3" style="width:100%;font:inherit;margin-top:4px" oninput="previewEq()"></textarea></label>
+  <div class="row" style="margin-top:10px">
+    <label>章节 chapter<input id="eqChapter"></label>
+    <label>难度 difficulty<select id="eqDifficulty"><option>基础</option><option>提高</option><option>综合</option></select></label>
+  </div>
+  <div class="row">
+    <label>题型 question_type<input id="eqType" placeholder="计算题/证明题"></label>
+    <label>复核状态 review_status<select id="eqStatus"><option value="published">published</option><option value="blocked">blocked</option><option value="pending_review">pending_review</option></select></label>
+  </div>
+  <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+    <label style="display:flex;gap:6px;align-items:center;margin:0;font-weight:600;font-size:13px"><input type="checkbox" id="eqSync8014" checked style="width:auto;margin:0"> 同时写回 8014 资料库</label>
+    <button class="btn" onclick="saveQuestion()">保存修改</button>
+    <span id="eqMsg" class="hint"></span>
+  </div>
+  <div id="eqWarn" class="notice hidden" style="margin-top:12px"></div>
+  <details open style="margin-top:18px"><summary>实时预览（LaTeX 渲染，边改边看）</summary>
+    <div class="row" style="margin-top:10px">
+      <div style="flex:1;min-width:0"><div class="hint">题干</div><div id="eqPrevContent" class="eqprev"></div></div>
+      <div style="flex:1;min-width:0"><div class="hint">答案</div><div id="eqPrevAnswer" class="eqprev"></div></div>
+    </div>
+    <div class="hint" style="margin-top:10px">评分参考</div>
+    <div id="eqPrevRubric" class="eqprev"></div>
+  </details>
+  <details style="margin-top:18px"><summary>实时质量扫描队列（仅提示，不自动改状态）</summary>
+    <label>每行一个题号，可粘贴 CSV 的 question_id 列<textarea id="eqQueue" rows="5" style="margin-top:6px;width:100%;font:inherit"></textarea></label>
+    <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
+      <button class="btn secondary" onclick="queuePrev()">← 上一条</button>
+      <button class="btn secondary" onclick="queueNext()">下一条 →</button>
+      <span id="eqQueuePos" class="hint"></span>
+      <span id="eqQueueRisk" class="hint"></span>
+    </div>
+  </details>
+</section>
+<section class="stats"><h2>教学数据</h2><div class="grid" id="stats"></div></section></main>
+<script>
+const $=id=>document.getElementById(id); const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); const taskMeta={assignment:['智能生成作业','按章节、难度与题量组卷，并生成留白作业单。','打开组卷器'],publish:['发布与收作业','发布给班级，保留学生照片、PDF 与手写文件提交入口。','查看作业'],grading:['智能批改','按评分点给出初评、证据与复核标记；不确定时不自动发布成绩。','查看复核'],material:['教材资料库','检索教材、答案 PDF 与教师确认经验；不是逐题录入任务。','管理资料'],answer_import:['MinerU 答案导入审核','审核答案书解析结果，确认后写回 8014 并同步本地缓存。','导入审核'],reports:['教学报表','复核配额、薄弱知识点、学期分数汇总与书写整洁度。','查看报表'],ai_stem:['AI 题干候选复核','VLM 已识别但双模型校验未过的题干，勾选确认后写回 8014。','复核候选']};
+function panelIdForTask(id){return id==='reports'?'reports':id==='ai_stem'?'ai_stem':id==='assignment'?'builder':id==='material'?'materials':id==='answer_import'?'answer_import':'review'}
+function openPanel(id){['builder','classes','materials','answer_import','review','reports','ai_stem','editq'].forEach(x=>$(x).classList.toggle('hidden',x!==id));if(id==='classes')loadClasses();if(id==='review')loadAssignments();if(id==='materials')loadKnowledge();if(id==='answer_import')loadPendingSync();if(id==='reports')loadReports();if(id==='ai_stem')loadAiStem();if(id==='editq')loadGarbleQueue();window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'})}
+async function api(path,opts){const r=await fetch('/api'+path,opts);if(r.status===401){location.href='/login';throw new Error('登录已过期')}if(!r.ok)throw new Error((await r.text())||'请求失败');return r.json()}
+async function loadClasses(render=true){try{let rows=await api('/classes');let select=$('classId');if(select){let old=select.value;select.innerHTML='<option value="">请先创建班级并导入名单</option>'+rows.map(c=>`<option value="${c.id}" ${c.student_count?'':'disabled'}>${esc(c.name)}${c.semester?' · '+esc(c.semester):''}（${c.student_count} 人）</option>`).join('');select.value=old}if(!render)return;let box=$('classManager');box.innerHTML=rows.length?rows.map(c=>`<div class="item" style="align-items:flex-start"><div><b>${esc(c.name)}${c.semester?' · '+esc(c.semester):''}</b><div class="hint">学生 ${c.student_count} 人 · 已发布作业 ${c.assignment_count} 份</div><div style="margin-top:8px"><input id="roster${c.id}" type="file" accept=".xlsx,.csv" style="max-width:360px"><button class="btn secondary" style="margin-left:6px" onclick="uploadRoster(${c.id})">导入 Excel / CSV</button></div><div id="rosterMsg${c.id}" class="hint" style="margin-top:6px">首行必须包含“学号”“姓名”；重复学号会更新姓名，不会重复建档。</div></div><button class="btn secondary" onclick="showRoster(${c.id},'${encodeURIComponent(c.name)}')">查看名单</button></div>`).join(''):'<div class="notice">还没有班级。开学后先创建班级，再导入含“学号、姓名”两列的 .xlsx 或 UTF-8 CSV。</div>'}catch(e){let box=$('classManager');if(box)box.innerHTML=`<div class="notice">班级读取失败：${esc(e.message)}</div>`}}
+async function createClass(){try{let name=$('newClassName').value.trim(),semester=$('newClassSemester').value.trim();if(!name)throw new Error('请填写班级名称');await api('/classes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,semester})});$('newClassName').value='';await loadClasses();alert('班级已创建。请立即导入名单，之后才可对该班发布作业。')}catch(e){alert('创建失败：'+e.message)}}
+async function createDemoPackage(){try{let x=await api('/admin/demo-package',{method:'POST'});let go=confirm(`已创建隔离演示作业 #${x.assignment_id}。\n\n点击“确定”后将在新标签下载手写样本，当前页面会直接进入提交页。\n\n填写演示学号 DEMO001、姓名“演示学生”，上传样本即可测试。\n\n演示数据不会进入正式报表。`);if(go){window.open(x.sample_download_url,'_blank');location.href=x.submit_url}}catch(e){alert('创建演示包失败：'+e.message)}}
+async function uploadRoster(id){let file=$('roster'+id).files[0];if(!file){alert('请先选择 .xlsx 或 .csv 名单文件');return}let msg=$('rosterMsg'+id);msg.textContent='正在导入…';try{let form=new FormData();form.append('file',file);let r=await fetch('/api/classes/'+id+'/students/import-file',{method:'POST',body:form});if(!r.ok)throw new Error(await r.text());let x=await r.json();msg.textContent=`导入完成：新增 ${x.inserted}，更新 ${x.updated}，无效/重复跳过 ${x.invalid_or_duplicate}。`;await loadClasses()}catch(e){msg.textContent='导入失败：'+e.message}}
+async function showRoster(id,rawName){try{let rows=await api('/classes/'+id+'/students');let names=decodeURIComponent(rawName);let body=rows.length?`<div class="notice"><b>${esc(names)}</b> · 共 ${rows.length} 人</div><div class="list">${rows.map(s=>`<div class="item"><span>${esc(s.student_no)}</span><b>${esc(s.name)}</b></div>`).join('')}</div>`:'<div class="notice">尚未导入学生名单。</div>';$('classManager').innerHTML=`<button class="btn secondary" onclick="loadClasses()">← 返回班级列表</button>${body}`}catch(e){alert(e.message)}}
+async function init(){let [cap,summary]=await Promise.all([api('/agent/capabilities'),api('/reports/summary')]);$('tasks').innerHTML=cap.tasks.map(t=>{let m=taskMeta[t.id];return `<article class="card"><span class="tag">${t.status==='available'?'现在可用':t.status==='review-first'?'教师复核优先':'后台资料能力'}</span><h2>${m[0]}</h2><p>${m[1]}</p><button class="btn" onclick="openPanel('${panelIdForTask(t.id)}')">${m[2]}</button></article>`}).join('');let labels={knowledge_total:'8014 知识库题目',synced_cache_count:'本地已同步缓存',assignment_count:'进行中作业',submission_count:'学生提交',review_queue:'待批改 / 复核',classes_below_review_quota:'未达复核配额班级'};$('stats').innerHTML=Object.entries(labels).map(([k,v])=>`<article class="card"><div class="metric">${summary[k]??'—'}</div><div class="hint">${v}</div></article>`).join('');await loadClasses(false)}
+async function loadPendingSync(){try{let x=await api('/mineru/pending-sync');let items=x.items||[];$('pendingSync').innerHTML=items.length?`<div class="notice"><b>待同步章节（${items.length} 个）</b>：${items.map(i=>i.section_no).join('、')}。建议打开审核页同步到本地缓存。</div>`:'<div class="notice">当前没有待同步章节。</div>'}catch(e){$('pendingSync').innerHTML=`<div class="notice">读取待同步队列失败：${e.message}</div>`}}
+function repairDetails(items){if(!items||!items.length)return '';return `<details style="margin-top:10px"><summary>查看待修复题目（${items.length} 道）</summary><ul>${items.map(i=>`<li>第 ${i.problem_no} 题：${i.reason}。${i.next_action}</li>`).join('')}</ul></details>`}
+async function createAssignment(){try{let data={title:$('title').value,chapter:$('chapter').value,class_id:+$('classId').value,due_at:new Date($('due').value).toISOString(),question_count:+$('count').value,basic_ratio:+$('basic').value,advanced_ratio:.35};if(!data.title||!data.chapter||!data.class_id||!$('due').value)throw new Error('请完整填写作业名称、章节编号、班级和截止时间；班级须先导入名单');let btn=$('btnCreateAsgMain');if(btn){btn.disabled=true;btn.textContent='⏳ 同步并生成中…（首次可能需要 30-60 秒）'}$('buildResult').innerHTML='<div class="notice">⏳ 正在同步知识库并生成作业草案（首次可能需要 30-60 秒）…请勿关闭页面。</div>';let x=await api('/agent/assignments',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});let probs=(x.problems||x.questions||[]);let ks=x.knowledge_sync||{};$('buildResult').innerHTML=`<div class="notice"><b>作业草案已生成</b>：共 ${probs.length} 道题；已从 8014 同步 ${ks.synced_count??'—'} 道可用题目。${repairDetails(ks.unresolved_items)}<br><a href="/api/assignments/${x.id}/print" target="_blank">打开可打印作业单</a>　<a href="/submit?assignment_id=${x.id}" target="_blank">打开学生提交链接</a></div>`;loadAssignments();init()}catch(e){$('buildResult').innerHTML=`<div class="notice" style="border-color:#fecaca;background:#fef2f2;color:#991b1b"><b>❌ 生成失败</b>：${e.message}</div>`}finally{let btn=$('btnCreateAsgMain');if(btn){btn.disabled=false;btn.textContent='同步知识库并生成作业草案'}}}
+async function syncSection(){try{let section=$('chapter').value.trim();if(!section)throw new Error('请先填写章节编号，例如 1.1');let x=await api(`/agent/sync-section?section_no=${encodeURIComponent(section)}`,{method:'POST'});let levels=x.available_by_level;$('buildResult').innerHTML=`<div class="notice"><b>章节已同步</b>：从 8014 发现 ${x.source_total} 道，已同步 ${x.synced_count} 道可读题目（基础 ${levels['基础']} / 提高 ${levels['提高']} / 综合 ${levels['综合']}）${x.skipped_unreadable?`；${x.skipped_unreadable} 道已安全拦截，详情如下。`:''}${repairDetails(x.unresolved_items)}</div>`;init()}catch(e){$('buildResult').innerHTML=`<div class="notice">${e.message}</div>`}}
+async function loadAssignments(){let [rows,reviews]=await Promise.all([api('/assignments'),api('/reviews')]);$('assignmentList').innerHTML=rows.length?rows.map(x=>`<div class="item"><div><b>${x.title}</b><div class="hint">${x.class_name} · ${x.chapter} · 截止 ${new Date(x.due_at).toLocaleString()}</div></div><div><a class="btn secondary" target="_blank" href="/api/assignments/${x.id}/print">打印</a> <a class="btn secondary" target="_blank" href="/submit?assignment_id=${x.id}">学生链接</a> <button class="btn secondary" onclick="showAssignmentSubmissions(${x.id})">查看成绩</button> <button class="btn secondary" onclick="editAssignment(${x.id},'${encodeURIComponent(x.title)}','${encodeURIComponent(x.class_name)}','${x.due_at}')">编辑</button> <button class="btn secondary" onclick="deleteAssignment(${x.id})">删除</button></div></div>`).join(''):'<div class="notice">还没有已发布作业。先使用“智能生成作业”创建一份草案。</div>';$('reviewList').innerHTML=reviews.length?reviews.map(x=>`<div class="item"><div><b>${x.title} · ${x.student_name||x.student_no}</b><div class="hint">状态：${x.grading_status}；待复核题目：${x.review_count}${x.qwen_error?'；Qwen 调用异常':''}</div></div><button class="btn secondary" onclick="showEvidence(${x.id})">查看证据</button></div>`).join(''):'<div class="notice">当前没有待复核结果。可在每份作业右侧点击“查看成绩”查看已自动批改的提交。</div>'}
+async function showAssignmentSubmissions(id){try{let x=await api(`/assignments/${id}/submissions`);let rows=x.submissions||[];let body=rows.length?rows.map(s=>`<div class="item"><div><b>${esc(s.student_name||s.student_no)} · ${esc(s.student_no)}</b><div class="hint">${esc(s.grading_status||s.status)} · 得分 ${s.total_score??'待定'} / ${s.max_score??'待定'}${s.needs_review?' · 待教师复核':' · 自动初评完成'}</div><div class="hint">识别：${esc(s.recognized_summary||'任务处理中或未识别')}${s.qwen_error?'；AI 服务异常':''}</div></div><button class="btn secondary" onclick="showEvidence(${s.id})">查看详情</button></div>`).join(''):'<div class="notice">这份作业暂时还没有学生提交。</div>';$('reviewList').innerHTML=`<button class="btn secondary" onclick="loadAssignments()">← 返回待复核列表</button><h3 style="margin-top:16px">${esc(x.title)} · 全部提交与成绩</h3>${body}`}catch(e){$('reviewList').innerHTML=`<div class="notice">成绩读取失败：${esc(e.message)}</div>`}}
+async function editAssignment(id,rawTitle,rawClass,due){let title=prompt('作业名称',decodeURIComponent(rawTitle));if(title===null)return;let dueAt=prompt('截止时间（例如 2026-08-16T12:48）',String(due).slice(0,16));if(dueAt===null)return;try{await api(`/assignments/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({title,due_at:new Date(dueAt).toISOString()})});loadAssignments()}catch(e){alert(e.message)}}
+async function deleteAssignment(id){if(!confirm('确认删除这份作业？没有学生提交时才允许删除。'))return;try{await api(`/assignments/${id}`,{method:'DELETE'});loadAssignments();init()}catch(e){alert(e.message)}}
+async function showEvidence(id){try{let x=await api(`/submissions/${id}/grading`);let r=x.grading_result||{};let body=(r.results||[]).map(q=>`<p><b>第 ${q.sort_order} 题</b>：识别结果：${q.recognized_work||'未识别'}<br>数学判等：${q.math_equivalence?.method||'不适用'}；复核原因：${(q.review_reasons||[]).join('、')||'无'}</p>`).join('')||'任务仍在处理中';let retry=r.qwen_error?`<p class="notice"><b>AI 服务暂时不可用：</b>${esc(r.qwen_error)}<br>请先恢复 18080 VLM 服务；恢复后点击下方重新初评。原作业已保留，无需重新上传。</p><button class="btn secondary" onclick="retryGrading(${id})">重新调用 AI 初评</button>`:'';$('reviewList').innerHTML=`<div class="notice"><b>${x.title} · ${x.student_name||x.student_no}</b><p><a class="btn secondary" target="_blank" href="${x.original_file_url}">打开 / 下载学生原作业（${x.original_file_name}）</a></p><iframe title="学生原作业" src="${x.original_file_url}" style="width:100%;height:620px;border:1px solid #cdd9e6;border-radius:10px;background:#fff"></iframe><hr style="border:0;border-top:1px solid #cdd9e6;margin:18px 0">${body}${retry}<p>当前建议分：${r.total_score??'待定'} / ${r.max_score??'待定'}</p><button class="btn" onclick="confirmEvidence(${id},${r.total_score??0})">确认成绩并沉淀经验</button></div>`}catch(e){$('reviewList').innerHTML=`<div class="notice">${e.message}</div>`}}
+async function retryGrading(id){if(!confirm('重新调用 AI 初评？不会删除或覆盖学生原作业。'))return;try{let x=await api(`/submissions/${id}/regrade`,{method:'POST'});alert(x.message+' 约一分钟后点击“查看证据”刷新结果。');await loadAssignments()}catch(e){alert('重新初评失败：'+e.message)}}
+async function confirmEvidence(id,suggested){let score=prompt('确认后的总分（可修改建议分）',suggested);if(score===null)return;let feedback=prompt('给学生的反馈（可留空）','');try{await api(`/submissions/${id}/review`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({score:+score,feedback:feedback||''})});loadAssignments()}catch(e){$('reviewList').innerHTML=`<div class="notice">${e.message}</div>`}}
+async function loadKnowledge(){let x=await api('/agent/knowledge-status');$('knowledgeStatus').innerHTML=`<div class="item"><div><b>${x.connected?'● 已连接知识库':'● 知识库暂不可用'}</b><div class="hint">教材 ${x.textbook_count} 本 · 答案 PDF ${x.answer_document_count} 份 · 已检索题目 ${x.problem_count} 条</div><div class="hint">${x.message}</div></div></div>`}
+async function loadReports(){try{$('reviewQuotaBox').innerHTML='加载中…';let [q,w]=await Promise.all([api('/reports/review-quota'),api('/reports/weak-points')]);renderReviewQuota(q);renderWeakPoints(w);await loadSemesterSummary()}catch(e){$('reviewQuotaBox').innerHTML=`<div class="notice">报表读取失败：${e.message}</div>`}}
+function renderReviewQuota(q){let cls=q.classes||[];let below=q.classes_below_quota||[];let banner=below.length?`<b style="color:#b91c1c">⚠ 有 ${below.length} 个班级未达复核配额（每班 ≥ ${q.quota_per_class} 次），请优先安排人工复核。</b>`:`<b style="color:#087f75">✓ 所有班级均满足复核配额（每班 ≥ ${q.quota_per_class} 次）。</b>`;let rows=cls.length?cls.map(c=>`<div class="item"><div><b>${c.class_name||'未命名'} · ${c.semester||'—'}</b><div class="hint">教师复核 ${c.teacher_reviews} / 配额 ${c.quota} → ${c.meets_quota?'达标':'未达标'}</div></div><span class="tag" style="${c.meets_quota?'background:#e6fffb;color:#087f75':'background:#fff1f0;color:#b91c1c'}">${c.meets_quota?'达标':'未达标'}</span></div>`).join(''):'<div class="hint">暂无复核记录（教师尚未裁定任何提交）。</div>';$('reviewQuotaBox').innerHTML=`${banner}<div style="margin-top:10px">${rows}</div>`}
+function renderWeakPoints(w){let pts=w.weak_points||[];if(!pts.length){$('weakPointsBox').innerHTML=`<div class="hint">暂无薄弱知识点数据（需先有教师裁定后的得分记录）。得分率阈值 &lt; ${(w.threshold*100).toFixed(0)}% 标记薄弱。</div>`;return}$('weakPointsBox').innerHTML=`<table style="width:100%;border-collapse:collapse;font-size:14px"><thead><tr style="text-align:left;color:#60758a"><th>知识点</th><th>得分率</th><th>样本数</th><th>建议</th></tr></thead><tbody>${pts.map(p=>`<tr style="border-top:1px solid #e4ebf3"><td>${p.knowledge_point}</td><td style="color:${p.avg_rate<w.threshold?'#b91c1c':'#087f75'};font-weight:700">${(p.avg_rate*100).toFixed(1)}%</td><td>${p.sample_count}</td><td>${p.suggestion}</td></tr>`).join('')}</tbody></table>`}
+async function loadSemesterSummary(){try{let cls=encodeURIComponent($('rpClass').value.trim());let sem=encodeURIComponent($('rpSemester').value.trim());let qs=[];if(cls)qs.push('class_name='+cls);if(sem)qs.push('semester='+sem);let x=await api('/reports/semester-summary'+(qs.length?'?'+qs.join('&'):''));let st=x.students||[];let d=x.distribution||{};let rows=st.length?st.map(s=>`<tr style="border-top:1px solid #e4ebf3"><td>${s.rank}</td><td>${s.student_name||s.student_no}</td><td>${s.student_no}</td><td>${s.average}</td><td>${(s.avg_rate*100).toFixed(1)}%</td><td>${s.handwriting_avg??'—'}</td></tr>`).join(''):'<tr><td colspan="6" class="hint">暂无已批改（submissions.status=graded）提交。</td></tr>';$('semesterBox').innerHTML=`<div class="notice">班级均分：<b>${x.class_average}</b>；分数段 优秀 ${d['优秀']||0} / 良好 ${d['良好']||0} / 及格 ${d['及格']||0} / 不及格 ${d['不及格']||0}；学生数 ${x.student_count}</div><table style="width:100%;border-collapse:collapse;font-size:14px;margin-top:8px"><thead><tr style="text-align:left;color:#60758a"><th>排名</th><th>姓名</th><th>学号</th><th>平均分</th><th>得分率</th><th>书写整洁度</th></tr></thead><tbody>${rows}</tbody></table>`}catch(e){$('semesterBox').innerHTML=`<div class="notice">汇总读取失败：${e.message}</div>`}}
+async function loadAiStem(){try{$('aiStemList').innerHTML='<div class="notice">加载中…</div>';let res=await api('/agent/ai-stem-candidates?status=pending');let items=res.items||[];if(!items.length){$('aiStemList').innerHTML='<div class="notice">当前没有待复核的 AI 题干候选。✓</div>';return}$('aiStemList').innerHTML=items.map(x=>{let ag=x.agreement||{};let reason=ag.method||'双模型答案未一致';return `<div class="item" style="align-items:flex-start">
+<div style="flex:1;min-width:0">
+<input type="checkbox" class="stemchk" id="chk${x.id}" value="${x.id}" style="width:auto;margin:0 8px 0 0;vertical-align:middle">
+<b>§${esc(x.section_no)} 题${esc(x.problem_no)}${x.sub_no?'('+esc(x.sub_no)+')':''}</b>
+<span class="tag">${esc(x.ptype||'')} · 难度${esc(x.difficulty||'')} · 置信${x.confidence??'—'}</span>
+<div class="hint" style="margin-top:6px">待审原因：${esc(reason)}（判等 ${ag.equal?'通过':'未通过'} · 置信 ${ag.confidence??'—'}）</div>
+<label>题干（可编辑，确认时以此为准）<textarea id="ct${x.id}" rows="4" style="width:100%;font:inherit;margin-top:4px">${esc(x.candidate_text||'')}</textarea></label>
+<label>标准答案（可编辑）<textarea id="sa${x.id}" rows="2" style="width:100%;font:inherit;margin-top:4px">${esc(x.std_answer||'')}</textarea></label>
+</div>
+<div style="display:flex;flex-direction:column;gap:8px">
+<button class="btn" onclick="approveStem(${x.id})">批准并写回</button>
+<button class="btn secondary" onclick="rejectStem(${x.id})">拒绝</button>
+</div>
+</div>`}).join('')}catch(e){$('aiStemList').innerHTML=`<div class="notice">读取失败：${e.message}</div>`}}
+function toggleAllStem(){let boxes=document.querySelectorAll('.stemchk');if(!boxes.length)return;let anyUnchecked=[...boxes].some(b=>!b.checked);boxes.forEach(b=>b.checked=anyUnchecked)}
+async function _stemBody(id){let content=$('ct'+id).value.trim();if(content.length<6)throw new Error('题干过短，无法确认');let body={content_text:content};let sa=$('sa'+id).value.trim();if(sa)body.std_answer=sa;return body}
+async function approveStem(id){try{let body=await _stemBody(id);await api(`/agent/ai-stem-candidates/${id}/approve`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});loadAiStem()}catch(e){alert('批准失败：'+e.message)}}
+async function rejectStem(id){let note=prompt('拒绝原因（可留空）','');if(note===null)return;try{await api(`/agent/ai-stem-candidates/${id}/reject`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({note:note||''})});loadAiStem()}catch(e){alert('拒绝失败：'+e.message)}}
+async function approveSelected(){let ids=[...document.querySelectorAll('.stemchk:checked')].map(b=>+b.value);if(!ids.length){alert('请先勾选要批准的题干。');return}if(!confirm(`确认批准选中的 ${ids.length} 道？将以文本框内编辑的题干 / 答案为准写回 8014。`))return;let ok=0,fail=[];for(let id of ids){try{let body=await _stemBody(id);await api(`/agent/ai-stem-candidates/${id}/approve`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});ok++}catch(e){fail.push(id+':'+e.message)}}alert(`已批准 ${ok} 道${fail.length?'\n失败：\n'+fail.join('\n'):''}`);loadAiStem()}
+async function rejectSelected(){let ids=[...document.querySelectorAll('.stemchk:checked')].map(b=>+b.value);if(!ids.length){alert('请先勾选要拒绝的题干。');return}let note=prompt('批量拒绝原因（可留空）','');if(note===null)return;let ok=0,fail=[];for(let id of ids){try{await api(`/agent/ai-stem-candidates/${id}/reject`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({note:note||''})});ok++}catch(e){fail.push(id+':'+e.message)}}alert(`已拒绝 ${ok} 道${fail.length?'\n失败：\n'+fail.join('\n'):''}`);loadAiStem()}
+init();
+let _eqIdx=-1;
+let _eqQueueItems=[];
+async function loadQuestion(){
+  const id=+$('eqId').value;
+  if(!id){$('eqMsg').textContent='请先输入题号';return;}
+  try{
+    const q=await api('/questions/'+id);
+    $('eqContent').value=q.content||'';
+    $('eqAnswer').value=q.answer||'';
+    $('eqRubric').value=q.rubric||'';
+    $('eqChapter').value=q.chapter||'';
+    $('eqDifficulty').value=q.difficulty||'基础';
+    $('eqType').value=q.question_type||'';
+    $('eqStatus').value=q.review_status||'published';
+    $('eqMsg').textContent='已加载 #'+id+'（'+(q.review_status||'')+'）';
+    $('eqWarn').classList.add('hidden');
+    previewEq();
+  }catch(e){$('eqMsg').textContent='加载失败：'+e.message;}
+}
+async function saveQuestion(){
+  const id=+$('eqId').value;
+  if(!id){$('eqMsg').textContent='请先加载题号';return;}
+  const body={content:$('eqContent').value,answer:$('eqAnswer').value,rubric:$('eqRubric').value,chapter:$('eqChapter').value,difficulty:$('eqDifficulty').value,question_type:$('eqType').value,review_status:$('eqStatus').value,sync_8014:$('eqSync8014').checked};
+  try{
+    const r=await api('/questions/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    let msg='✓ 已保存 #'+id;
+    const s=r.sync_8014_status;
+    if(s){ if(s.synced) msg+=' · 已写回 8014 (#'+s.problem_id+')'; else if(s.skipped) msg+=' · 8014 未同步（'+s.skipped+'）'; else if(s.reason) msg+=' · 8014 写回失败（'+s.reason+'）'; }
+    $('eqMsg').textContent=msg;
+    if(r.validation_warning){$('eqWarn').classList.remove('hidden');$('eqWarn').textContent='⚠ 校验提示：'+r.validation_warning;}else{$('eqWarn').classList.add('hidden');}
+  }catch(e){$('eqMsg').textContent='保存失败：'+e.message;}
+}
+function _eqList(){return $('eqQueue').value.split(/\s+/).map(s=>s.trim()).filter(s=>/^\d+$/.test(s)).map(Number);}
+function renderMath(div,txt){if(!div)return;div.textContent=txt||'';if(window.MathJax&&MathJax.typesetPromise){MathJax.typesetPromise([div]).catch(()=>{})}}
+function previewEq(){renderMath($('eqPrevContent'),$('eqContent').value);renderMath($('eqPrevAnswer'),$('eqAnswer').value);renderMath($('eqPrevRubric'),$('eqRubric').value)}
+function _whenMathJax(cb){if(window.MathJax&&MathJax.startup&&MathJax.startup.promise){MathJax.startup.promise.then(cb);return}const t=setInterval(()=>{if(window.MathJax&&MathJax.startup&&MathJax.startup.promise){clearInterval(t);MathJax.startup.promise.then(cb)}},300);setTimeout(()=>clearInterval(t),15000)}
+_whenMathJax(previewEq);
+async function queueGoto(i){
+  const list=_eqList();
+  if(!list.length){$('eqQueuePos').textContent='队列为空（打开本面板时会自动载入乱码清单）';return;}
+  _eqIdx=(i%list.length+list.length)%list.length;
+  $('eqId').value=list[_eqIdx];
+  $('eqQueuePos').textContent='('+(_eqIdx+1)+'/'+list.length+')';
+  const item=_eqQueueItems[_eqIdx];
+  $('eqQueueRisk').textContent=item ? `${item.risk==='high'?'高风险':'中风险'}：${item.garble_hint||'待核对'}` : '';
+  await loadQuestion();
+}
+function queueNext(){queueGoto(_eqIdx+1);}
+function queuePrev(){queueGoto(_eqIdx-1);}
+async function loadGarbleQueue(){
+  try{
+    const x=await api('/garble-queue?source=live');
+    _eqQueueItems=x.items||[];
+    const ids=_eqQueueItems.map(it=>it.question_id);
+    if(ids.length){$('eqQueue').value=ids.join('\n');_eqIdx=-1;await queueGoto(0);}
+    else{$('eqQueuePos').textContent=x.note||'暂无乱码队列';}
+  }catch(e){$('eqQueuePos').textContent='载入乱码队列失败：'+e.message;}
+}
+function ensureChapterPicker(){let picker=$('multiChapterPicker');if(picker)return picker;picker=document.createElement('section');picker.id='multiChapterPicker';picker.className='card';picker.style.cssText='margin-top:14px';picker.innerHTML='<b>多章节题目范围</b><div class="hint" style="margin:6px 0">按 Ctrl 或 ⌘ 多选；选择后会写入上方“章节编号”。也可直接在上方输入 `1.1、1.2`。</div><select id="chapterOptions" multiple size="7" onchange="applySelectedSections()"></select><div style="margin-top:8px"><button class="btn secondary" type="button" onclick="loadSections()">加载 8014 章节列表</button></div>';$('builder').after(picker);return picker}
+function applySelectedSections(){const selected=[...$('chapterOptions').selectedOptions].map(o=>o.value);if(selected.length)$('chapter').value=selected.join('、')}
+async function loadSections(){try{const picker=ensureChapterPicker(),rows=await api('/agent/sections');$('chapterOptions').innerHTML=rows.map(x=>`<option value="${x.section_no}">${x.section_no}${x.title?' · '+x.title:''}</option>`).join('');picker.style.display='block';const current=$('chapter').value.split(/[，,、;；\s]+/);[...$('chapterOptions').options].forEach(o=>o.selected=current.includes(o.value))}catch(e){$('buildResult').innerHTML=`<div class="notice">章节列表读取失败：${e.message}</div>`}}
+const originalOpenPanel=openPanel;openPanel=function(id){originalOpenPanel(id);if(id==='builder'){const picker=ensureChapterPicker();picker.style.display='block';if(!$('chapterOptions').options.length)loadSections()}}
+repairDetails=function(items){if(!items||!items.length)return '';const grouped={};items.forEach(item=>{const section=item.section_no||$('chapter')?.value||'当前章节';(grouped[section]??=[]).push(item)});const auto=items.filter(item=>item.has_source_image),needsEvidence=items.filter(item=>!item.has_source_image);const lines=Object.entries(grouped).map(([section,rows])=>`<li><b>${section}</b>：${rows.map(item=>`第 ${item.problem_no} 题（${item.reason}）`).join('；')}</li>`).join('');return `<details style="margin-top:10px" open><summary>查看待修复题目（${items.length} 道，按章节分组）</summary><div style="margin:10px 0;padding:10px;background:#f0fdf4;border-radius:8px"><b>可自动处理：${auto.length} 道</b>。已有原题图，点击下方“只同步”或重新生成时，系统会调用 Qwen 按原题图重识、求解并判等；不需要你手打题目。</div><div style="margin:10px 0;padding:10px;background:#fff7ed;border-radius:8px"><b>需要补原题证据：${needsEvidence.length} 道</b>。8014 尚未绑定原题裁切图，不能可靠修复。它们不是“补答案文字”，而是下一步从教材 PDF 批量裁题并绑定的对象。</div><ul style="margin:8px 0">${lines}</ul><a class="btn secondary" target="_blank" href="http://127.0.0.1:8014/">打开 8014 资料中心</a></details>`}
+</script></body></html>

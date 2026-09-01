@@ -1,0 +1,8 @@
+{
+  "schema_version": "teacher-label-thresholds-v1",
+  "min_case_count": 30,
+  "min_correctness_accuracy": 0.98,
+  "min_route_accuracy": 0.95,
+  "max_false_positive_rate": 0.0,
+  "max_governance_errors": 0
+}

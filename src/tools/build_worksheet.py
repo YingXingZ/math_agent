@@ -18,8 +18,8 @@ GUTTER = 18                                 # 双列列间距
 COL_W = (CONTENT_W - GUTTER) / 2
 DPI = 300
 
-FONT_SONG = "C:/Windows/Fonts/simsun.ttc"
-FONT_HEI = "C:/Windows/Fonts/simhei.ttf"
+FONT_SONG = "/home/zhangzhuohan/math-agent/src/agent8000/assets/fonts/NotoSansCJKsc-Regular.otf"
+FONT_HEI = "/home/zhangzhuohan/math-agent/src/agent8000/assets/fonts/NotoSansCJKsc-Regular.otf"
 
 
 class WorksheetBuilder:

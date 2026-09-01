@@ -36,6 +36,7 @@ async def publish_homework(
     question_count: int = 6,
     basic_ratio: float = 0.5,
     advanced_ratio: float = 0.35,
+    subpart_limit: int = 3,
     build_pdf: bool = True,
     out_dir: str | None = None,
 ) -> dict[str, Any]:
@@ -67,6 +68,7 @@ async def publish_homework(
         question_count=question_count,
         basic_ratio=basic_ratio,
         advanced_ratio=advanced_ratio,
+        subpart_limit=subpart_limit,
         build_pdf=build_pdf,
         out_dir=out_dir,
     )

@@ -1,0 +1,12 @@
+{
+  "id": "real-001",
+  "source": "teacher_review",
+  "consent_or_anonymization": "anonymized",
+  "student_answer": "x^2",
+  "standard_answer": "x^3",
+  "problem_text": "",
+  "expected_correct": false,
+  "expected_route": "diagnose_misconception",
+  "expected_diagnosis": "EXPONENT_ERROR",
+  "teacher_verified": true
+}

@@ -27,6 +27,7 @@ import urllib.request
 import subprocess
 import sys
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -291,7 +292,17 @@ def answer_quality_issue(answer: str, ptype: str, full_solution: str = "") -> st
         return "标准答案包含 OCR/编码乱码"
     if "第" in answer and "章" in answer:
         return "标准答案包含页眉或章节标题"
-    if ptype == "calc" and not re.search(r"[0-9A-Za-z\\\\]|[∞∞]", answer):
+    # Some calculation questions have a legitimate text-only conclusion, such
+    # as “无极值”.  Treat these established mathematical conclusions as valid
+    # answers instead of requiring a numeral or TeX token.
+    textual_calc_conclusions = (
+        "无极值", "无最大值", "无最小值", "不存在极值", "无解",
+        "无实数解", "无实根", "无定义", "不可导", "不收敛", "发散",
+    )
+    # Besides ASCII/TeX expressions, accept symbolic final answers such as
+    # |α|, π/2 and √2.  These are common valid calculus answers, not prose.
+    has_math_token = bool(re.search(r"[0-9A-Za-z\\\\∞∞π√]|[\\u0370-\\u03ff]|[|=+*/^_{}()\[\]]", answer))
+    if ptype == "calc" and not has_math_token and not any(x in answer for x in textual_calc_conclusions):
         return "计算题答案不是可判定的数学表达式"
     # Do not treat ordinary Chinese characters (for example “由”) or a tilde
     # used in mathematical notation as OCR corruption.  This old heuristic
@@ -1895,6 +1906,7 @@ def update_problem_content(pid: str, req: ContentUpdateReq):
 # ----- 人工复核抽样 -----
 class AnswerCandidateReviewReq(BaseModel):
     action: str  # approved | rejected
+    content_text: Optional[str] = None
     std_answer: Optional[str] = None
     full_solution: Optional[str] = None
     ptype: Optional[str] = None
@@ -2667,6 +2679,7 @@ def extract_answer_document_anchor(anchor_id: int, req: AnchorReviewReq):
         if (anchor["ptype"] == "calc" and (not expected_count or returned_count == expected_count)
                 and comparison.get("status") == "agrees"
                 and comparison.get("independent_equal")
+                and (comparison.get("independent_solve") or {}).get("symbolic_verified") is True
                 and float(ai.get("confidence") or 0) >= 0.92
                 and not (ai.get("risks") or [])
                 and str(ai.get("std_answer") or "").strip()):
@@ -3010,6 +3023,9 @@ def list_answer_import_candidates(status: str = Query("pending"), limit: int = Q
             SELECT c.*, p.ptype, p.std_answer AS current_std_answer,
                    p.full_solution AS current_full_solution, p.answer_status,
                    p.content_text, p.crop_image_path,
+                   (SELECT d.filename FROM answer_page_anchors apa
+                    JOIN answer_documents d ON d.id=apa.document_id
+                    WHERE apa.candidate_id=c.id ORDER BY apa.id DESC LIMIT 1) AS source_document,
                    (SELECT COUNT(*) FROM candidate_source_images si WHERE si.candidate_id=c.id) AS source_image_count,
                    t.id AS vision_task_id, t.status AS vision_task_status, t.error_message AS vision_task_error
             FROM ranked c
@@ -3032,6 +3048,33 @@ def list_answer_import_candidates(status: str = Query("pending"), limit: int = Q
         return {"items": items, "counts": counts}
     except sqlite3.OperationalError:
         return {"items": [], "counts": {}}
+    finally:
+        conn.close()
+
+
+@app.get("/answer-import-candidates/{candidate_id}")
+def get_answer_import_candidate(candidate_id: int):
+    """Fetch one candidate by ID, including already approved records.
+
+    Batch review uses frozen candidate IDs.  Looking it up through the pending
+    list loses a record as soon as it is published or de-duplicated.
+    """
+    conn = get_db()
+    try:
+        row = conn.execute("""
+            SELECT c.*, p.ptype, p.std_answer AS current_std_answer,
+                   p.full_solution AS current_full_solution, p.answer_status,
+                   p.content_text, p.crop_image_path,
+                   (SELECT COUNT(*) FROM candidate_source_images si WHERE si.candidate_id=c.id) AS source_image_count
+            FROM answer_import_candidates c
+            JOIN problems p ON p.id=c.problem_id
+            WHERE c.id=?
+        """, (candidate_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "candidate not found")
+        item = dict(row)
+        item["source_images"] = [path.replace("\\", "/") for path in _candidate_image_paths(conn, item["id"])]
+        return item
     finally:
         conn.close()
 
@@ -3111,6 +3154,22 @@ def create_manual_answer_candidate(problem_id: str):
 
 def _candidate_preview_path(candidate_id: int) -> str:
     return f"answer_source_previews/candidate-{candidate_id}.jpg"
+
+
+def _candidate_image_disk_path(relative_path: str) -> str:
+    """Resolve immutable candidate evidence across source and runtime-data layouts."""
+    relative = str(relative_path or "").replace("\\", "/").lstrip("/")
+    source_path = os.path.join(os.path.dirname(__file__), relative)
+    if os.path.isfile(source_path):
+        return source_path
+    # Production keeps evidence outside the source checkout. Older candidates
+    # stored relative paths, so resolve them under runtime-data as a fallback.
+    runtime_path = os.path.join(
+        str(Path(__file__).resolve().parents[2]), "runtime-data", relative
+    )
+    if os.path.isfile(runtime_path):
+        return runtime_path
+    return source_path
 
 
 def _candidate_image_paths(conn: sqlite3.Connection, candidate_id: int) -> list[str]:
@@ -3247,8 +3306,8 @@ def run_candidate_ai_review(candidate_id: int):
     conn.execute("UPDATE answer_import_candidates SET ai_review_status='running' WHERE id=?", (candidate_id,))
     conn.commit()
     payload = {
-        "image_base64": base64.b64encode(open(os.path.join(os.path.dirname(__file__), image_paths[0]), "rb").read()).decode("ascii"),
-        "images_base64": [base64.b64encode(open(os.path.join(os.path.dirname(__file__), path), "rb").read()).decode("ascii") for path in image_paths],
+        "image_base64": base64.b64encode(open(_candidate_image_disk_path(image_paths[0]), "rb").read()).decode("ascii"),
+        "images_base64": [base64.b64encode(open(_candidate_image_disk_path(path), "rb").read()).decode("ascii") for path in image_paths],
         "problem_text": candidate["content_text"] or "",
         "ocr_text": candidate["ocr_text"] or "",
         "section_no": candidate["section_no"] or "",
@@ -3469,7 +3528,7 @@ def run_vision_task(task_id: str):
 
 @app.post("/answer-import-candidates/{candidate_id}/review")
 def review_answer_import_candidate(candidate_id: int, req: AnswerCandidateReviewReq):
-    if req.action not in {"approved", "rejected"}:
+    if req.action not in {"approved", "rejected", "provisional"}:
         raise HTTPException(400, "action must be approved or rejected")
     if req.ptype is not None and req.ptype not in {"calc", "proof"}:
         raise HTTPException(400, "ptype must be calc or proof")
@@ -3484,17 +3543,25 @@ def review_answer_import_candidate(candidate_id: int, req: AnswerCandidateReview
         raise HTTPException(404, "candidate not found")
     effective_ptype = req.ptype or candidate["ptype"]
     now = datetime.now().isoformat(timespec="seconds")
-    if req.action == "approved":
+    if req.action in {"approved", "provisional"}:
+        content = (req.content_text or "").strip() if req.content_text is not None else None
+        if content is not None and len(content) < 3:
+            conn.close(); raise HTTPException(400, "cannot approve: content_text too short")
         answer = (req.std_answer or "").strip()
         solution = (req.full_solution or "").strip()
         issue = answer_quality_issue(answer, effective_ptype, solution)
-        if issue:
+        if issue and req.action == "approved":
             conn.close()
             raise HTTPException(400, "cannot approve: " + issue)
+        if req.action == "provisional" and (not answer or content is None):
+            conn.close()
+            raise HTTPException(400, "cannot provision: recovered stem or answer is empty")
+        status = "verified" if req.action == "approved" else "ai_candidate"
+        reason = "" if req.action == "approved" else "来源图自动重建结果；可检索和选题，升级验证前不启用自动评分"
         cur.execute("""
-            UPDATE problems SET std_answer=?, full_solution=?, ptype=?, answer_status='verified',
-                answer_invalid_reason='' WHERE id=?
-        """, (answer, solution or None, effective_ptype, candidate["problem_id"]))
+            UPDATE problems SET content_text=COALESCE(?, content_text), std_answer=?, full_solution=?, ptype=?, answer_status=?,
+                answer_invalid_reason=? WHERE id=?
+        """, (content, answer, solution or None, effective_ptype, status, reason, candidate["problem_id"]))
     elif req.ptype is not None:
         cur.execute("UPDATE problems SET ptype=? WHERE id=?",
                     (effective_ptype, candidate["problem_id"]))
@@ -3911,6 +3978,191 @@ def stats_tiers():
     for r in rows:
         result[tier_map.get(r["tier"], r["tier"])] = r["cnt"]
     return result
+
+
+class AgentAnswerVerifyReq(BaseModel):
+    student_answer: str
+    standard_answer: str
+    problem_text: str = ""
+    section_no: str = ""
+    problem_no: str = ""
+
+
+@app.post("/agent/verify-answer")
+def agent_verify_answer(req: AgentAnswerVerifyReq):
+    """使用 LangGraph 编排的答案校验 Agent。"""
+    from math_agent_graph import run_math_agent
+    return run_math_agent(req.student_answer, req.standard_answer, req.problem_text, req.section_no, req.problem_no)
+
+class AgentProblemLearnReq(BaseModel):
+    student_answer: str
+    student_steps: str = ""
+    mode: str = "diagnose"
+    teacher_feedback: str = ""
+
+
+@app.post("/agent/problems/{problem_id}/learn")
+def agent_learn_problem(problem_id: str, req: AgentProblemLearnReq):
+    """从题库读取答案，由 LangGraph 学习 Agent 处理，绝不向客户端返回标准答案。"""
+    conn = get_db()
+    row = conn.execute("SELECT p.content_text, p.std_answer, p.ptype, s.section_no, p.problem_no FROM problems p JOIN sections s ON s.id=p.section_id WHERE p.id=?", (problem_id,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "题目不存在")
+    if not str(row["std_answer"] or "").strip():
+        raise HTTPException(409, "该题尚无可用标准答案，暂不能启动学习 Agent")
+    from math_agent_graph import run_math_agent
+    result = run_math_agent(req.student_answer, row["std_answer"], row["content_text"] or "", row["section_no"] or "", row["problem_no"] or "", req.mode, problem_id, req.teacher_feedback, row["ptype"] or "calc", req.student_steps)
+    return {"problem_id": problem_id, "action": result.get("action"), "verification": result.get("verification"), "solution_comparison": result.get("solution_comparison"), "diagnosis": result.get("diagnosis"), "proof_assessment": result.get("proof_assessment"), "evidence": result.get("evidence"), "trace_id": result.get("trace_id"), "execution_trace": result.get("execution_trace"), "response": result.get("response")}
+
+
+
+class AgentProblemImageLearnReq(BaseModel):
+    image_base64: str
+    mode: str = "diagnose"
+    teacher_feedback: str = ""
+    student_steps: str = ""
+
+
+class AgentProblemStepImagesLearnReq(BaseModel):
+    image_base64_list: list[str]
+    mode: str = "diagnose"
+    teacher_feedback: str = ""
+    student_steps: str = ""
+
+
+@app.post("/agent/problems/{problem_id}/learn-image")
+def agent_learn_problem_image(problem_id: str, req: AgentProblemImageLearnReq):
+    """Read one handwritten answer image with local Qwen, then run the learning Agent."""
+    if len(req.image_base64) > 12_000_000:
+        raise HTTPException(413, "图片过大，请压缩到 8MB 以内")
+    conn = get_db()
+    row = conn.execute("SELECT p.content_text, p.std_answer, p.full_solution, p.ptype, s.section_no, p.problem_no FROM problems p JOIN sections s ON s.id=p.section_id WHERE p.id=?", (problem_id,)).fetchone()
+    conn.close()
+    if not row or not str(row["std_answer"] or "").strip():
+        raise HTTPException(409, "该题暂无可用标准答案")
+    from skills.answer_perception import answer_perception
+    from skills.schemas import AnswerPerceptionInput
+
+    perception_started = time.perf_counter()
+    perception = answer_perception(AnswerPerceptionInput(
+        image_base64=req.image_base64, problem_id=problem_id,
+        problem_text=row["content_text"] or "",
+    ))
+    perception_latency_ms = round((time.perf_counter() - perception_started) * 1000, 1)
+    if not perception.success:
+        status = 422 if perception.error_code == "EMPTY_OCR_RESULT" else 502
+        raise HTTPException(status, (perception.warnings or ["手写数学识别暂不可用"])[0])
+    recognized = perception.recognized_work or ""
+    from math_agent_graph import run_math_agent
+    result = run_math_agent(recognized, row["std_answer"], row["content_text"] or "", row["section_no"] or "", row["problem_no"] or "", req.mode, problem_id, req.teacher_feedback, row["ptype"] or "calc", req.student_steps)
+    perception_event = {
+        "node": "answer_perception", "skills": ["answer_perception"],
+        "skill_versions": {"answer_perception": "1.0.0"},
+        "latency_ms": perception_latency_ms, "success": perception.success,
+        "confidence": perception.confidence, "error_code": perception.error_code,
+        "action": "continue_to_verification",
+    }
+    result["execution_trace"] = [perception_event, *(result.get("execution_trace") or [])]
+    perception_public = {
+        "success": perception.success, "confidence": perception.confidence,
+        "provider": perception.provider, "formula_regions": [r.model_dump(exclude_none=True) for r in perception.formula_regions],
+        "warnings": perception.warnings, "error_code": perception.error_code,
+    }
+    return {"problem_id": problem_id, "recognized_work": recognized, "perception": perception_public,
+            "action": result.get("action"), "verification": result.get("verification"), "proof_assessment": result.get("proof_assessment"),
+            "solution_comparison": result.get("solution_comparison"), "diagnosis": result.get("diagnosis"),
+            "evidence": result.get("evidence"), "trace_id": result.get("trace_id"),
+            "execution_trace": result.get("execution_trace"), "response": result.get("response")}
+
+
+
+@app.post("/agent/problems/{problem_id}/learn-step-images")
+def agent_learn_problem_step_images(problem_id: str, req: AgentProblemStepImagesLearnReq):
+    """Recognize up to six handwritten step images in order, then diagnose from step evidence."""
+    images = req.image_base64_list or []
+    if not images:
+        raise HTTPException(422, "请至少上传一张步骤图片")
+    if len(images) > 6:
+        raise HTTPException(422, "一次最多上传 6 张步骤图片")
+    if any(len(image) > 12_000_000 for image in images) or sum(len(image) for image in images) > 36_000_000:
+        raise HTTPException(413, "步骤图片过大，请压缩后重试")
+    conn = get_db()
+    row = conn.execute("SELECT p.content_text, p.std_answer, p.ptype, s.section_no, p.problem_no FROM problems p JOIN sections s ON s.id=p.section_id WHERE p.id=?", (problem_id,)).fetchone()
+    conn.close()
+    if not row or not str(row["std_answer"] or "").strip():
+        raise HTTPException(409, "该题暂无可用标准答案")
+
+    from skills.answer_perception import answer_perception
+    from skills.schemas import AnswerPerceptionInput
+    recognized_parts, perception_events, perception_public = [], [], []
+    for index, image_base64 in enumerate(images, start=1):
+        started = time.perf_counter()
+        perception = answer_perception(AnswerPerceptionInput(
+            image_base64=image_base64, problem_id=problem_id,
+            problem_text=row["content_text"] or "",
+        ))
+        latency_ms = round((time.perf_counter() - started) * 1000, 1)
+        recognized = (perception.recognized_work or "").strip()
+        perception_events.append({
+            "node": "answer_perception", "skills": ["answer_perception"],
+            "skill_versions": {"answer_perception": "1.0.0"},
+            "step_index": index, "latency_ms": latency_ms, "success": perception.success,
+            "confidence": perception.confidence, "error_code": perception.error_code,
+            "action": "continue_to_step_diagnosis" if perception.success else "skip_unreadable_step",
+        })
+        perception_public.append({
+            "step_index": index, "success": perception.success, "confidence": perception.confidence,
+            "warnings": perception.warnings, "error_code": perception.error_code,
+        })
+        if perception.success and recognized:
+            recognized_parts.append((index, recognized))
+    if not recognized_parts:
+        raise HTTPException(422, "未能从步骤图片中识别到可靠作答，请拍清楚后重试")
+
+    recognized_steps = "\n\n".join(
+        f"【步骤图 {index}】\n{text}" for index, text in recognized_parts
+    )
+    full_steps = "\n\n".join(part for part in [req.student_steps.strip(), recognized_steps] if part)
+    confidences = [float(item.get("confidence") or 0) for item in perception_public if item.get("success")]
+    quality_warnings = []
+    if len(recognized_parts) < len(images):
+        quality_warnings.append("部分步骤图未能可靠识别")
+    if confidences and min(confidences) < 0.70:
+        quality_warnings.append("至少一张步骤图识别置信度偏低")
+    # Conservative detector: multiple explicit top-level question labels are
+    # unsafe for one-question diagnosis. Sub-question markers （1）（2） do not trigger it.
+    top_level_markers = re.findall(r"(?:第\s*\d+\s*题|^\s*\d+[\.、])", recognized_steps, flags=re.M)
+    if len(top_level_markers) > 1:
+        quality_warnings.append("识别到可能混入多道题，请裁切为当前错题的步骤图")
+    step_material_quality = {
+        "uploaded_step_count": len(images), "recognized_step_count": len(recognized_parts),
+        "minimum_confidence": min(confidences) if confidences else 0.0,
+        "warnings": quality_warnings, "sufficient": not quality_warnings,
+    }
+    # The final selected image is only a candidate conclusion. Verification still
+    # depends on the hidden standard answer and deterministic workflow.
+    candidate_answer = recognized_parts[-1][1]
+    from math_agent_graph import run_math_agent
+    result = run_math_agent(
+        candidate_answer, row["std_answer"], row["content_text"] or "",
+        row["section_no"] or "", row["problem_no"] or "", req.mode, problem_id,
+        req.teacher_feedback, row["ptype"] or "calc", full_steps,
+    )
+    result["execution_trace"] = [*perception_events, *(result.get("execution_trace") or [])]
+    if quality_warnings:
+        result["action"] = "teacher_review"
+        result["response"] = "步骤材料暂不适合自动诊断：" + "；".join(quality_warnings) + "。请重新上传仅包含当前题、字迹清晰的完整步骤图；证明题或仍不清晰的材料将由教师确认。"
+    return {
+        "problem_id": problem_id, "recognized_step_count": len(recognized_parts),
+        "uploaded_step_count": len(images), "step_recognition": perception_public,
+        "step_material_quality": step_material_quality,
+        "action": result.get("action"), "verification": result.get("verification"),
+        "proof_assessment": result.get("proof_assessment"),
+        "solution_comparison": result.get("solution_comparison"), "diagnosis": result.get("diagnosis"),
+        "evidence": result.get("evidence"), "trace_id": result.get("trace_id"),
+        "execution_trace": result.get("execution_trace"), "response": result.get("response"),
+    }
 
 
 if __name__ == "__main__":

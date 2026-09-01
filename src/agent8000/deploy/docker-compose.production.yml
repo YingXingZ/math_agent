@@ -1,0 +1,62 @@
+name: math-agent
+
+x-agent-common: &agent-common
+  image: math-agent:local
+  build:
+    context: ../..
+    dockerfile: agent8000/deploy/Dockerfile.production
+  env_file: ${MATH_AGENT_ENV_FILE:-.env.production}
+  environment:
+    DATABASE_PATH: /var/lib/math-agent/homework.db
+    UPLOAD_DIR: /var/lib/math-agent/uploads
+    EVIDENCE_API_URL: http://host.docker.internal:8014/api
+    QWEN_GRADING_URL: http://host.docker.internal:18080/grade-homework
+    TASK_QUEUE_MODE: rq
+    REDIS_URL: redis://redis:6379/0
+  extra_hosts:
+    - host.docker.internal:host-gateway
+  volumes:
+    # Keep the live SQLite database and uploads when switching from manual uvicorn.
+    - /home/zhangzhuohan/math-agent/runtime-data/agent:/var/lib/math-agent
+  # Match the host owner so SQLite and uploaded homework remain writable.
+  user: "${MATH_AGENT_UID:-1000}:${MATH_AGENT_GID:-1000}"
+  restart: unless-stopped
+  depends_on:
+    redis:
+      condition: service_healthy
+
+services:
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  api:
+    <<: *agent-common
+    ports:
+      - "127.0.0.1:8001:8000"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  worker:
+    <<: *agent-common
+    command: ["python", "-m", "app.rq_worker"]
+
+  scheduler:
+    <<: *agent-common
+    command: ["python", "-m", "app.scheduler"]
+
+volumes:
+  redis_data:
+    name: math_agent_redis_data

@@ -1,0 +1,9 @@
+.git
+**/__pycache__
+**/*.pyc
+agent8000/.env
+agent8000/data
+agent8000/math_agent
+runtime-data
+*.db
+*.log
