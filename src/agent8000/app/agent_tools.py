@@ -14,6 +14,8 @@ import operator
 
 from langgraph.graph import END, START, StateGraph
 
+from .prompt_security import inspect_untrusted_text
+
 
 TOOL_ROUTER_VERSION = "tool-router-v2"
 MAX_EXPRESSION_CHARS = 2400
@@ -215,6 +217,10 @@ tool_use_graph = _build_tool_graph()
 
 def run_tool_use(*, question_id: int, question_type: str, problem_text: str, recognized_work: str, standard_answer: str) -> dict[str, Any]:
     """Run the explicit LangGraph Tool Use subgraph for one grading item."""
+    # The route is fixed before this untrusted text is inspected.  Therefore
+    # an adversarial OCR string cannot select a new tool or alter its arguments.
+    problem_guard = inspect_untrusted_text(problem_text)
+    work_guard = inspect_untrusted_text(recognized_work)
     state = tool_use_graph.invoke({
         "question_id": int(question_id or 0),
         "question_type": str(question_type or ""),
@@ -239,4 +245,9 @@ def run_tool_use(*, question_id: int, question_type: str, problem_text: str, rec
         "formula_reference": state.get("formula_reference") or {"available": False, "references": []},
         "tool_trace": traces,
         "tool_router_version": TOOL_ROUTER_VERSION,
+        "prompt_security": {
+            "problem_text": problem_guard.trace(),
+            "recognized_work": work_guard.trace(),
+            "tool_route_is_deterministic": True,
+        },
     }

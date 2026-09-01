@@ -17,9 +17,10 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r agent8000/requirements.txt
-      - run: python -m pytest workbench8014/tests tools/test_langgraph_math_agent.py -q
+      - run: python -m pytest agent8000/tests workbench8014/tests tools/test_langgraph_math_agent.py -q
       - run: python workbench8014/evals/run_eval.py
       - run: python workbench8014/evals/run_real_case_eval.py
+      - run: python workbench8014/evals/run_prompt_injection_eval.py
       - run: python workbench8014/evals/run_teacher_labeled_eval.py --report ../artifacts/teacher_labeled_eval_report.json
       - uses: actions/upload-artifact@v4
         if: always()

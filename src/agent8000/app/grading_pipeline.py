@@ -18,6 +18,7 @@ from .config import settings
 from .db import connection, normalize_question_type
 from .agent_tools import run_tool_use
 from .llm_provider import grade_homework, model_runtime
+from .prompt_security import inspect_untrusted_text
 
 
 def _recognition_is_contaminated(recognized_work: str, reference_answer: str) -> bool:
@@ -300,6 +301,12 @@ async def grade_submission(submission_id: int) -> dict[str, Any]:
         recognized = str(qwen.get("recognized_work") or "")
         is_proof = normalize_question_type(row["question_type"]) == "proof"
         risks = list(qwen.get("risks") or [])
+        input_guard = inspect_untrusted_text(str(row["content"] or ""))
+        recognition_guard = inspect_untrusted_text(recognized)
+        if input_guard.suspicious:
+            risks.append("题目文本含疑似提示词注入内容：" + "、".join(input_guard.reasons))
+        if recognition_guard.suspicious:
+            risks.append("学生识别文本含疑似提示词注入内容：" + "、".join(recognition_guard.reasons))
         if _recognition_is_contaminated(recognized, standard_answer):
             # Do not show or grade against text which may have been generated
             # from the reference answer injected into the VLM grading prompt.
@@ -328,6 +335,8 @@ async def grade_submission(submission_id: int) -> dict[str, Any]:
             review_reasons.append("Qwen 标记为需复核")
         if any("参考答案污染" in str(risk) for risk in risks):
             review_reasons.append("识别文本疑似参考答案污染")
+        if input_guard.suspicious or recognition_guard.suspicious:
+            review_reasons.append("检测到疑似提示词注入内容，已保留证据并转教师复核")
         if equivalent["available"] and equivalent["confidence"] < 0.85:
             review_reasons.append("数学判等置信度不足")
         if equivalent["available"] and qwen.get("correct") is not None and bool(qwen.get("correct")) != bool(equivalent["equal"]):
@@ -363,6 +372,10 @@ async def grade_submission(submission_id: int) -> dict[str, Any]:
                 "source": json.loads(row["source_evidence_json"] or "{}"),
             },
             "risks": risks,
+            "prompt_security": {
+                "input": input_guard.trace(),
+                "recognized_work": recognition_guard.trace(),
+            },
         })
 
     # Teacher-confirmed page/region mappings survive a regrade and remain
