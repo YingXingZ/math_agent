@@ -366,6 +366,12 @@ async def grade_submission(submission_id: int) -> dict[str, Any]:
         )
         if math_contradiction:
             review_reasons.append("Qwen 与高置信数学判等结论不一致")
+        # A result cannot safely be auto-accepted when the model says
+        # "correct" but assigns fewer than the available points.
+        model_score = float(qwen.get("score") or 0)
+        model_max_score = float(qwen.get("max_score") or 0)
+        if qwen.get("correct") is True and model_max_score > 0 and model_score + 1e-6 < model_max_score:
+            review_reasons.append("Qwen 正确结论与得分不一致")
 
         needs_review = bool(review_reasons)
         results.append({
