@@ -1,9 +1,9 @@
 <!doctype html>
 <html lang="zh-CN"><meta charset="utf-8"><title>我的错题复盘</title>
-<script>window.MathJax={tex:{inlineMath:[["$","$"],["\\(","\\)"]]},svg:{fontCache:"global"},startup:{typeset:false}};</script>
+<script>window.MathJax={tex:{inlineMath:[["$","$"],["\\(","\\)"]],displayMath:[["$$","$$"],["\\[","\\]"]]},svg:{fontCache:"global"},startup:{typeset:false}};</script>
 <script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
 <style>
-body{font:16px "Microsoft YaHei";background:#f6f8fc;color:#102a43;margin:0}.box{max-width:850px;margin:5vh auto;padding:20px}.card{background:#fff;border:1px solid #e4ebf3;border-radius:14px;padding:20px;margin:14px 0}.item{border-top:1px solid #e8eef5;padding:16px 0}.hint{color:#60758a;line-height:1.6}.actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:10px}button{background:#2563eb;color:#fff;border:0;border-radius:8px;padding:9px 13px;font-weight:bold;cursor:pointer}button.secondary{background:#475569}button.solution{background:#7c3aed}.out,.status{white-space:pre-wrap;background:#eef6ff;padding:12px;border-radius:8px;margin-top:10px;line-height:1.65}.conflict{background:#fff3cd;color:#7a4b00}
+body{font:16px "Microsoft YaHei";background:#f6f8fc;color:#102a43;margin:0}.box{max-width:850px;margin:5vh auto;padding:20px}.card{background:#fff;border:1px solid #e4ebf3;border-radius:14px;padding:20px;margin:14px 0}.item{border-top:1px solid #e8eef5;padding:16px 0}.hint{color:#60758a;line-height:1.6}.actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:10px}button{background:#2563eb;color:#fff;border:0;border-radius:8px;padding:9px 13px;font-weight:bold;cursor:pointer}button.secondary{background:#475569}button.solution{background:#7c3aed}.out,.status{white-space:pre-wrap;background:#eef6ff;padding:12px;border-radius:8px;margin-top:10px;line-height:1.65}.math-content{white-space:pre-wrap;line-height:1.7}.conflict{background:#fff3cd;color:#7a4b00}
 mjx-container{max-width:100%!important;overflow-x:auto!important;font-size:110%!important}mjx-container[jax="SVG"] svg{max-width:100%!important;height:auto!important}.logout{position:fixed;right:20px;top:14px;background:#475569;margin:0;z-index:2}
 </style>
 <button class="logout" type="button" onclick="logout()">退出登录</button><main class="box"><a href="/student">← 我的作业</a><h1>我的错题复盘</h1><p class="hint">只显示教师已发布的错题。若原始反馈与作答证据冲突，系统会明确标记为待教师确认。</p><div id="list" class="card">加载中…</div></main>
@@ -14,6 +14,9 @@ async function logout(){
 }
 const box=document.querySelector('#list');
 const text=(label,value)=>{const p=document.createElement('p');p.textContent=label+value;return p};
+function plainMathFallback(value){return String(value||'').replace(/\\(?:begin|end)\{[^}]*\}/g,'').replace(/\\[a-zA-Z]+(?:\{[^{}]*\})?/g,'').replace(/[{}]/g,'').replace(/&/g,' ')}
+async function typesetMath(node){const source=node.dataset.mathSource||node.textContent||'';try{if(window.MathJax?.typesetPromise){MathJax.typesetClear?.([node]);await MathJax.typesetPromise([node]);if(node.querySelector('mjx-merror')){MathJax.typesetClear?.([node]);node.textContent=plainMathFallback(source)}}}catch(_){node.textContent=plainMathFallback(source)}}
+function mathText(label,value){const p=document.createElement('p');const strong=document.createElement('b');strong.textContent=label;const content=document.createElement('span');content.className='math-content';content.textContent=normalizeStudentMath(value);content.dataset.mathSource=content.textContent;p.append(strong,content);requestAnimationFrame(()=>typesetMath(content));return p};
 function proofEvidence(value){
   const s=String(value||'').replace(/[\s$\\{}()\[\]，,。；;：:]/g,'').toLowerCase();
   return s.includes('h-x=f-x-fx=-hx')||(s.includes('h-x')&&s.includes('f-x-fx')&&s.includes('-hx'));
@@ -38,27 +41,29 @@ function studentVisibleText(value){
   return String(value||'暂无反馈').split(/\n\n(?:成绩状态|分问核对|运行记录)：/)[0].trim();
 }
 function normalizeStudentMath(value){
-  return studentVisibleText(value).replace(/\\\\(?=[()[\]])/g,'\\')
+  return studentVisibleText(value).replace(/\\n/g,'\n').replace(/\\r/g,'\n').replace(/\\\\(?=[()[\]])/g,'\\')
+    .replace(/\\(?:left|right)\b/g,'').replace(/\\begin\{align\*?\}/g,'\\begin{aligned}').replace(/\\end\{align\*?\}/g,'\\end{aligned}').replace(/&/g,' ')
     .replace(/\\\[/g,()=> '$$').replace(/\\\]/g,()=> '$$')
     .replace(/\\\(/g,()=> '$').replace(/\\\)/g,()=> '$');
 }
 async function showResult(payload,out){
   const safe=normalizeStudentMath(payload.response);
   out.textContent=safe;
+  out.dataset.mathSource=safe;
   // Only Agent output is typeset.  Never typeset the full card, student OCR,
   // teacher feedback, or status banners: those fields may contain raw OCR
   // escaping that can create an oversized MathJax SVG.
   try{
     if(window.MathJax?.typesetPromise){
       MathJax.typesetClear?.([out]);
-      await MathJax.typesetPromise([out]);
+      await typesetMath(out);
     }
-  }catch(_){out.textContent=safe}
+  }catch(_){out.textContent=plainMathFallback(safe)}
 }
-async function review(submissionId,questionId,mode,out){
+async function review(submissionId,questionId,sortOrder,mode,out){
   out.textContent=mode==='solution'?'正在读取题库答案…':'Agent 正在复盘…';
   try{
-    const response=await fetch('/api/student/released-submissions/'+submissionId+'/mistakes/'+questionId+'/review',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode})});
+    const response=await fetch('/api/student/released-submissions/'+submissionId+'/mistakes/'+questionId+'/review?sort_order='+encodeURIComponent(sortOrder),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode})});
     const payload=await response.json();
     if(!response.ok) throw Error(payload.detail||'调用失败');
     await showResult(payload,out);
@@ -67,16 +72,18 @@ async function review(submissionId,questionId,mode,out){
 function addMistake(parent,submission,question,index){
   const item=document.createElement('div');item.className='item';
   item.append(Object.assign(document.createElement('b'),{textContent:'错题 '+(index+1)}));
-  item.append(text('题目：',question.content||'题干暂缺'));
+  item.append(mathText('\u9898\u76ee\uff1a',question.content||'\u9898\u5e72\u6682\u7f3a'));
   const pre=preliminary(question);
-  item.append(text(pre?.conflict?'原始教师反馈（待系统复核）：':'老师反馈：',question.feedback||'暂无'));
-  item.append(text('识别到你的作答：',question.recognized_work||'未识别'));
+  item.append(mathText(pre?.conflict?'\u539f\u59cb\u6559\u5e08\u53cd\u9988\uff08\u5f85\u7cfb\u7edf\u590d\u6838\uff09\uff1a':'\u8001\u5e08\u53cd\u9988\uff1a',question.feedback||'\u6682\u65e0'));
+  item.append(mathText('\u8bc6\u522b\u5230\u4f60\u7684\u4f5c\u7b54\uff1a',question.recognized_work||'\u672a\u8bc6\u522b'));
   if(pre){const status=document.createElement('div');status.className='status '+(pre.conflict?'conflict':'');status.textContent=pre.text;item.append(status)}
-  if(question.source_problem_id){
+  if(question.review_available){
     const actions=document.createElement('div');actions.className='actions';
     const out=document.createElement('div');out.className='out';out.textContent='选择一种复盘方式开始。';
-    [['diagnose','分析我错在哪',''],['hint','给我下一步提示','secondary'],['solution','查看答案','solution']].forEach(([mode,label,style])=>{const button=document.createElement('button');button.textContent=label;button.className=style;button.onclick=()=>review(submission.id,question.question_id,mode,out);actions.append(button)});
+    [['diagnose','分析我错在哪',''],['hint','给我下一步提示','secondary'],['solution','查看答案','solution']].forEach(([mode,label,style])=>{const button=document.createElement('button');button.textContent=label;button.className=style;button.onclick=()=>review(submission.id,question.question_id,question.sort_order,mode,out);actions.append(button)});
     item.append(actions,out);
+    item.insertBefore(actions,item.children[2]);
+    item.insertBefore(out,item.children[3]);
   }else item.append(text('','该错题尚未关联可靠题库原题，暂不提供自动复盘。'));
   parent.append(item);
 }

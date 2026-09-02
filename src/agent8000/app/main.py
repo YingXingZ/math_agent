@@ -4,7 +4,7 @@ from html import escape
 from io import BytesIO, StringIO
 from PIL import Image
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 import json
 import re
 import asyncio
@@ -3137,20 +3137,22 @@ def student_released_mistakes(submission_id: int, request: Request):
     actor = require_roles(request, {"student"})
     with connection() as conn:
         row = conn.execute("SELECT j.result_json FROM submissions s JOIN assignments a ON a.id=s.assignment_id JOIN students st ON st.class_id=a.class_id AND st.user_id=? LEFT JOIN grading_jobs j ON j.submission_id=s.id WHERE s.id=? AND s.status=? AND s.released_at IS NOT NULL", (actor["id"], submission_id, "graded")).fetchone()
-        if not row:
-            raise HTTPException(404, "未找到已发布的作业结果")
+        if not row: raise HTTPException(404, "\u672a\u627e\u5230\u5df2\u53d1\u5e03\u7684\u4f5c\u4e1a\u7ed3\u679c")
         results = json.loads(row["result_json"] or "{}").get("results") or []
         ids = [int(item["question_id"]) for item in results if item.get("question_id") is not None]
         qrows = conn.execute("SELECT id,source_problem_id,content FROM questions WHERE id IN (" + ",".join("?" for _ in ids) + ")", ids).fetchall() if ids else []
-    questions = {r["id"]: dict(r) for r in qrows}
+    questions = {row["id"]: dict(row) for row in qrows}
     mistakes = []
     for item in results:
-        if item.get("correct") is True and float(item.get("score") or 0) >= float(item.get("max_score") or 0):
-            continue
-        q = questions.get(item.get("question_id"), {})
-        mistakes.append({"question_id": item.get("question_id"), "source_problem_id": q.get("source_problem_id"), "content": q.get("content"), "recognized_work": item.get("recognized_work"), "feedback": item.get("feedback"), "score": item.get("score"), "max_score": item.get("max_score"), "needs_review": item.get("needs_review")})
-    return {"submission_id": submission_id, "mistakes": mistakes}
-
+        if item.get("correct") is True and float(item.get("score") or 0) >= float(item.get("max_score") or 0): continue
+        question = questions.get(item.get("question_id"), {})
+        evidence = item.get("evidence") or {}
+        qwen = item.get("qwen") or {}
+        source_problem_id = question.get("source_problem_id") or evidence.get("source_problem_id")
+        content = question.get("content") or qwen.get("located_problem_text") or item.get("problem_no") or ""
+        has_snapshot = bool(evidence.get("standard_answer") or evidence.get("rubric") or item.get("feedback"))
+        mistakes.append({"question_id":item.get("question_id"),"source_problem_id":source_problem_id,"content":content,"recognized_work":item.get("recognized_work"),"feedback":item.get("feedback"),"score":item.get("score"),"max_score":item.get("max_score"),"needs_review":item.get("needs_review"),"sort_order":item.get("sort_order"),"review_available":bool(source_problem_id or has_snapshot)})
+    return {"submission_id":submission_id,"mistakes":mistakes}
 
 
 @app.get("/api/reports/weak-points")
@@ -4183,8 +4185,24 @@ class MistakeReviewIn(BaseModel):
     student_steps: str = Field(default="", max_length=12000)
 
 
+def _released_snapshot_review(item: dict[str, Any], mode: str) -> dict[str, Any]:
+    """Use immutable released evidence when an upstream source record has moved."""
+    evidence = item.get("evidence") or {}
+    answer = str(evidence.get("standard_answer") or "").strip()
+    rubric = str(evidence.get("rubric") or "").strip()
+    feedback = str(item.get("feedback") or "").strip()
+    reference = rubric or answer or feedback or "\u8be5\u9898\u7684\u8be6\u7ec6\u53c2\u8003\u4fe1\u606f\u6682\u65f6\u7f3a\u5931\u3002"
+    if mode == "solution":
+        response = "\u53c2\u8003\u7b54\u6848\uff1a\n" + (answer or "\u6682\u65e0\u72ec\u7acb\u6807\u51c6\u7b54\u6848\u3002") + "\n\n\u89e3\u9898\u53c2\u8003\uff1a\n" + reference
+    elif mode == "hint":
+        response = "\u5148\u56de\u770b\u672c\u9898\u7684\u8bc4\u8bed\uff0c\u518d\u5bf9\u7167\u4e0b\u65b9\u8981\u70b9\u8865\u5199\u5173\u952e\u6b65\u9aa4\uff1a\n" + (feedback or reference)
+    else:
+        response = "\u672c\u9898\u6279\u6539\u53cd\u9988\uff1a\n" + (feedback or "\u8bf7\u5bf9\u7167\u8bc4\u5206\u8981\u70b9\u68c0\u67e5\u5173\u952e\u63a8\u5bfc\u3002") + "\n\n\u8bc4\u5206\u53c2\u8003\uff1a\n" + reference
+    return {"response":response,"action":"released_snapshot","diagnosis":{"diagnoses":[{"code":"released_snapshot_fallback"}]},"solution_comparison":{"consistent":False},"execution_trace":[{"node":"released_snapshot","skills":["released_evidence_fallback"],"success":True}]}
+
+
 @app.post("/api/student/released-submissions/{submission_id}/mistakes/{question_id}/review")
-async def review_released_mistake(submission_id: int, question_id: int, req: MistakeReviewIn, request: Request):
+async def review_released_mistake(submission_id: int, question_id: int, req: MistakeReviewIn, request: Request, sort_order: int | None = None):
     """Only a released, owned wrong answer may enter the learning Agent."""
     actor = require_roles(request, {"student"})
     if req.mode not in {"diagnose", "hint", "solution"}:
@@ -4194,29 +4212,35 @@ async def review_released_mistake(submission_id: int, question_id: int, req: Mis
         if not row:
             raise HTTPException(404, "未找到已发布的作业结果")
         results = json.loads(row["result_json"] or "{}").get("results") or []
-        item = next((x for x in results if int(x.get("question_id") or -1) == question_id), None)
+        item = next((x for x in results if int(x.get("question_id") or -1) == question_id and (sort_order is None or int(x.get("sort_order") or -1) == sort_order)), None)
         if not item or (item.get("correct") is True and float(item.get("score") or 0) >= float(item.get("max_score") or 0)):
             raise HTTPException(404, "该题不是可复盘的已发布错题")
         question = conn.execute("SELECT source_problem_id,question_type FROM questions WHERE id=?", (question_id,)).fetchone()
-        if not question or not question["source_problem_id"]:
-            raise HTTPException(409, "该错题尚未关联到可靠题库原题")
-        source_problem_id = question["source_problem_id"]
+        evidence = item.get("evidence") or {}
+        source_problem_id = (question["source_problem_id"] if question and question["source_problem_id"] else None) or evidence.get("source_problem_id")
+        question_type_value = question["question_type"] if question else item.get("question_type") or "calc"
         student_answer = str(item.get("recognized_work") or "").strip()
         teacher_feedback = str(item.get("feedback") or "")
     started = time.perf_counter()
-    try:
-        async with evidence_client(timeout=620) as client:
-            response = await client.post(evidence_url("").rstrip("/") + f"/agent/problems/{source_problem_id}/learn", json={"student_answer": student_answer or "未识别到作答", "student_steps": req.student_steps, "mode": req.mode, "teacher_feedback": teacher_feedback})
-    except httpx.HTTPError as exc:
-        raise HTTPException(502, "错题复盘 Agent 暂不可用") from exc
-    latency_ms = round((time.perf_counter() - started) * 1000, 1)
-    if response.status_code >= 400:
+    result: dict[str, Any] | None = None
+    if req.mode == "solution" or not source_problem_id:
+        result = _released_snapshot_review(item, req.mode)
+    else:
         try:
-            detail = response.json().get("detail", "错题复盘请求失败")
-        except ValueError:
-            detail = "错题复盘请求失败"
-        raise HTTPException(response.status_code, detail)
-    result = response.json()
+            async with evidence_client(timeout=620) as client:
+                response = await client.post(evidence_url("").rstrip("/") + f"/agent/problems/{source_problem_id}/learn", json={"student_answer":student_answer or "\u672a\u8bc6\u522b\u5230\u4f5c\u7b54","student_steps":req.student_steps,"mode":req.mode,"teacher_feedback":teacher_feedback})
+            if response.status_code < 400:
+                result = response.json()
+            elif response.status_code == 404:
+                result = _released_snapshot_review(item, req.mode)
+            else:
+                try: detail = response.json().get("detail", "\u9519\u9898\u590d\u76d8\u8bf7\u6c42\u5931\u8d25")
+                except ValueError: detail = "\u9519\u9898\u590d\u76d8\u8bf7\u6c42\u5931\u8d25"
+                raise HTTPException(response.status_code, detail)
+        except httpx.HTTPError:
+            result = _released_snapshot_review(item, req.mode)
+    latency_ms = round((time.perf_counter() - started) * 1000, 1)
+    assert result is not None
     agent_trace_id = result.pop("trace_id", None)
     execution_trace = result.pop("execution_trace", []) or []
     diagnosis_codes = [str(item.get("code")) for item in (result.get("diagnosis") or {}).get("diagnoses", []) if item.get("code")]
@@ -4226,7 +4250,7 @@ async def review_released_mistake(submission_id: int, question_id: int, req: Mis
     qwen_adopted = bool((result.get("solution_comparison") or {}).get("consistent"))
     qwen_used = qwen_called
     needs_teacher_review = result.get("action") == "teacher_review"
-    question_type = "proof" if "证明" in str(question["question_type"] or "") else "calc"
+    question_type = "proof" if "证明" in str(question_type_value or "") else "calc"
     failure_codes = [event["error_code"] for event in execution_trace if event.get("error_code")]
     with connection() as conn:
         conn.execute(
@@ -4568,15 +4592,17 @@ def student_learn_page(request: Request):
 
 
 @app.get("/mistakes", response_class=HTMLResponse)
-def student_mistakes_page(request: Request):
+def student_mistakes_page(request: Request, review: int = 0):
     try:
         actor = current_user(request)
     except HTTPException as exc:
         if exc.status_code == 401:
-            return RedirectResponse("/login?next=/mistakes", status_code=303)
+            return RedirectResponse("/login?next=/student", status_code=303)
         raise
     if actor["role"] != "student":
         return RedirectResponse("/", status_code=303)
+    if not review:
+        return RedirectResponse("/student", status_code=303)
     return FileResponse(Path(__file__).with_name("student_mistakes.html"), headers={
         "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
         "Pragma": "no-cache", "Expires": "0",
