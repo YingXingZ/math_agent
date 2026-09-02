@@ -353,10 +353,19 @@ async def grade_submission(submission_id: int) -> dict[str, Any]:
             review_reasons.append("识别文本疑似参考答案污染")
         if input_guard.suspicious or recognition_guard.suspicious:
             review_reasons.append("检测到疑似提示词注入内容，已保留证据并转教师复核")
-        if equivalent["available"] and equivalent["confidence"] < 0.85:
-            review_reasons.append("数学判等置信度不足")
-        if equivalent["available"] and qwen.get("correct") is not None and bool(qwen.get("correct")) != bool(equivalent["equal"]):
-            review_reasons.append("Qwen 与数学判等结论不一致")
+        # A symbolic parser may be unable to parse perfectly valid handwritten
+        # OCR (for example y'=3x^2+3/(2√x)). That is inconclusive evidence,
+        # not a mathematical contradiction. Only a high-confidence negative
+        # symbolic verdict may override a high-confidence VLM assessment.
+        math_contradiction = (
+            bool(equivalent.get("available"))
+            and equivalent.get("equal") is False
+            and float(equivalent.get("confidence") or 0) >= 0.85
+            and qwen.get("correct") is not None
+            and bool(qwen.get("correct")) is True
+        )
+        if math_contradiction:
+            review_reasons.append("Qwen 与高置信数学判等结论不一致")
 
         needs_review = bool(review_reasons)
         results.append({
