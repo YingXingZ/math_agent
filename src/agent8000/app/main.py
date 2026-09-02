@@ -2041,11 +2041,20 @@ def _load_assignment_items(assignment_id: int, actor: dict | None = None) -> tup
             parent["score"] = parent.get("override_score") if parent.get("override_score") is not None else parent["score"]
             rows.append(parent)
             continue
-        for part in selected:
+        # Legacy drafts already store only the individual sub-question text.
+        # Recover the common parent instruction for the first displayed part,
+        # without duplicating it before every selected part.
+        parent_content = str(parent.get("override_content") or parent.get("content") or "").strip()
+        marker = re.search(r"(?m)^\s*[（(]\s*\d+\s*[)）]", parent_content)
+        shared_stem = re.sub(r"^\s*\d+\s*[.．、]\s*", "", parent_content[:marker.start()]).strip() if marker else ""
+        for part_index, part in enumerate(selected):
+            part_content = str(part.get("content") or "").strip()
+            if part_index == 0 and shared_stem and shared_stem not in part_content:
+                part_content = shared_stem + "\n" + part_content
             rows.append({
                 **parent, **part,
                 "original_no": f"{parent['original_no']}（{part['subpart_no']}）",
-                "content": part["content"],
+                "content": part_content,
             })
     return dict(assignment), rows
 

@@ -101,7 +101,10 @@ def _partial_variant(row: dict[str, Any], subpart_limit: int = 3) -> dict[str, A
         "parts": [
             {
                 "subpart_no": no,
-                "content": next(value for key, value in stem[1] if key == no),
+                # Show the parent instruction once, before the first selected
+                # sub-question (for example: “求下列函数的导数：”).
+                "content": ((re.sub(r"^\s*\d+\s*[.．、]\s*", "", stem[0]).strip() + "\n") if no == wanted[0] and stem[0].strip() else "")
+                           + next(value for key, value in stem[1] if key == no),
                 "answer": next(value for key, value in answer[1] if key == no),
                 "rubric": next(value for key, value in rubric[1] if key == no),
             }
