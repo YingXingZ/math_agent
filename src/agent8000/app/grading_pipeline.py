@@ -100,7 +100,23 @@ def _render_pdf_pages(path: Path) -> list[Path]:
         or shutil.which("pdftoppm")
     )
     if not renderer:
-        raise ValueError("PDF 渲染组件不可用，已转入教师复核")
+        # Production fallback: PyMuPDF ships with the agent environment, so
+        # PDF uploads remain gradeable even when the host has no Poppler binary.
+        try:
+            import fitz
+
+            document = fitz.open(str(path))
+            matrix = fitz.Matrix(settings.qwen_pdf_render_dpi / 72, settings.qwen_pdf_render_dpi / 72)
+            for page_index in range(page_limit):
+                pixmap = document.load_page(page_index).get_pixmap(matrix=matrix, alpha=False)
+                pixmap.save(str(rendered_dir / f"page-{page_index + 1}.png"))
+            document.close()
+        except Exception as exc:
+            raise ValueError(f"PDF 渲染组件不可用，已转入教师复核：{str(exc)[:100]}") from exc
+        pages = sorted(rendered_dir.glob("page-*.png"), key=lambda item: int(item.stem.rsplit("-", 1)[-1]))
+        if not pages:
+            raise ValueError("PDF 未生成可识别页面")
+        return pages
     command = [
         renderer, "-png", "-r", str(settings.qwen_pdf_render_dpi),
         "-f", "1", "-l", str(page_limit), str(path), str(prefix),

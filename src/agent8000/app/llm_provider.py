@@ -84,6 +84,10 @@ async def _call_qwen_api(images: list[str], problems: list[dict[str, Any]]) -> l
 
 
 async def grade_homework(images: list[str], problems: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    # Every provider receives the same guarded representation of untrusted
+    # question/answer text. This also keeps the local VLM request schema in
+    # sync with the cloud Qwen path.
+    prepared_problems, _assessments = prepare_problems_for_model(problems)
     provider = (settings.llm_provider or "local_qwen").strip().lower()
     if provider == "qwen_api":
         return await _call_qwen_api(images, problems)
