@@ -276,7 +276,17 @@ async function batchConfirmReviews(){
     loadAssignments();init();
   }catch(e){$('batchReviewList').innerHTML='<div class="notice">'+esc(e.message)+'</div>'}
 }
-async function showAssignmentSubmissions(id){try{let x=await api(`/assignments/${id}/submissions`);let rows=x.submissions||[];let body=rows.length?rows.map(s=>`<div class="item"><div><b>${esc(s.student_name||s.student_no)} · ${esc(s.student_no)}</b><div class="hint">${esc(s.grading_status||s.status)} · 得分 ${s.total_score??'待定'} / ${s.max_score??'待定'}${s.needs_review?' · 待教师复核':' · 自动初评完成'}</div><div class="hint">识别：${esc(s.recognized_summary||'任务处理中或未识别')}${s.qwen_error?'；AI 服务异常':''}</div></div><button class="btn secondary" onclick="showEvidence(${s.id})">查看详情</button></div>`).join(''):'<div class="notice">这份作业暂时还没有学生提交。</div>';$('reviewList').innerHTML=`<button class="btn secondary" onclick="loadAssignments()">← 返回待复核列表</button><h3 style="margin-top:16px">${esc(x.title)} · 全部提交与成绩</h3>${body}`}catch(e){$('reviewList').innerHTML=`<div class="notice">成绩读取失败：${esc(e.message)}</div>`}}
+async function showAssignmentSubmissions(id){
+  setReviewTab('queue');
+  const box=$('reviewList');
+  box.innerHTML='<div class="hint">正在读取这份作业的提交与成绩…</div>';
+  try{
+    let x=await api(`/assignments/${id}/submissions`);let rows=x.submissions||[];
+    let body=rows.length?rows.map(s=>`<div class="item"><div><b>${esc(s.student_name||s.student_no)} · ${esc(s.student_no)}</b><div class="hint">${esc(s.grading_status||s.status)} · 得分 ${s.total_score??'待定'} / ${s.max_score??'待定'}${s.needs_review?' · 待教师复核':' · 自动初评完成'}</div><div class="hint">识别：${esc(s.recognized_summary||'任务处理中或未识别')}${s.qwen_error?'；AI 服务异常':''}</div></div><button class="btn secondary" onclick="showEvidence(${s.id})">查看本份批改</button></div>`).join(''):'<div class="notice">这份作业暂时还没有学生提交。</div>';
+    box.innerHTML=`<button class="btn secondary" onclick="loadAssignments();setReviewTab('assignments')">← 返回作业列表</button><h3 style="margin-top:16px">${esc(x.title)} · 提交与成绩明细</h3><p class="hint">共 ${rows.length} 份提交。点击“查看本份批改”可查看题目级证据并作教师裁定。</p>${body}`;
+    box.scrollIntoView({behavior:'smooth',block:'start'});
+  }catch(e){box.innerHTML=`<div class="notice">成绩读取失败：${esc(e.message)}</div>`}
+}
 async function openAssignmentEditor(id){
   try{
     const x=await api('/assignments/'+id+'/draft-items');
