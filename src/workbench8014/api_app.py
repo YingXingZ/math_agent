@@ -4014,14 +4014,30 @@ class AgentProblemLearnReq(BaseModel):
 def agent_learn_problem(problem_id: str, req: AgentProblemLearnReq):
     """从题库读取答案，由 LangGraph 学习 Agent 处理，绝不向客户端返回标准答案。"""
     conn = get_db()
-    row = conn.execute("SELECT p.content_text, p.std_answer, p.ptype, s.section_no, p.problem_no FROM problems p JOIN sections s ON s.id=p.section_id WHERE p.id=?", (problem_id,)).fetchone()
+    row = conn.execute("SELECT p.content_text, p.std_answer, p.full_solution, p.answer_status, p.ptype, s.section_no, p.problem_no FROM problems p JOIN sections s ON s.id=p.section_id WHERE p.id=?", (problem_id,)).fetchone()
     conn.close()
     if not row:
         raise HTTPException(404, "题目不存在")
-    if not str(row["std_answer"] or "").strip():
+    standard_answer = str(row["std_answer"] or "").strip()
+    if not standard_answer:
         raise HTTPException(409, "该题尚无可用标准答案，暂不能启动学习 Agent")
+    # Student-visible answers are source-of-truth data. Never let a model
+    # invent a replacement solution when the bank has not saved one yet.
+    if req.mode == "solution":
+        full_solution = str(row["full_solution"] or "").strip()
+        response = "题库标准答案：\n" + standard_answer
+        if full_solution:
+            response += "\n\n题库完整推导：\n" + full_solution
+            source = "question_bank_answer_and_solution"
+        else:
+            response += "\n\n题库暂未保存完整推导；为避免把模型临时生成内容当作标准答案，系统不会补造推导。"
+            source = "question_bank_answer_only"
+        return {"problem_id": problem_id, "action": "show_reference_answer", "verification": None,
+                "solution_comparison": None, "diagnosis": None, "proof_assessment": None,
+                "evidence": {"source": source, "answer_status": row["answer_status"] or "unverified"},
+                "trace_id": None, "execution_trace": [], "response": response}
     from math_agent_graph import run_math_agent
-    result = run_math_agent(req.student_answer, row["std_answer"], row["content_text"] or "", row["section_no"] or "", row["problem_no"] or "", req.mode, problem_id, req.teacher_feedback, row["ptype"] or "calc", req.student_steps)
+    result = run_math_agent(req.student_answer, standard_answer, row["content_text"] or "", row["section_no"] or "", row["problem_no"] or "", req.mode, problem_id, req.teacher_feedback, row["ptype"] or "calc", req.student_steps)
     return {"problem_id": problem_id, "action": result.get("action"), "verification": result.get("verification"), "solution_comparison": result.get("solution_comparison"), "diagnosis": result.get("diagnosis"), "proof_assessment": result.get("proof_assessment"), "evidence": result.get("evidence"), "trace_id": result.get("trace_id"), "execution_trace": result.get("execution_trace"), "response": result.get("response")}
 
 
