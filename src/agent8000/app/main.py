@@ -2123,6 +2123,25 @@ def student_home_page(request: Request):
                         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 
+@app.get("/api/student/assignments/{assignment_id}/detail")
+def student_assignment_detail(assignment_id: int, request: Request):
+    """Student-safe assignment sheet: questions and scores, never answers/rubrics."""
+    actor = require_roles(request, {"student"})
+    assignment, rows = _load_assignment_items(assignment_id, actor)
+    return {
+        "id": assignment_id,
+        "title": assignment["title"],
+        "chapter": assignment.get("chapter") or "",
+        "due_at": assignment.get("due_at"),
+        "total_score": assignment.get("total_score"),
+        "items": [
+            {"label": str(row.get("original_no") or row.get("sort_order") or ""),
+             "content": str(row.get("content") or ""), "score": row.get("score")}
+            for row in rows
+        ],
+    }
+
+
 @app.get("/api/student/assignments")
 def student_assignments(request: Request):
     """Student dashboard: one latest submission per assigned homework."""
