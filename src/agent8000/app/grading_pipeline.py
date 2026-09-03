@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import subprocess
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,53 @@ def _recognition_is_contaminated(recognized_work: str, reference_answer: str) ->
     compact = lambda value: "".join(ch for ch in str(value or "") if not ch.isspace() and ch not in "$\\{}()[]，,。；;：:")
     work, reference = compact(recognized_work), compact(reference_answer)
     return len(work) >= 30 and len(reference) >= 30 and (work in reference or reference in work)
+
+
+def _completion_check(recognized_work: str, model_result: dict[str, Any]) -> dict[str, Any]:
+    """Reject obviously unfinished work before it can be auto-accepted.
+
+    This is deliberately a *safety gate*, not a second mathematical grader.
+    A complete but unsimplified quotient-rule expression remains valid.  The
+    gate only blocks a result when the vision model explicitly saw unfinished
+    work, or OCR itself ends in an unfinished operator / delimiter.
+    """
+    declared = model_result.get("work_complete")
+    if isinstance(declared, str):
+        declared = declared.strip().lower() in {"true", "1", "yes", "complete", "\u5b8c\u6574"}
+    if declared is False:
+        reason = str(model_result.get("completion_evidence") or "\u89c6\u89c9\u8bc6\u522b\u5230\u4f5c\u7b54\u672a\u5b8c\u6210").strip()
+        return {"complete": False, "reason": reason, "source": "vision"}
+
+    work = str(recognized_work or "").replace("\u3000", " ").strip()
+    if not work:
+        return {"complete": False, "reason": "\u672a\u8bc6\u522b\u5230\u53ef\u5b8c\u6574\u5224\u5b9a\u7684\u4f5c\u7b54", "source": "ocr"}
+
+    # A terminal operator is strong objective evidence of a cut-off expression.
+    compact = re.sub(r"\s+", "", work)
+    terminal_operator = re.search(
+        r"(?:[+\-*/=]|\\(?:times|cdot|div|pm|mp)|\u00d7|\u00f7|\uff0b|\uff0d|\uff1d)$",
+        compact,
+    )
+    if terminal_operator:
+        return {
+            "complete": False,
+            "reason": "\u8bc6\u522b\u5230\u4f5c\u7b54\u4ee5\u672a\u5b8c\u6210\u7684\u8fd0\u7b97\u7b26\u53f7\u7ed3\u5c3e",
+            "source": "ocr",
+        }
+
+    # Count literal delimiters after ignoring escaped braces; this catches
+    # malformed OCR such as an unfinished fraction without rejecting normal
+    # LaTex commands like \\frac{a}{b}.
+    plain = re.sub(r"\\[{}]", "", work)
+    pairs = (("(", ")"), ("[", "]"), ("{", "}"))
+    for opening, closing in pairs:
+        if plain.count(opening) != plain.count(closing):
+            return {
+                "complete": False,
+                "reason": "\u8bc6\u522b\u5230\u4f5c\u7b54\u7684\u62ec\u53f7\u6216\u5206\u7ec4\u7b26\u53f7\u672a\u95ed\u5408",
+                "source": "ocr",
+            }
+    return {"complete": True, "reason": "", "source": "passed"}
 
 
 def _math_equal(student_answer: str, standard_answer: str) -> dict[str, Any]:
@@ -349,6 +397,20 @@ async def grade_submission(submission_id: int) -> dict[str, Any]:
             review_reasons.append("Qwen 置信度不足")
         if qwen.get("need_review", True):
             review_reasons.append("Qwen 标记为需复核")
+        completion = _completion_check(recognized, qwen)
+        if not completion["complete"]:
+            review_reasons.append("作答疑似未完成：" + completion["reason"])
+            risks.append("作答完整性拦截：" + completion["reason"])
+            # Never expose an unfinished expression as an automatically
+            # accepted full-credit answer.  A teacher can still override this
+            # candidate after looking at the original image.
+            qwen["need_review"] = True
+            qwen["correct"] = False
+            qwen["confidence"] = min(float(qwen.get("confidence", 0) or 0), 0.60)
+            qwen["score"] = min(
+                float(qwen.get("score", 0) or 0),
+                float(row["max_score"]) * 0.60,
+            )
         if any("参考答案污染" in str(risk) for risk in risks):
             review_reasons.append("识别文本疑似参考答案污染")
         if input_guard.suspicious or recognition_guard.suspicious:
@@ -386,6 +448,7 @@ async def grade_submission(submission_id: int) -> dict[str, Any]:
             "confidence": float(qwen.get("confidence", 0) or 0),
             "recognized_work": recognized,
             "feedback": str(qwen.get("feedback") or "待教师查看识别结果"),
+            "completion": completion,
             "needs_review": needs_review,
             "review_reasons": review_reasons,
             "qwen": qwen,
