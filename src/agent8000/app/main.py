@@ -3127,7 +3127,7 @@ def student_submission_file(submission_id: int, request: Request):
 def student_released_submissions(request: Request):
     actor = require_roles(request, {"student"})
     with connection() as conn:
-        rows = conn.execute("SELECT s.id,s.assignment_id,s.score,s.completion_score,s.quality_score,s.quality_max_score,s.feedback,s.released_at,a.title,a.due_at,a.total_score,j.result_json FROM submissions s JOIN assignments a ON a.id=s.assignment_id JOIN students st ON st.class_id=a.class_id AND st.user_id=? LEFT JOIN grading_jobs j ON j.submission_id=s.id WHERE s.status=? AND s.released_at IS NOT NULL ORDER BY s.released_at DESC", (actor["id"], "graded")).fetchall()
+        rows = conn.execute("SELECT s.id,s.assignment_id,s.score,s.completion_score,s.quality_score,s.quality_max_score,s.feedback,s.released_at,a.title,a.due_at,a.total_score,j.result_json FROM submissions s JOIN assignments a ON a.id=s.assignment_id JOIN students st ON st.class_id=a.class_id AND st.user_id=? LEFT JOIN grading_jobs j ON j.submission_id=s.id WHERE s.status IN ('graded','review_required') AND s.released_at IS NOT NULL ORDER BY s.released_at DESC", (actor["id"],)).fetchall()
     return [{"id": r["id"], "assignment_id": r["assignment_id"], "title": r["title"], "score": r["score"], "completion_score": r["completion_score"], "quality_score": r["quality_score"], "quality_max_score": r["quality_max_score"], "max_score": r["total_score"], "feedback": r["feedback"], "released_at": r["released_at"], "grading": json.loads(r["result_json"] or "{}")} for r in rows]
 
 
@@ -3136,7 +3136,7 @@ def student_released_submissions(request: Request):
 def student_released_mistakes(submission_id: int, request: Request):
     actor = require_roles(request, {"student"})
     with connection() as conn:
-        row = conn.execute("SELECT j.result_json FROM submissions s JOIN assignments a ON a.id=s.assignment_id JOIN students st ON st.class_id=a.class_id AND st.user_id=? LEFT JOIN grading_jobs j ON j.submission_id=s.id WHERE s.id=? AND s.status=? AND s.released_at IS NOT NULL", (actor["id"], submission_id, "graded")).fetchone()
+        row = conn.execute("SELECT j.result_json FROM submissions s JOIN assignments a ON a.id=s.assignment_id JOIN students st ON st.class_id=a.class_id AND st.user_id=? LEFT JOIN grading_jobs j ON j.submission_id=s.id WHERE s.id=? AND s.status IN ('graded','review_required') AND s.released_at IS NOT NULL", (actor["id"], submission_id)).fetchone()
         if not row: raise HTTPException(404, "\u672a\u627e\u5230\u5df2\u53d1\u5e03\u7684\u4f5c\u4e1a\u7ed3\u679c")
         results = json.loads(row["result_json"] or "{}").get("results") or []
         ids = [int(item["question_id"]) for item in results if item.get("question_id") is not None]
@@ -4208,7 +4208,7 @@ async def review_released_mistake(submission_id: int, question_id: int, req: Mis
     if req.mode not in {"diagnose", "hint", "solution"}:
         raise HTTPException(422, "不支持的复盘模式")
     with connection() as conn:
-        row = conn.execute("SELECT j.result_json FROM submissions s JOIN assignments a ON a.id=s.assignment_id JOIN students st ON st.class_id=a.class_id AND st.user_id=? LEFT JOIN grading_jobs j ON j.submission_id=s.id WHERE s.id=? AND s.status=? AND s.released_at IS NOT NULL", (actor["id"], submission_id, "graded")).fetchone()
+        row = conn.execute("SELECT j.result_json FROM submissions s JOIN assignments a ON a.id=s.assignment_id JOIN students st ON st.class_id=a.class_id AND st.user_id=? LEFT JOIN grading_jobs j ON j.submission_id=s.id WHERE s.id=? AND s.status IN ('graded','review_required') AND s.released_at IS NOT NULL", (actor["id"], submission_id)).fetchone()
         if not row:
             raise HTTPException(404, "未找到已发布的作业结果")
         results = json.loads(row["result_json"] or "{}").get("results") or []
@@ -4290,7 +4290,7 @@ async def review_released_mistake_image(submission_id: int, question_id: int, re
     if req.mode not in {"diagnose", "hint", "solution"}:
         raise HTTPException(422, "不支持的复盘模式")
     with connection() as conn:
-        row = conn.execute("SELECT j.result_json FROM submissions s JOIN assignments a ON a.id=s.assignment_id JOIN students st ON st.class_id=a.class_id AND st.user_id=? LEFT JOIN grading_jobs j ON j.submission_id=s.id WHERE s.id=? AND s.status=? AND s.released_at IS NOT NULL", (actor["id"], submission_id, "graded")).fetchone()
+        row = conn.execute("SELECT j.result_json FROM submissions s JOIN assignments a ON a.id=s.assignment_id JOIN students st ON st.class_id=a.class_id AND st.user_id=? LEFT JOIN grading_jobs j ON j.submission_id=s.id WHERE s.id=? AND s.status IN ('graded','review_required') AND s.released_at IS NOT NULL", (actor["id"], submission_id)).fetchone()
         if not row: raise HTTPException(404, "未找到已发布的作业结果")
         results = json.loads(row["result_json"] or "{}").get("results") or []
         item = next((x for x in results if int(x.get("question_id") or -1) == question_id), None)
@@ -4340,7 +4340,7 @@ async def review_released_mistake_step_images(submission_id: int, question_id: i
     if any(len(image) > 12_000_000 for image in req.image_base64_list) or sum(len(image) for image in req.image_base64_list) > 36_000_000:
         raise HTTPException(413, "步骤图片过大，请压缩后重试")
     with connection() as conn:
-        row = conn.execute("SELECT j.result_json FROM submissions s JOIN assignments a ON a.id=s.assignment_id JOIN students st ON st.class_id=a.class_id AND st.user_id=? LEFT JOIN grading_jobs j ON j.submission_id=s.id WHERE s.id=? AND s.status=? AND s.released_at IS NOT NULL", (actor["id"], submission_id, "graded")).fetchone()
+        row = conn.execute("SELECT j.result_json FROM submissions s JOIN assignments a ON a.id=s.assignment_id JOIN students st ON st.class_id=a.class_id AND st.user_id=? LEFT JOIN grading_jobs j ON j.submission_id=s.id WHERE s.id=? AND s.status IN ('graded','review_required') AND s.released_at IS NOT NULL", (actor["id"], submission_id)).fetchone()
         if not row:
             raise HTTPException(404, "未找到已发布的作业结果")
         results = json.loads(row["result_json"] or "{}").get("results") or []
@@ -4401,8 +4401,8 @@ async def verify_mistake_reattempt(submission_id: int, question_id: int, req: Mi
             """SELECT j.result_json FROM submissions s JOIN assignments a ON a.id=s.assignment_id
                JOIN students st ON st.class_id=a.class_id AND st.user_id=?
                LEFT JOIN grading_jobs j ON j.submission_id=s.id
-               WHERE s.id=? AND s.status=? AND s.released_at IS NOT NULL""",
-            (actor["id"], submission_id, "graded"),
+               WHERE s.id=? AND s.status IN ('graded','review_required') AND s.released_at IS NOT NULL""",
+            (actor["id"], submission_id),
         ).fetchone()
         if not row:
             raise HTTPException(404, "未找到已发布的作业结果")
