@@ -1,4 +1,4 @@
-from app.grading_pipeline import _completion_check
+from app.grading_pipeline import _all_rubric_points_earned, _completion_check
 
 
 def test_declared_incomplete_work_is_blocked():
@@ -27,3 +27,8 @@ def test_complete_unsimplified_quotient_rule_is_allowed():
 def test_correct_verdict_does_not_fail_on_false_completion_flag():
     result = _completion_check("y' = 3x^2 + 3/(2√x) + 2/x^2", {"work_complete": False, "correct": True, "completion_evidence": "fraction unclosed"})
     assert result["complete"] is True
+
+
+def test_all_rubric_points_earned_requires_each_step_to_be_full():
+    assert _all_rubric_points_earned({"step_scores": [{"score": 1, "max_score": 1}, {"score": 2, "max_score": 2}]}) is True
+    assert _all_rubric_points_earned({"step_scores": [{"score": 1, "max_score": 1}, {"score": 1, "max_score": 2}]}) is False
