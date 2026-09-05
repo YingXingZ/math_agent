@@ -22,3 +22,8 @@ def test_complete_unsimplified_quotient_rule_is_allowed():
     work = r"y' = rac{(1+\sec^2 x)(x-	an x)-(x+	an x)(1-\sec^2 x)}{(x-	an x)^2}"
     result = _completion_check(work, {"work_complete": True})
     assert result["complete"] is True
+
+
+def test_correct_verdict_does_not_fail_on_false_completion_flag():
+    result = _completion_check("y' = 3x^2 + 3/(2√x) + 2/x^2", {"work_complete": False, "correct": True, "completion_evidence": "fraction unclosed"})
+    assert result["complete"] is True

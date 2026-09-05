@@ -60,27 +60,27 @@ async function showResult(payload,out){
     }
   }catch(_){out.textContent=plainMathFallback(safe)}
 }
-async function review(submissionId,questionId,sortOrder,mode,out){
+async function review(submissionId,questionId,sortOrder,subpartNo,mode,out){
   out.textContent=mode==='solution'?'正在读取题库答案…':'Agent 正在复盘…';
   try{
-    const response=await fetch('/api/student/released-submissions/'+submissionId+'/mistakes/'+questionId+'/review?sort_order='+encodeURIComponent(sortOrder),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode})});
+    const response=await fetch('/api/student/released-submissions/'+submissionId+'/mistakes/'+questionId+'/review?sort_order='+encodeURIComponent(sortOrder)+'&subpart_no='+encodeURIComponent(subpartNo||''),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode})});
     const payload=await response.json();
     if(!response.ok) throw Error(payload.detail||'调用失败');
     await showResult(payload,out);
   }catch(error){out.textContent='暂时无法获取复盘内容：'+error.message}
 }
-function addMistake(parent,submission,question,index){
+function addMistake(parent,submission,question,index,pending=false){
   const item=document.createElement('div');item.className='item';
-  item.append(Object.assign(document.createElement('b'),{textContent:'错题 '+(index+1)}));
+  item.append(Object.assign(document.createElement('b'),{textContent:(pending?'待教师确认':'错题 '+(index+1))+(question.problem_no?' · '+question.problem_no:'')}));
   item.append(mathText('\u9898\u76ee\uff1a',question.content||'\u9898\u5e72\u6682\u7f3a'));
   const pre=preliminary(question);
   item.append(mathText(pre?.conflict?'\u539f\u59cb\u6559\u5e08\u53cd\u9988\uff08\u5f85\u7cfb\u7edf\u590d\u6838\uff09\uff1a':'\u8001\u5e08\u53cd\u9988\uff1a',question.feedback||'\u6682\u65e0'));
   item.append(mathText('\u8bc6\u522b\u5230\u4f60\u7684\u4f5c\u7b54\uff1a',question.recognized_work||'\u672a\u8bc6\u522b'));
   if(pre){const status=document.createElement('div');status.className='status '+(pre.conflict?'conflict':'');status.textContent=pre.text;item.append(status)}
-  if(question.review_available){
+  if(question.review_available && !pending){
     const actions=document.createElement('div');actions.className='actions';
     const out=document.createElement('div');out.className='out';out.textContent='选择一种复盘方式开始。';
-    [['diagnose','分析我错在哪',''],['hint','给我下一步提示','secondary'],['solution','查看答案','solution']].forEach(([mode,label,style])=>{const button=document.createElement('button');button.textContent=label;button.className=style;button.onclick=()=>review(submission.id,question.question_id,question.sort_order,mode,out);actions.append(button)});
+    [['diagnose','分析我错在哪',''],['hint','给我下一步提示','secondary'],['solution','查看答案','solution']].forEach(([mode,label,style])=>{const button=document.createElement('button');button.textContent=label;button.className=style;button.onclick=()=>review(submission.id,question.question_id,question.sort_order,question.subpart_no,mode,out);actions.append(button)});
     item.append(actions,out);
     item.insertBefore(actions,item.children[2]);
     item.insertBefore(out,item.children[3]);
@@ -101,6 +101,7 @@ async function load(){
     if(!mistakesResponse.ok)section.append(text('',mistakes.detail||'错题加载失败'));
     else if(!mistakes.mistakes?.length)section.append(text('','本次没有需要复盘的错题。'));
     else mistakes.mistakes.forEach((question,index)=>addMistake(section,submission,question,index));
+    if(mistakes.pending_confirmation?.length){section.append(text('h3','待教师确认（不计入错题）'));mistakes.pending_confirmation.forEach((question,index)=>addMistake(section,submission,question,index,true));}
     box.append(section);
   }
 }

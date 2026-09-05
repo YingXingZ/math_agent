@@ -45,8 +45,11 @@ def _completion_check(recognized_work: str, model_result: dict[str, Any]) -> dic
     declared = model_result.get("work_complete")
     if isinstance(declared, str):
         declared = declared.strip().lower() in {"true", "1", "yes", "complete", "\u5b8c\u6574"}
-    if declared is False:
-        reason = str(model_result.get("completion_evidence") or "\u89c6\u89c9\u8bc6\u522b\u5230\u4f5c\u7b54\u672a\u5b8c\u6210").strip()
+    # Vision's completion flag is useful only when it does not contradict the
+    # same model's explicit correctness verdict. Handwritten fractions and
+    # equality signs otherwise get falsely described as unfinished.
+    if declared is False and model_result.get("correct") is not True:
+        reason = str(model_result.get("completion_evidence") or "视觉识别到作答未完成").strip()
         return {"complete": False, "reason": reason, "source": "vision"}
 
     work = str(recognized_work or "").replace("\u3000", " ").strip()

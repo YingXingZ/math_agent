@@ -3132,27 +3132,68 @@ def student_released_submissions(request: Request):
 
 
 
+def _feedback_asserts_correct(feedback: str) -> bool:
+    """A positive marking comment must never be presented to a student as a mistake."""
+    return bool(re.search(
+        r"(?:答案|解答|作答).{0,12}(?:正确|符合标准答案)|完全符合标准答案|已经正确地|结果正确",
+        str(feedback or ""),
+    ))
+
+
 @app.get("/api/student/released-submissions/{submission_id}/mistakes")
 def student_released_mistakes(submission_id: int, request: Request):
     actor = require_roles(request, {"student"})
     with connection() as conn:
-        row = conn.execute("SELECT j.result_json FROM submissions s JOIN assignments a ON a.id=s.assignment_id JOIN students st ON st.class_id=a.class_id AND st.user_id=? LEFT JOIN grading_jobs j ON j.submission_id=s.id WHERE s.id=? AND s.status IN ('graded','review_required') AND s.released_at IS NOT NULL", (actor["id"], submission_id)).fetchone()
-        if not row: raise HTTPException(404, "\u672a\u627e\u5230\u5df2\u53d1\u5e03\u7684\u4f5c\u4e1a\u7ed3\u679c")
+        row = conn.execute(
+            "SELECT s.assignment_id,j.result_json FROM submissions s JOIN assignments a ON a.id=s.assignment_id JOIN students st ON st.class_id=a.class_id AND st.user_id=? LEFT JOIN grading_jobs j ON j.submission_id=s.id WHERE s.id=? AND s.status IN ('graded','review_required') AND s.released_at IS NOT NULL",
+            (actor["id"], submission_id),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "未找到已发布的作业结果")
         results = json.loads(row["result_json"] or "{}").get("results") or []
-        ids = [int(item["question_id"]) for item in results if item.get("question_id") is not None]
+        ids = sorted({int(item["question_id"]) for item in results if item.get("question_id") is not None})
         qrows = conn.execute("SELECT id,source_problem_id,content FROM questions WHERE id IN (" + ",".join("?" for _ in ids) + ")", ids).fetchall() if ids else []
-    questions = {row["id"]: dict(row) for row in qrows}
-    mistakes = []
+        part_rows = conn.execute(
+            "SELECT question_id,subpart_no,content FROM assignment_question_parts WHERE assignment_id=?",
+            (row["assignment_id"],),
+        ).fetchall()
+    questions = {item["id"]: dict(item) for item in qrows}
+    parts = {(item["question_id"], str(item["subpart_no"] or "")): dict(item) for item in part_rows}
+    mistakes: list[dict[str, Any]] = []
+    pending_confirmation: list[dict[str, Any]] = []
     for item in results:
-        if item.get("correct") is True and float(item.get("score") or 0) >= float(item.get("max_score") or 0): continue
-        question = questions.get(item.get("question_id"), {})
+        if item.get("correct") is True and float(item.get("score") or 0) >= float(item.get("max_score") or 0):
+            continue
+        question_id = int(item.get("question_id") or 0)
+        subpart_no = str(item.get("subpart_no") or "")
+        question = questions.get(question_id, {})
+        part = parts.get((question_id, subpart_no), {})
         evidence = item.get("evidence") or {}
         qwen = item.get("qwen") or {}
         source_problem_id = question.get("source_problem_id") or evidence.get("source_problem_id")
-        content = question.get("content") or qwen.get("located_problem_text") or item.get("problem_no") or ""
+        content = part.get("content") or question.get("content") or qwen.get("located_problem_text") or item.get("problem_no") or ""
         has_snapshot = bool(evidence.get("standard_answer") or evidence.get("rubric") or item.get("feedback"))
-        mistakes.append({"question_id":item.get("question_id"),"source_problem_id":source_problem_id,"content":content,"recognized_work":item.get("recognized_work"),"feedback":item.get("feedback"),"score":item.get("score"),"max_score":item.get("max_score"),"needs_review":item.get("needs_review"),"sort_order":item.get("sort_order"),"review_available":bool(source_problem_id or has_snapshot)})
-    return {"submission_id":submission_id,"mistakes":mistakes}
+        payload = {
+            "question_id": question_id,
+            "subpart_no": subpart_no,
+            "problem_no": item.get("problem_no") or "",
+            "source_problem_id": source_problem_id,
+            "content": content,
+            "recognized_work": item.get("recognized_work"),
+            "feedback": item.get("feedback"),
+            "score": item.get("score"),
+            "max_score": item.get("max_score"),
+            "needs_review": item.get("needs_review"),
+            "sort_order": item.get("sort_order"),
+            "review_available": bool(source_problem_id or has_snapshot),
+        }
+        # A score/boolean that conflicts with a positive marking comment is not
+        # a student mistake. Keep it visible only as a teacher-confirmation item.
+        if _feedback_asserts_correct(str(item.get("feedback") or "")):
+            pending_confirmation.append(payload)
+        else:
+            mistakes.append(payload)
+    return {"submission_id": submission_id, "mistakes": mistakes, "pending_confirmation": pending_confirmation}
 
 
 @app.get("/api/reports/weak-points")
@@ -4202,7 +4243,7 @@ def _released_snapshot_review(item: dict[str, Any], mode: str) -> dict[str, Any]
 
 
 @app.post("/api/student/released-submissions/{submission_id}/mistakes/{question_id}/review")
-async def review_released_mistake(submission_id: int, question_id: int, req: MistakeReviewIn, request: Request, sort_order: int | None = None):
+async def review_released_mistake(submission_id: int, question_id: int, req: MistakeReviewIn, request: Request, sort_order: int | None = None, subpart_no: str | None = None):
     """Only a released, owned wrong answer may enter the learning Agent."""
     actor = require_roles(request, {"student"})
     if req.mode not in {"diagnose", "hint", "solution"}:
@@ -4212,7 +4253,7 @@ async def review_released_mistake(submission_id: int, question_id: int, req: Mis
         if not row:
             raise HTTPException(404, "未找到已发布的作业结果")
         results = json.loads(row["result_json"] or "{}").get("results") or []
-        item = next((x for x in results if int(x.get("question_id") or -1) == question_id and (sort_order is None or int(x.get("sort_order") or -1) == sort_order)), None)
+        item = next((x for x in results if int(x.get("question_id") or -1) == question_id and (sort_order is None or int(x.get("sort_order") or -1) == sort_order) and (subpart_no is None or str(x.get("subpart_no") or "") == subpart_no)), None)
         if not item or (item.get("correct") is True and float(item.get("score") or 0) >= float(item.get("max_score") or 0)):
             raise HTTPException(404, "该题不是可复盘的已发布错题")
         question = conn.execute("SELECT source_problem_id,question_type FROM questions WHERE id=?", (question_id,)).fetchone()
