@@ -84,6 +84,21 @@ def _completion_check(recognized_work: str, model_result: dict[str, Any]) -> dic
     return {"complete": True, "reason": "", "source": "passed"}
 
 
+def _all_rubric_points_earned(model_result: dict[str, Any]) -> bool:
+    """Return true only when the model's structured rubric grants every point."""
+    steps = model_result.get("step_scores") or []
+    if not isinstance(steps, list) or not steps:
+        return False
+    try:
+        return all(
+            float(step.get("max_score") or 0) > 0
+            and float(step.get("score") or 0) + 1e-6 >= float(step.get("max_score") or 0)
+            for step in steps
+        )
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
 def _math_equal(student_answer: str, standard_answer: str) -> dict[str, Any]:
     """Use the existing symbolic engine as an independent check of Qwen."""
     if not student_answer.strip() or not standard_answer.strip():
@@ -365,6 +380,17 @@ async def grade_submission(submission_id: int) -> dict[str, Any]:
         qwen = qwen_by_question.get(qid, {})
         qwen_input = qwen_context_by_question.get(qid, {"mode": "unknown"})
         standard_answer = row["answer"] or ""
+        # The structured rubric is the most specific scoring evidence. If the
+        # model says the answer is correct and every rubric point is awarded,
+        # a stale aggregate score or conservative confidence must not reduce
+        # the grade or create manual-review work.
+        rubric_full_credit = bool(qwen.get("correct") is True and _all_rubric_points_earned(qwen))
+        if rubric_full_credit:
+            qwen["score"] = float(row["max_score"])
+            qwen["max_score"] = float(row["max_score"])
+            qwen["confidence"] = max(float(qwen.get("confidence") or 0), 0.90)
+            qwen["need_review"] = False
+            qwen["score_reconciled_from_rubric"] = True
         recognized = str(qwen.get("recognized_work") or "")
         is_proof = normalize_question_type(row["question_type"]) == "proof"
         risks = list(qwen.get("risks") or [])
@@ -388,6 +414,20 @@ async def grade_submission(submission_id: int) -> dict[str, Any]:
         )
         equivalent = tool_use["math_equivalence"]
         review_reasons: list[str] = []
+        feedback_text = str(qwen.get("feedback") or "")
+        # A model result that explicitly says the answer is correct must not
+        # retain an arbitrary partial score and create a teacher-review task.
+        # Strong positive feedback is treated the same way when the provider's
+        # boolean flag is internally inconsistent.
+        model_affirms_correct = bool(qwen.get("correct")) or bool(re.search(
+            r"(?:答案|解答|作答).{0,12}(?:正确|符合标准答案)|完全符合标准答案|已经正确地|结果正确",
+            feedback_text,
+        ))
+        if model_affirms_correct:
+            qwen["correct"] = True
+            qwen["score"] = float(row["max_score"])
+            qwen["max_score"] = float(row["max_score"])
+            qwen["need_review"] = False
         if qwen_error:
             review_reasons.append("Qwen 识别失败")
         if qid in crop_errors:
@@ -396,9 +436,9 @@ async def grade_submission(submission_id: int) -> dict[str, Any]:
             review_reasons.append("缺少标准答案")
         if normalize_question_type(row["question_type"]) != "calc":
             review_reasons.append("证明/非计算题需教师复核")
-        if float(qwen.get("confidence", 0) or 0) < 0.85:
+        if not model_affirms_correct and float(qwen.get("confidence", 0) or 0) < 0.85:
             review_reasons.append("Qwen 置信度不足")
-        if qwen.get("need_review", True):
+        if not model_affirms_correct and qwen.get("need_review", True):
             review_reasons.append("Qwen 标记为需复核")
         completion = _completion_check(recognized, qwen)
         if not completion["complete"]:
