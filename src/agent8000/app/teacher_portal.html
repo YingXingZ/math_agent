@@ -574,9 +574,29 @@ function repairLatexEnvironments(txt){
   tokens.forEach(token=>{out+=source.slice(cursor,token.start);if(token.keep)out+=source.slice(token.start,token.end);cursor=token.end});
   return out+source.slice(cursor);
 }
+function repairJsonDamagedLatex(txt){
+  return String(txt||'')
+    .replace(/\f(?=rac\b)/g,'\\f')
+    .replace(/\t(?=(?:heta|an)\b)/g,'\\t')
+    .replace(/\n[ \t]*ight\b/g,'\\right')
+    .replace(/\n[ \t]*ho\b/g,'\\rho');
+}
+function wrapBareLatexLines(txt){
+  return String(txt||'').split('\n').map(line=>{
+    const trimmed=line.trim();
+    if(!trimmed||trimmed.includes('$')||/\\\(|\\\)|\\\[|\\\]/.test(trimmed))return line;
+    const hasCommand=/\\(?:frac|sqrt|left|right|sin|cos|tan|sec|csc|cot|rho|theta|pi|cdot|times|begin|end)\b/.test(trimmed);
+    const mostlyMath=!/[\u4e00-\u9fff]/.test(trimmed);
+    if(!hasCommand||!mostlyMath)return line;
+    const formula=trimmed.replace(/^&\s*/,'').replace(/\\\\\s*$/,'');
+    return '\\[\\begin{aligned}'+formula+'\\end{aligned}\\]';
+  }).join('\n');
+}
 function normalizeMathText(txt){
-  const normalized=String(txt||'').replace(/\\n/g,'\n').replace(/\\r/g,'\n').replace(/\n{3,}/g,'\n\n');
-  return repairLatexEnvironments(normalized);
+  let normalized=String(txt||'').replace(/\r/g,'\n').replace(/\\n/g,'\n').replace(/\\r/g,'\n');
+  normalized=repairJsonDamagedLatex(normalized);
+  normalized=repairLatexEnvironments(normalized).replace(/\n{3,}/g,'\n\n');
+  return wrapBareLatexLines(normalized);
 }
 function renderMath(div,txt){
   if(!div)return;
