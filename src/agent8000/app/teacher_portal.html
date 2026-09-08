@@ -350,9 +350,9 @@ async function showEvidence(id,exceptionsOnly=false){
       const score=prior.score??q.score??0;
       const feedback=prior.feedback??'';
       return `<article class="item review-editor" data-review-order="${Number(q.sort_order)}" style="margin:12px 0;border-left:4px solid ${q.needs_review?'#f59e0b':'#34d399'}">
-        <div style="display:flex;justify-content:space-between;gap:12px;align-items:start"><b>第 ${esc(q.sort_order)} 题</b><span class="tag" style="background:${q.needs_review?'#fff7ed':'#ecfdf5'};color:${color}">${status}</span></div>
+        <div style="display:flex;justify-content:space-between;gap:12px;align-items:start"><b>${esc(q.problem_no||("第 "+q.sort_order+" 题"))}</b><span class="tag" style="background:${q.needs_review?'#fff7ed':'#ecfdf5'};color:${color}">${status}</span></div>
         <div class="hint">初评候选分：<b>${esc(q.score??'待定')} / ${esc(q.max_score??'—')}</b>　识别/初评置信度：${Math.round(Number(q.confidence||0)*100)}%</div>
-        <div class="hint">识别来源：${q.qwen_input?.mode==='teacher_confirmed_crop'?'教师确认区域（第 '+esc(q.qwen_input?.page_no||'—')+' 页，已按本小问单独初评）':q.qwen_input?.mode==='full_page_locator_fallback'?'区域裁剪失败后回退整页定位':q.qwen_input?.mode==='full_page_locator'?'整页题号定位（尚未确认区域）':'初评暂不可用'}</div>
+        <div class="hint">识别来源：${q.qwen_input?.mode==='auto_pdf_text_crop'?'PDF 原题号自动裁切（第 '+esc(q.qwen_input?.page_no||'—')+' 页）':q.qwen_input?.mode==='teacher_confirmed_crop'?'教师确认区域（第 '+esc(q.qwen_input?.page_no||'—')+' 页，已按本小问单独初评）':q.qwen_input?.mode==='full_page_locator_fallback'?'区域裁剪失败后回退整页定位':q.qwen_input?.mode==='full_page_locator'?'整页题号定位（尚未确认区域）':'初评暂不可用'}</div>
         <div class="hint">数学核验：${esc(q.math_equivalence?.method||'不适用')}；${q.math_equivalence?.equal===true?'已确认等价':q.math_equivalence?.equal===false?'未确认等价':'待核验'}</div>
         <section class="evidence-block"><b>识别作答</b><div class="math-display">${esc(q.recognized_work||'未识别')}</div></section>
         <section class="evidence-block"><b>评分点候选</b><ul class="math-steps">${stepScores}</ul></section>
@@ -383,7 +383,7 @@ async function showEvidence(id,exceptionsOnly=false){
 }
 let regionMapperState=null;
 function regionMappingKey(item){return String(item.question_id)+'|'+String(item.subpart_no||'')+'|'+String(item.sort_order)}
-function regionMappingLabel(item){return '第 '+item.sort_order+' 题'+(item.subpart_no?'（'+item.subpart_no+'）':'')}
+function regionMappingLabel(item){return item.problem_no||('第 '+item.sort_order+' 题'+(item.subpart_no?'（'+item.subpart_no+'）':''))}
 async function renderRegionMapper(submissionId, questions){
   const host=document.getElementById('reviewList');
   const section=document.createElement('section');
