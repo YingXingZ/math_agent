@@ -2469,7 +2469,7 @@ def list_reviews(
         for question in result_rows:
             confidence = float(question.get("confidence") or 0)
             risks = list(question.get("review_reasons") or []) + list(question.get("risks") or [])
-            stable = (not global_blocker and not question.get("needs_review") and confidence >= 0.85)
+            stable = (not global_blocker and question.get("answer_present") is True and question.get("work_complete") is True and question.get("correct") is True and not question.get("needs_review") and confidence >= 0.85)
             target = stable_items if stable else exception_items
             target.append({
                 "sort_order": question.get("sort_order"),
@@ -2626,7 +2626,7 @@ def confirm_stable_items(submission_id: int, request: Request):
         for question in questions:
             confidence = float(question.get("confidence") or 0)
             prior = question.get("teacher_decision") or {}
-            stable = not question.get("needs_review") and confidence >= 0.85
+            stable = question.get("answer_present") is True and question.get("work_complete") is True and question.get("correct") is True and not question.get("needs_review") and confidence >= 0.85
             if stable and not prior.get("stable_auto_accept"):
                 candidate = float(question.get("score") or 0)
                 question["teacher_decision"] = {

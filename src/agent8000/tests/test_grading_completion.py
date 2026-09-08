@@ -24,9 +24,10 @@ def test_complete_unsimplified_quotient_rule_is_allowed():
     assert result["complete"] is True
 
 
-def test_correct_verdict_does_not_fail_on_false_completion_flag():
+def test_correct_verdict_cannot_override_independent_incomplete_audit():
     result = _completion_check("y' = 3x^2 + 3/(2√x) + 2/x^2", {"work_complete": False, "correct": True, "completion_evidence": "fraction unclosed"})
-    assert result["complete"] is True
+    assert result["complete"] is False
+    assert result["source"] == "vision"
 
 
 def test_all_rubric_points_earned_requires_each_step_to_be_full():

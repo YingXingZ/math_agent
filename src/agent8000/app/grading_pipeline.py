@@ -45,10 +45,9 @@ def _completion_check(recognized_work: str, model_result: dict[str, Any]) -> dic
     declared = model_result.get("work_complete")
     if isinstance(declared, str):
         declared = declared.strip().lower() in {"true", "1", "yes", "complete", "\u5b8c\u6574"}
-    # Vision's completion flag is useful only when it does not contradict the
-    # same model's explicit correctness verdict. Handwritten fractions and
-    # equality signs otherwise get falsely described as unfinished.
-    if declared is False and model_result.get("correct") is not True:
+    # Completion is audited independently without the answer key. A negative
+    # visual verdict must block auto-acceptance even when grading says correct.
+    if declared is False:
         reason = str(model_result.get("completion_evidence") or "视觉识别到作答未完成").strip()
         return {"complete": False, "reason": reason, "source": "vision"}
 
@@ -218,6 +217,70 @@ def _load_images(file_path: str) -> list[str]:
             for page in _submission_page_paths(file_path)]
 
 
+
+def _compact_problem_label(value: str) -> str:
+    """Normalize printed heading text for deterministic PDF anchor matching."""
+    return re.sub(r"[\s·•]+", "", str(value or "")).replace("(", "（").replace(")", "）")
+
+
+def _infer_pdf_question_regions(file_path: str, questions: list[dict[str, Any]]) -> dict[tuple[int, str, int], dict[str, Any]]:
+    """Infer per-question rectangles from the generated PDF's printed headings.
+
+    The crop begins just above its heading and ends just before the next known
+    assignment heading on that page. This uses embedded PDF text coordinates,
+    never VLM number guessing, and therefore cannot drift to another question.
+    """
+    path = Path(file_path)
+    if path.suffix.lower() != ".pdf":
+        return {}
+    try:
+        import fitz
+        document = fitz.open(str(path))
+    except Exception:
+        return {}
+    wanted = {_compact_problem_label(row.get("problem_no")): row for row in questions}
+    anchors: list[dict[str, Any]] = []
+    try:
+        for page_index, page in enumerate(document):
+            for block in page.get_text("blocks"):
+                block_text = _compact_problem_label(block[4])
+                matches = [label for label in wanted if label and block_text.startswith(label)]
+                if not matches:
+                    continue
+                label = max(matches, key=len)
+                row = wanted[label]
+                anchors.append({
+                    "row": row, "page_no": page_index + 1,
+                    "y0": float(block[1]), "page_width": float(page.rect.width),
+                    "page_height": float(page.rect.height),
+                })
+    finally:
+        document.close()
+    by_page: dict[int, list[dict[str, Any]]] = {}
+    for anchor in anchors:
+        by_page.setdefault(anchor["page_no"], []).append(anchor)
+    regions: dict[tuple[int, str, int], dict[str, Any]] = {}
+    for page_no, page_anchors in by_page.items():
+        page_anchors.sort(key=lambda item: item["y0"])
+        for index, anchor in enumerate(page_anchors):
+            page_height = anchor["page_height"]
+            page_width = anchor["page_width"]
+            top = max(0.0, anchor["y0"] - 8.0)
+            next_top = page_anchors[index + 1]["y0"] - 8.0 if index + 1 < len(page_anchors) else page_height - 18.0
+            bottom = max(top + 48.0, min(page_height, next_top))
+            row = anchor["row"]
+            key = (int(row["question_id"]), str(row.get("subpart_no") or ""), int(row["sort_order"]))
+            regions[key] = {
+                "page_no": page_no,
+                "x": 42.0 / page_width,
+                "y": top / page_height,
+                "width": (page_width - 84.0) / page_width,
+                "height": (bottom - top) / page_height,
+                "auto_pdf_anchor": True,
+                "anchor_label": row.get("problem_no"),
+            }
+    return regions
+
 def _crop_confirmed_region(file_path: str, mapping: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """Crop one teacher-confirmed normalized rectangle without modifying the source page."""
     pages = _submission_page_paths(file_path)
@@ -235,15 +298,20 @@ def _crop_confirmed_region(file_path: str, mapping: dict[str, Any]) -> tuple[str
             if right - left < 32 or bottom - top < 32:
                 raise ValueError("教师确认的区域过小，无法可靠识别")
             cropped = image.crop((left, top, right, bottom))
+            coloured_ink_pixels = sum(
+                1 for red, green, blue in cropped.getdata()
+                if blue - red >= 25 and blue - green >= 10 and blue < 250
+            )
             buffer = io.BytesIO()
             cropped.save(buffer, format="PNG", optimize=True)
     except OSError as exc:
         raise ValueError("无法读取教师确认区域所在页图") from exc
     return base64.b64encode(buffer.getvalue()).decode("ascii"), {
-        "mode": "teacher_confirmed_crop",
+        "mode": "auto_pdf_text_crop" if mapping.get("auto_pdf_anchor") else "teacher_confirmed_crop",
         "page_no": page_no,
         "region": {key: float(mapping[key]) for key in ("x", "y", "width", "height")},
         "crop_size": {"width": right - left, "height": bottom - top},
+        "coloured_ink_pixels": coloured_ink_pixels,
     }
 
 
@@ -309,6 +377,11 @@ async def grade_submission(submission_id: int) -> dict[str, Any]:
                FROM submission_question_regions WHERE submission_id=?""", (submission_id,)
         ).fetchall()]
     regions = {(item["question_id"], item["subpart_no"] or "", item["sort_order"]): item for item in region_rows}
+    auto_regions = _infer_pdf_question_regions(submission["file_path"], questions)
+    for key, mapping in auto_regions.items():
+        existing = regions.get(key)
+        if not existing or (float(existing.get("width", 1)) >= 0.999 and float(existing.get("height", 1)) >= 0.999):
+            regions[key] = mapping
     qwen_by_question: dict[str, dict[str, Any]] = {}
     qwen_context_by_question: dict[str, dict[str, Any]] = {}
     crop_errors: dict[str, str] = {}
@@ -373,6 +446,11 @@ async def grade_submission(submission_id: int) -> dict[str, Any]:
                 })
 
     qwen_error = "；".join(qwen_errors)
+    coloured_ink_reference_present = any(
+        context.get("mode") == "auto_pdf_text_crop"
+        and int(context.get("coloured_ink_pixels") or 0) >= 80
+        for context in qwen_context_by_question.values()
+    )
 
     results: list[dict[str, Any]] = []
     for row in questions:
@@ -392,6 +470,15 @@ async def grade_submission(submission_id: int) -> dict[str, Any]:
             qwen["need_review"] = False
             qwen["score_reconciled_from_rubric"] = True
         recognized = str(qwen.get("recognized_work") or "")
+        recognized_compact_length = len(re.sub(r"\s+", "", recognized))
+        dense_ink_low_ocr_coverage = (
+            qwen_input.get("mode") == "auto_pdf_text_crop"
+            and int(qwen_input.get("coloured_ink_pixels") or 0) >= 10000
+            and recognized_compact_length < 40
+        )
+        if dense_ink_low_ocr_coverage:
+            qwen["work_complete"] = False
+            qwen["completion_evidence"] = "题区笔迹较多但识别文本过短，无法确认完整作答"
         is_proof = normalize_question_type(row["question_type"]) == "proof"
         risks = list(qwen.get("risks") or [])
         input_guard = inspect_untrusted_text(str(row["content"] or ""))
@@ -414,15 +501,29 @@ async def grade_submission(submission_id: int) -> dict[str, Any]:
         )
         equivalent = tool_use["math_equivalence"]
         review_reasons: list[str] = []
+        answer_present = qwen.get("answer_present")
+        deterministic_blank = (
+            qwen_input.get("mode") == "auto_pdf_text_crop"
+            and coloured_ink_reference_present
+            and int(qwen_input.get("coloured_ink_pixels") or 0) < 20
+        )
+        if deterministic_blank:
+            answer_present = False
+            qwen["answer_present"] = False
+            qwen["work_complete"] = False
+            qwen["completion_evidence"] = "当前题区未检测到学生彩色手写墨迹"
+            risks.append("确定性空白检测")
+        if answer_present is False:
+            qwen["correct"] = False
+            qwen["score"] = 0.0
+            qwen["need_review"] = False
+            qwen["confidence"] = max(float(qwen.get("confidence") or 0), 0.95)
         feedback_text = str(qwen.get("feedback") or "")
         # A model result that explicitly says the answer is correct must not
         # retain an arbitrary partial score and create a teacher-review task.
         # Strong positive feedback is treated the same way when the provider's
         # boolean flag is internally inconsistent.
-        model_affirms_correct = bool(qwen.get("correct")) or bool(re.search(
-            r"(?:答案|解答|作答).{0,12}(?:正确|符合标准答案)|完全符合标准答案|已经正确地|结果正确",
-            feedback_text,
-        ))
+        model_affirms_correct = bool(qwen.get("correct")) and answer_present is True
         if model_affirms_correct:
             qwen["correct"] = True
             qwen["score"] = float(row["max_score"])
@@ -432,6 +533,8 @@ async def grade_submission(submission_id: int) -> dict[str, Any]:
             review_reasons.append("Qwen 识别失败")
         if qid in crop_errors:
             review_reasons.append(f"已确认区域裁剪失败，已回退整页识别：{crop_errors[qid]}")
+        if answer_present is None:
+            review_reasons.append("纸面作答存在性未能确认")
         if not standard_answer:
             review_reasons.append("缺少标准答案")
         if normalize_question_type(row["question_type"]) != "calc":
@@ -440,7 +543,8 @@ async def grade_submission(submission_id: int) -> dict[str, Any]:
             review_reasons.append("Qwen 置信度不足")
         if not model_affirms_correct and qwen.get("need_review", True):
             review_reasons.append("Qwen 标记为需复核")
-        completion = _completion_check(recognized, qwen)
+        completion = ({"complete": True, "reason": "视觉审计确认未作答，自动记零分", "source": "vision"}
+                      if answer_present is False else _completion_check(recognized, qwen))
         if not completion["complete"]:
             review_reasons.append("作答疑似未完成：" + completion["reason"])
             risks.append("作答完整性拦截：" + completion["reason"])
@@ -488,6 +592,8 @@ async def grade_submission(submission_id: int) -> dict[str, Any]:
             "score": float(qwen.get("score", 0) or 0),
             "max_score": float(row["max_score"]),
             "correct": qwen.get("correct"),
+            "answer_present": answer_present,
+            "work_complete": qwen.get("work_complete"),
             "confidence": float(qwen.get("confidence", 0) or 0),
             "recognized_work": recognized,
             "feedback": str(qwen.get("feedback") or "待教师查看识别结果"),

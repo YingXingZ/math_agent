@@ -154,9 +154,45 @@ def try_parse_json(text: str):
                     return value
             except (json.JSONDecodeError, TypeError):
                 pass
+        stitched = re.sub(r'(?<!\\)"[ \t]*\r?\n[ \t]*"', "", candidate)
+        if stitched != candidate:
+            try:
+                value = json.loads(_escape_math_backslashes(stitched))
+                if isinstance(value, dict):
+                    return value
+            except (json.JSONDecodeError, TypeError):
+                pass
     return None
 
 
+
+def verify_indefinite_integral(problem_text: str, answer: str) -> dict:
+    """Check F'(x)=f(x) for simple one-variable text-form indefinite integrals."""
+    match = re.search(r"\u222b\s*(.*?)\s*d\s*x\b", problem_text or "", re.S)
+    if not match:
+        return {"status": "not_applicable", "reason": "unrecognized_integral"}
+    try:
+        import sympy as sp
+        from sympy.parsing.sympy_parser import (
+            parse_expr, standard_transformations,
+            implicit_multiplication_application, convert_xor,
+        )
+        transformations = standard_transformations + (implicit_multiplication_application, convert_xor)
+        x = sp.symbols("x")
+        def parse_math(value: str):
+            value = value.replace("^", "**").replace("\\left", "").replace("\\right", "")
+            value = re.sub(r"e\*\*\(?([A-Za-z0-9]+)\)?", r"exp(\1)", value)
+            return parse_expr(value.strip(), local_dict={"x": x, "e": sp.E, "exp": sp.exp},
+                              transformations=transformations, evaluate=True)
+        integrand = parse_math(match.group(1))
+        primitive_text = (answer or "").rsplit("=", 1)[-1].strip()
+        primitive_text = re.sub(r"\+\s*[Cc]\b", "", primitive_text)
+        residual = sp.simplify(sp.diff(parse_math(primitive_text), x) - integrand)
+        if residual == 0:
+            return {"status": "passed", "method": "sympy_derivative"}
+        return {"status": "failed", "method": "sympy_derivative", "residual": str(residual)[:240]}
+    except Exception as exc:
+        return {"status": "not_verifiable", "reason": str(exc)[:180]}
 def _generate_unlocked(messages, max_new_tokens=2400):
     chat_text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     image_inputs, video_inputs = process_vision_info(messages)
@@ -381,7 +417,19 @@ def solve_without_answer_book(req: SolveRequest):
     raw = generate([{"role": "user", "content": [{"type": "text", "text": prompt}]}], 1800)
     result = try_parse_json(raw)
     if not result or not str(result.get("std_answer", "")).strip():
-        raise HTTPException(422, "independent solve did not return a usable answer")
+        repair_prompt = f"""Convert the following draft into strict JSON only.
+The result must contain a non-empty std_answer final answer.
+Format: {{"ptype":"calc","std_answer":"final answer","full_solution":"derivation","confidence":0.0,"risks":[]}}
+Draft:
+{raw[:5000]}"""
+        repaired = generate(
+            [{"role": "user", "content": [{"type": "text", "text": repair_prompt}]}],
+            700,
+        )
+        result = try_parse_json(repaired)
+    if not result or not str(result.get("std_answer", "")).strip():
+        raise HTTPException(422, detail={"message": "independent solve did not return a usable answer",
+                                         "raw_preview": raw[:800]})
     result["ptype"] = result.get("ptype") if result.get("ptype") in {"calc", "proof"} else "calc"
     result["std_answer"] = str(result.get("std_answer") or "")
     result["full_solution"] = str(result.get("full_solution") or "")
@@ -390,6 +438,15 @@ def solve_without_answer_book(req: SolveRequest):
     except Exception:
         result["confidence"] = 0.0
     result["risks"] = result.get("risks") if isinstance(result.get("risks"), list) else [str(result.get("risks") or "")]
+    verification = verify_indefinite_integral(req.problem_text, result["std_answer"])
+    result["symbolic_verification"] = verification
+    result["symbolic_verified"] = verification.get("status") == "passed"
+    if verification.get("status") == "failed":
+        result["confidence"] = 0.0
+        result["risks"].append("symbolic_derivative_check_failed")
+    elif verification.get("status") != "passed" and result["ptype"] == "calc":
+        result["confidence"] = min(float(result["confidence"] or 0), 0.5)
+        result["risks"].append("symbolic_derivative_check_unavailable")
     result["model"] = "Qwen2.5-VL-3B-Instruct"
     return result
 
@@ -553,24 +610,45 @@ def _audit_completion_for_full_credit(
     problem_no: str,
     page_indices: list[int],
 ) -> dict | None:
-    """Run a narrow visual audit before accepting a handwritten full-score result.
+    """Independently verify that this exact problem has visible student ink.
 
-    The primary grader has to solve mathematics and locate a problem at once.
-    This second, short pass deliberately ignores correctness and inspects only
-    whether the handwriting visibly ends as a finished answer.
+    This pass deliberately receives neither the standard answer nor a solution,
+    preventing the grade pass from turning a reference answer into evidence of
+    a student response.
     """
     selected = [images[index] for index in page_indices if 0 <= index < len(images)] or images
-    prompt = f"""\u4f60\u662f\u4e00\u540d\u4e25\u683c\u7684\u8bd5\u5377\u5b8c\u6574\u6027\u5ba1\u8ba1\u5458\u3002\u53ea\u68c0\u67e5\u9898\u53f7 {problem_no} \u7684\u5b66\u751f\u624b\u5199\u4f5c\u7b54\u662f\u5426\u5728\u7eb8\u9762\u4e0a\u771f\u6b63\u6536\u5c3e\uff0c\u4e0d\u5224\u65ad\u6570\u5b66\u8ba1\u7b97\u6b63\u8bef\u3002
-\u82e5\u7b97\u5f0f\u6700\u540e\u4e00\u884c\u6709\u5b64\u7acb\u7684 +\u3001-\u3001=\u3001\u4e58\u9664\u53f7\uff0c\u672a\u95ed\u5408\u7684\u5206\u5f0f/\u62ec\u53f7\uff0c\u6216\u660e\u663e\u8fd8\u5728\u5199\u63a8\u5bfc\u4f46\u672a\u5199\u5b8c\u5f53\u524d\u5f0f\u5b50\uff0c\u5fc5\u987b\u5224\u5b9a work_complete=false\u3002\u5b8c\u6574\u4f46\u672a\u5316\u7b80\u7684\u5546\u6cd5\u5219\u516c\u5f0f\u4e0d\u7b97\u672a\u5b8c\u6210\u3002\u770b\u4e0d\u6e05\u65f6\u4e5f\u5224\u5b9a false\u3002
-\u4ec5\u8f93\u51fa\u4e25\u683c JSON\uff1a{{"work_complete":true\u6216false,"completion_evidence":"\u4e0d\u8d85\u8fc730\u5b57\u7684\u89c6\u89c9\u8bc1\u636e"}}\u3002"""
+    prompt = f"""你是严格的高等数学试卷视觉审计员。只看题号 {problem_no} 的纸面学生作答，不要解题，也没有标准答案可参考。
+必须先判断该题是否真的写了可归属的学生作答。空白、只有题目印刷文字、或只能看到别题作答时 answer_present=false。
+若 answer_present=true，再判断作答是否在纸面上完成。只要最后一行等号右侧有完整表达式、没有尾随运算符，即使没有化简或没有另写最终答案，也必须判 work_complete=true。只有末尾孤立运算符、未闭合分式或括号、省略号，或当前等式明显截断，才判 work_complete=false。不要因手写分数线、根号或排版不工整误判未完成。
+无法将笔迹对应到题号时 answer_present=false；能清楚看到完整表达式时不要保守判 false。
+只输出严格 JSON：{{"answer_present":true或false,"work_complete":true或false,"evidence":"不超过30字的可见纸面证据"}}。"""
     content = [{"type": "image", "image": image} for image in selected]
     content.append({"type": "text", "text": prompt})
-    audit = try_parse_json(generate([{"role": "user", "content": content}], 280))
-    if not isinstance(audit, dict) or not isinstance(audit.get("work_complete"), bool):
+    raw_audit = generate([{"role": "user", "content": content}], 280)
+    audit = try_parse_json(raw_audit)
+    if not isinstance(audit, dict):
+        present_match = re.search(r"answer_present[\"'：:=\s]+(true|false|是|否|有|无)", raw_audit, re.I)
+        complete_match = re.search(r"work_complete[\"'：:=\s]+(true|false|是|否|完整|未完成)", raw_audit, re.I)
+        if present_match:
+            audit = {
+                "answer_present": present_match.group(1).lower() in {"true", "是", "有"},
+                "work_complete": bool(complete_match and complete_match.group(1).lower() in {"true", "是", "完整"}),
+                "evidence": raw_audit[:120],
+            }
+        else:
+            return None
+    answer_present = audit.get("answer_present")
+    work_complete = audit.get("work_complete")
+    if isinstance(answer_present, str):
+        answer_present = answer_present.strip().lower() in {"true", "1", "yes", "有", "是"}
+    if isinstance(work_complete, str):
+        work_complete = work_complete.strip().lower() in {"true", "1", "yes", "完整", "是"}
+    if not isinstance(answer_present, bool):
         return None
     return {
-        "work_complete": bool(audit["work_complete"]),
-        "completion_evidence": str(audit.get("completion_evidence") or ""),
+        "answer_present": answer_present,
+        "work_complete": bool(work_complete) if answer_present else True,
+        "completion_evidence": str(audit.get("evidence") or ""),
     }
 
 
@@ -610,12 +688,12 @@ def grade_homework(req: GradeHomeworkRequest):
 满分：{problem.max_score}
 
 请逐步骤比较学生过程与参考解答。允许等价解法；不要因为书写形式不同扣分。若找不到作答、题号错配、图片不清、识别不确定或证明过程需教师判断，need_review 必须为 true。
-你必须真实阅读图片中学生的实际作答，据此给出分数与中文反馈；严禁照抄下面的格式示例里的占位文字。
-只输出严格 JSON，不要 Markdown。格式示例（<...> 为需你填写的字段，输出时不要保留尖括号）：
-{{"located_problem_no":"<你实际定位到的题号，应等于 {problem.problem_no}>","located_problem_text":"<你实际看到的该题题干片段>","score": <数字>, "max_score": {problem.max_score}, "correct": true或false, "confidence": <0到1之间的数字>, "feedback": "<给学生的中文反馈>", "need_review": true或false, "work_complete": true或false, "completion_evidence": "<作答末尾是否完整的图像证据>", "recognized_work": "<识别到的学生步骤>", "matched_image_indices": [<图片序号>], "step_scores": [{{"step": "<步骤说明>", "score": <数字>, "max_score": <数字>}}], "handwriting_score": <0到100整数>, "handwriting_note": "<书写整洁度评价>", "risks": [<风险描述>]}}
 
 首先核查作答是否真正完成：若图中算式末尾留有孤立的 +、-、=、乘除号，未写完的分式/括号，或只停在中间步骤而没有写完当前算式，work_complete 必须为 false，need_review 必须为 true，不得给满分或 correct=true。
 一个完整的、未化简的正确求导/商法则算式仍可以视为完成；只有明显截断或缺步时才拦截。若作答完整性无法从图中确认，按未完成处理。
+你必须真实阅读图片中学生的实际作答，据此给出分数与中文反馈；严禁照抄下面的格式示例里的占位文字。
+只输出严格 JSON，不要 Markdown。格式示例（<...> 为需你填写的字段，输出时不要保留尖括号）：
+{{"located_problem_no":"<你实际定位到的题号，应等于 {problem.problem_no}>","located_problem_text":"<你实际看到的该题题干片段>","score": <数字>, "max_score": {problem.max_score}, "correct": true或false, "confidence": <0到1之间的数字>, "feedback": "<给学生的中文反馈>", "need_review": true或false, "work_complete": true或false, "completion_evidence": "<作答末尾是否完整的图像证据>", "recognized_work": "<识别到的学生步骤>", "matched_image_indices": [<图片序号>], "step_scores": [{{"step": "<步骤说明>", "score": <数字>, "max_score": <数字>}}], "handwriting_score": <0到100整数>, "handwriting_note": "<书写整洁度评价>", "risks": [<风险描述>]}}
 批改结束后请自检：located_problem_no 是否确实等于 {problem.problem_no}？若不等或无法确定，need_review 必须为 true 并在 risks 写明"题号定位可能错配"。
 """
         content = [{"type": "image", "image": image} for image in images]
@@ -639,13 +717,13 @@ def grade_homework(req: GradeHomeworkRequest):
         # A separately prompted visual check prevents a correct intermediate
         # formula from silently becoming a full-credit result when the final
         # line visibly trails off.
-        if parsed.get("correct") is True and score >= float(problem.max_score) - 1e-6:
-            completion_audit = _audit_completion_for_full_credit(
-                images, str(problem.problem_no), located_pages
-            )
-            if completion_audit is not None:
-                parsed["work_complete"] = completion_audit["work_complete"]
-                parsed["completion_evidence"] = completion_audit["completion_evidence"]
+        completion_audit = _audit_completion_for_full_credit(
+            images, str(problem.problem_no), located_pages
+        )
+        if completion_audit is not None:
+            parsed["answer_present"] = completion_audit["answer_present"]
+            parsed["work_complete"] = completion_audit["work_complete"]
+            parsed["completion_evidence"] = completion_audit["completion_evidence"]
         confidence = max(0.0, min(1.0, float(parsed.get("confidence", 0) or 0)))
         located_no = str(parsed.get("located_problem_no") or "").strip()
         located_text = str(parsed.get("located_problem_text") or "")
@@ -662,11 +740,19 @@ def grade_homework(req: GradeHomeworkRequest):
         work_complete = parsed.get("work_complete")
         if isinstance(work_complete, str):
             work_complete = work_complete.strip().lower() in {"true", "1", "yes", "complete", "完整"}
-        if work_complete is False:
+        answer_present = parsed.get("answer_present")
+        if answer_present is False:
+            score = 0.0
+            parsed["correct"] = False
+            confidence = 0.95
+            risks.append("视觉审计确认该题未见可归属学生作答")
+        elif work_complete is False:
             score = min(score, float(problem.max_score) * 0.60)
             confidence = min(confidence, 0.60)
             risks.append("作答疑似未完成：" + str(parsed.get("completion_evidence") or "视觉识别结果"))
-        need_review = bool(parsed.get("need_review", True)) or confidence < 0.85 or mislocated or work_complete is False
+        if answer_present is None:
+            risks.append("纸面作答存在性审计未返回可解析结果")
+        need_review = False if answer_present is False else (answer_present is not True or bool(parsed.get("need_review", True)) or confidence < 0.85 or mislocated or work_complete is False)
         results.append({
             "problem_id": problem.problem_id,
             "problem_no": problem.problem_no,
@@ -678,6 +764,7 @@ def grade_homework(req: GradeHomeworkRequest):
             "confidence": confidence,
             "feedback": str(parsed.get("feedback", "")),
             "need_review": need_review,
+            "answer_present": answer_present,
             "work_complete": work_complete,
             "completion_evidence": str(parsed.get("completion_evidence", "")),
             "recognized_work": str(parsed.get("recognized_work", "")),
