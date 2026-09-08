@@ -559,8 +559,38 @@ async function saveQuestion(){
   }catch(e){$('eqMsg').textContent='保存失败：'+e.message;}
 }
 function _eqList(){return $('eqQueue').value.split(/\s+/).map(s=>s.trim()).filter(s=>/^\d+$/.test(s)).map(Number);}
-function normalizeMathText(txt){return String(txt||'').replace(/\\n/g,'\n').replace(/\\r/g,'\n').replace(/\n{3,}/g,'\n\n')}
-function renderMath(div,txt){if(!div)return;const normalized=normalizeMathText(txt);try{if(window.MathJax&&MathJax.typesetClear)MathJax.typesetClear([div]);div.textContent=normalized;if(window.MathJax&&MathJax.typesetPromise){MathJax.typesetPromise([div]).catch(()=>{div.textContent=normalized})}}catch(_){div.textContent=normalized}}
+function repairLatexEnvironments(txt){
+  const source=String(txt||''),tokenRe=/\\(begin|end)\{([A-Za-z*]+)\}/g,tokens=[],stack=[];
+  let match;
+  while((match=tokenRe.exec(source))){
+    const token={start:match.index,end:tokenRe.lastIndex,type:match[1],name:match[2],keep:false};
+    tokens.push(token);
+    if(token.type==='begin'){stack.push(token);continue}
+    const begin=stack.length&&stack[stack.length-1].name===token.name?stack.pop():null;
+    if(begin){begin.keep=true;token.keep=true}
+  }
+  if(tokens.every(token=>token.keep))return source;
+  let out='',cursor=0;
+  tokens.forEach(token=>{out+=source.slice(cursor,token.start);if(token.keep)out+=source.slice(token.start,token.end);cursor=token.end});
+  return out+source.slice(cursor);
+}
+function normalizeMathText(txt){
+  const normalized=String(txt||'').replace(/\\n/g,'\n').replace(/\\r/g,'\n').replace(/\n{3,}/g,'\n\n');
+  return repairLatexEnvironments(normalized);
+}
+function renderMath(div,txt){
+  if(!div)return;
+  const normalized=normalizeMathText(txt),fallback=normalized.replace(/\\(?:begin|end)\{[^}]+\}/g,'');
+  try{
+    if(window.MathJax&&MathJax.typesetClear)MathJax.typesetClear([div]);
+    div.textContent=normalized;
+    if(window.MathJax&&MathJax.typesetPromise){
+      MathJax.typesetPromise([div]).then(()=>{
+        if(div.querySelector('[data-mml-node="merror"], mjx-merror'))div.textContent=fallback;
+      }).catch(()=>{div.textContent=fallback});
+    }
+  }catch(_){div.textContent=fallback}
+}
 function previewEq(){renderMath($('eqPrevContent'),$('eqContent').value);renderMath($('eqPrevAnswer'),$('eqAnswer').value);renderMath($('eqPrevRubric'),$('eqRubric').value)}
 function _whenMathJax(cb){if(window.MathJax&&MathJax.startup&&MathJax.startup.promise){MathJax.startup.promise.then(cb);return}const t=setInterval(()=>{if(window.MathJax&&MathJax.startup&&MathJax.startup.promise){clearInterval(t);MathJax.startup.promise.then(cb)}},300);setTimeout(()=>clearInterval(t),15000)}
 _whenMathJax(previewEq);
