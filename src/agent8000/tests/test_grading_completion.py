@@ -14,12 +14,12 @@ def test_terminal_operator_is_blocked():
 
 
 def test_unclosed_delimiter_is_blocked():
-    result = _completion_check(r"y' = rac{x+1}{x-1", {"work_complete": True})
+    result = _completion_check(r"y' = \frac{x+1}{x-1", {"work_complete": True})
     assert result["complete"] is False
 
 
 def test_complete_unsimplified_quotient_rule_is_allowed():
-    work = r"y' = rac{(1+\sec^2 x)(x-	an x)-(x+	an x)(1-\sec^2 x)}{(x-	an x)^2}"
+    work = r"y' = \frac{(1+\sec^2 x)(x-\tan x)-(x+\tan x)(1-\sec^2 x)}{(x-\tan x)^2}"
     result = _completion_check(work, {"work_complete": True})
     assert result["complete"] is True
 
