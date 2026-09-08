@@ -579,7 +579,9 @@ function repairJsonDamagedLatex(txt){
     .replace(/\f(?=rac\b)/g,'\\f')
     .replace(/\t(?=(?:heta|an)\b)/g,'\\t')
     .replace(/\n[ \t]*ight\b/g,'\\right')
-    .replace(/\n[ \t]*ho\b/g,'\\rho');
+    .replace(/\n[ \t]*ho\b/g,'\\rho')
+    .replace(/\\\\(?=[\[\]()])/g,'\\')
+    .replace(/\\\\(?=(?:begin|end|frac|sqrt|left|right|sin|cos|tan|sec|csc|cot|rho|theta|pi|cdot|times)\b)/g,'\\');
 }
 function wrapBareLatexLines(txt){
   return String(txt||'').split('\n').map(line=>{
