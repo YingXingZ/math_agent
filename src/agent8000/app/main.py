@@ -180,6 +180,8 @@ class AssignmentIn(BaseModel):
 
 class QuestionReviewDecisionIn(BaseModel):
     sort_order: int = Field(ge=1)
+    question_id: int | None = Field(default=None, gt=0)
+    subpart_no: str = Field(default="", max_length=30)
     score: float = Field(ge=0)
     feedback: str = Field(default="", max_length=2000)
 
@@ -2576,6 +2578,7 @@ def batch_confirm_reviews(payload: BatchReviewIn, request: Request):
                 }
                 decisions.append({
                     "sort_order": question.get("sort_order"), "question_id": question.get("question_id"),
+                    "subpart_no": question.get("subpart_no"), "problem_no": question.get("problem_no"),
                     "candidate_score": candidate, "max_score": question.get("max_score"),
                     "confirmed_score": candidate, "teacher_feedback": "",
                 })
@@ -2867,15 +2870,26 @@ def confirm_review(submission_id: int, decision: ReviewDecisionIn, request: Requ
         if not rows:
             raise HTTPException(409, "尚无逐题初评证据，不能确认成绩")
 
-        provided: dict[int, QuestionReviewDecisionIn] = {}
+        row_keys = {
+            (int(row.get("question_id") or 0), str(row.get("subpart_no") or ""), int(row.get("sort_order") or 0))
+            for row in rows
+        }
+        provided: dict[tuple[int, str, int], QuestionReviewDecisionIn] = {}
         for item in decision.question_decisions:
-            if item.sort_order in provided:
-                raise HTTPException(422, f"第 {item.sort_order} 题重复提交裁定")
-            provided[item.sort_order] = item
-        known_orders = {int(row.get("sort_order") or 0) for row in rows}
-        unknown_orders = set(provided) - known_orders
-        if unknown_orders:
-            raise HTTPException(422, "裁定中包含不存在的题目序号")
+            if item.question_id is not None:
+                key = (item.question_id, item.subpart_no or "", item.sort_order)
+                if key not in row_keys:
+                    raise HTTPException(422, "裁定中包含不存在的原题或小问")
+            else:
+                # Backward compatibility is safe only when this order maps to
+                # exactly one item. Extracted subparts must use the composite key.
+                matches = [key for key in row_keys if key[2] == item.sort_order]
+                if len(matches) != 1:
+                    raise HTTPException(422, f"第 {item.sort_order} 组包含多个小问，请刷新页面后再提交")
+                key = matches[0]
+            if key in provided:
+                raise HTTPException(422, "同一原题小问重复提交裁定")
+            provided[key] = item
 
         final_items, decision_items = [], []
         for row in rows:
@@ -2883,7 +2897,8 @@ def confirm_review(submission_id: int, decision: ReviewDecisionIn, request: Requ
             order = int(item.get("sort_order") or 0)
             max_score = float(item.get("max_score") or 0)
             candidate_score = float(item.get("score") or 0)
-            selected = provided.get(order)
+            item_key = (int(item.get("question_id") or 0), str(item.get("subpart_no") or ""), order)
+            selected = provided.get(item_key)
             if selected:
                 if selected.score > max_score + 1e-9:
                     raise HTTPException(422, f"第 {order} 题确认分不能超过满分 {max_score:g}")
@@ -2898,6 +2913,7 @@ def confirm_review(submission_id: int, decision: ReviewDecisionIn, request: Requ
                     item["feedback"] = final_feedback
                 decision_items.append({
                     "sort_order": order, "question_id": item.get("question_id"),
+                    "subpart_no": item.get("subpart_no"), "problem_no": item.get("problem_no"),
                     "candidate_score": candidate_score, "max_score": max_score,
                     "confirmed_score": final_score, "teacher_feedback": final_feedback,
                 })
@@ -2906,6 +2922,7 @@ def confirm_review(submission_id: int, decision: ReviewDecisionIn, request: Requ
                 item["score"] = final_score
                 decision_items.append({
                     "sort_order": order, "question_id": item.get("question_id"),
+                    "subpart_no": item.get("subpart_no"), "problem_no": item.get("problem_no"),
                     "candidate_score": candidate_score, "max_score": max_score,
                     "confirmed_score": final_score,
                     "teacher_feedback": str(prior_decision.get("feedback") or ""),

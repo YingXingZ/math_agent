@@ -200,7 +200,7 @@ function renderReviewQueue(reviews, assignments){
     '<button class="btn secondary" onclick="resetReviewFilters()">清除筛选</button></div>';
   const body=reviews.length?reviews.map(x=>{
     const exceptions=x.exception_questions||[];
-    const lines=exceptions.map(q=>'第 '+esc(q.sort_order||'?')+' 题：'+esc((q.reasons||[]).join('、'))+'（置信度 '+Math.round(Number(q.confidence||0)*100)+'%）').join('<br>')||'系统正在补充逐题证据。';
+    const lines=exceptions.map(q=>esc(q.problem_no||('第 '+(q.sort_order||'?')+' 题'))+'：'+esc((q.reasons||[]).join('、'))+'（置信度 '+Math.round(Number(q.confidence||0)*100)+'%）').join('<br>')||'系统正在补充逐题证据。';
     const stable=Number(x.stable_question_count||0), total=Number(x.question_count||0), abnormal=Number(x.exception_question_count||0);
     const accept=x.can_confirm_stable_items?'<button class="btn secondary" onclick="confirmStableItems('+x.id+')">确认 '+stable+' 道稳定题</button> ':'';
     return '<div class="item" style="align-items:flex-start"><div style="flex:1;min-width:0"><b>'+esc(x.title)+' · '+esc(x.student_name||x.student_no)+'</b><div class="hint">'+esc(x.class_name||'')+' · 共 '+total+' 题；<b style="color:#087f75">稳定 '+stable+' 题</b>；<b style="color:#b45309">仅需处理 '+abnormal+' 题</b></div><div class="hint">优先级 '+x.priority+'：'+esc((x.priority_reasons||[]).join('、')||'常规复核')+'</div><details style="margin-top:7px"><summary>查看异常小问（'+abnormal+'）</summary><div class="hint" style="line-height:1.7;margin-top:6px">'+lines+'</div></details></div><div>'+accept+'<button class="btn" onclick="showEvidence('+x.id+',false)">查看全部逐题证据</button></div></div>';
@@ -337,7 +337,7 @@ async function showEvidence(id,exceptionsOnly=false){
     const x=await api(`/submissions/${id}/grading`);
     const r=x.grading_result||{};
     const allQuestions=r.results||[];
-    const isStable=q=>!r.qwen_error&&!q.needs_review&&Number(q.confidence||0)>=.85;
+    const isStable=q=>!r.qwen_error&&q.answer_present===true&&q.work_complete===true&&q.correct===true&&!q.needs_review&&Number(q.confidence||0)>=.85;
     const stableQuestions=allQuestions.filter(isStable);
     const questions=exceptionsOnly?allQuestions.filter(q=>!isStable(q)):allQuestions;
     const body=questions.map(q=>{
@@ -349,7 +349,7 @@ async function showEvidence(id,exceptionsOnly=false){
       const prior=q.teacher_decision||{};
       const score=prior.score??q.score??0;
       const feedback=prior.feedback??'';
-      return `<article class="item review-editor" data-review-order="${Number(q.sort_order)}" style="margin:12px 0;border-left:4px solid ${q.needs_review?'#f59e0b':'#34d399'}">
+      return `<article class="item review-editor" data-review-order="${Number(q.sort_order)}" data-review-question-id="${Number(q.question_id)}" data-review-subpart="${esc(q.subpart_no||'')}" style="margin:12px 0;border-left:4px solid ${q.needs_review?'#f59e0b':'#34d399'}">
         <div style="display:flex;justify-content:space-between;gap:12px;align-items:start"><b>${esc(q.problem_no||("第 "+q.sort_order+" 题"))}</b><span class="tag" style="background:${q.needs_review?'#fff7ed':'#ecfdf5'};color:${color}">${status}</span></div>
         <div class="hint">初评候选分：<b>${esc(q.score??'待定')} / ${esc(q.max_score??'—')}</b>　识别/初评置信度：${Math.round(Number(q.confidence||0)*100)}%</div>
         <div class="hint">识别来源：${q.qwen_input?.mode==='auto_pdf_text_crop'?'PDF 原题号自动裁切（第 '+esc(q.qwen_input?.page_no||'—')+' 页）':q.qwen_input?.mode==='teacher_confirmed_crop'?'教师确认区域（第 '+esc(q.qwen_input?.page_no||'—')+' 页，已按本小问单独初评）':q.qwen_input?.mode==='full_page_locator_fallback'?'区域裁剪失败后回退整页定位':q.qwen_input?.mode==='full_page_locator'?'整页题号定位（尚未确认区域）':'初评暂不可用'}</div>
@@ -475,10 +475,12 @@ async function confirmEvidence(id){
   const question_decisions=[];
   for(const row of rows){
     const sort_order=Number(row.dataset.reviewOrder);
+    const question_id=Number(row.dataset.reviewQuestionId);
+    const subpart_no=String(row.dataset.reviewSubpart||'');
     const score=Number(row.querySelector('.teacher-score')?.value);
     const feedback=String(row.querySelector('.teacher-feedback')?.value||'').trim();
-    if(!Number.isFinite(score)||score<0){alert('请填写有效的逐题确认分。');return}
-    question_decisions.push({sort_order,score,feedback});
+    if(!Number.isFinite(question_id)||question_id<=0||!Number.isFinite(score)||score<0){alert('逐题标识或确认分无效，请刷新后重试。');return}
+    question_decisions.push({sort_order,question_id,subpart_no,score,feedback});
   }
   if(!confirm('确认后将保存逐题裁定并把总分自动汇总；仍可在此后发布给学生。是否继续？'))return;
   try{
