@@ -20,6 +20,7 @@ from .db import connection, normalize_question_type
 from .agent_tools import run_tool_use
 from .llm_provider import grade_homework, model_runtime
 from .prompt_security import inspect_untrusted_text
+from .quality_gates import audit_rubric, normalize_step_scores
 
 
 def _recognition_is_contaminated(recognized_work: str, reference_answer: str) -> bool:
@@ -384,13 +385,18 @@ async def grade_submission(submission_id: int) -> dict[str, Any]:
                 "grading_key": f"{parent['question_id']}:{part['subpart_no']}",
                 "problem_no": f"{parent['original_no'] or parent['sort_order']}（{part['subpart_no']}）",
             })
+    rubric_audits: dict[str, dict[str, Any]] = {}
+    for row in questions:
+        rubric_audits[row["grading_key"]] = audit_rubric(
+            row["content"], row["answer"] or "", row["rubric"] or "", float(row["max_score"])
+        )
     problems = [
         {
             "problem_id": row["grading_key"],
             "problem_no": row["problem_no"],
             "problem_text": row["content"],
             "std_answer": row["answer"] or "",
-            "full_solution": row["rubric"] or "",
+            "full_solution": rubric_audits[row["grading_key"]]["effective_solution"],
             "max_score": float(row["max_score"]),
         }
         for row in questions
@@ -487,11 +493,13 @@ async def grade_submission(submission_id: int) -> dict[str, Any]:
         qwen = qwen_by_question.get(qid, {})
         qwen_input = qwen_context_by_question.get(qid, {"mode": "unknown"})
         standard_answer = row["answer"] or ""
+        rubric_audit = rubric_audits[qid]
+        step_score_audit = normalize_step_scores(qwen, float(row["max_score"]))
         # The structured rubric is the most specific scoring evidence. If the
         # model says the answer is correct and every rubric point is awarded,
         # a stale aggregate score or conservative confidence must not reduce
         # the grade or create manual-review work.
-        rubric_full_credit = bool(qwen.get("correct") is True and _all_rubric_points_earned(qwen))
+        rubric_full_credit = bool(rubric_audit["valid"] and qwen.get("correct") is True and _all_rubric_points_earned(qwen))
         if rubric_full_credit:
             qwen["score"] = float(row["max_score"])
             qwen["max_score"] = float(row["max_score"])
@@ -577,6 +585,8 @@ async def grade_submission(submission_id: int) -> dict[str, Any]:
             review_reasons.append("纸面作答存在性未能确认")
         if not standard_answer:
             review_reasons.append("缺少标准答案")
+        if not rubric_audit["valid"]:
+            review_reasons.append("评分标准异常，已回退标准答案：" + "；".join(rubric_audit["issues"]))
         if normalize_question_type(row["question_type"]) != "calc":
             review_reasons.append("证明/非计算题需教师复核")
         if not model_affirms_correct and float(qwen.get("confidence", 0) or 0) < 0.85:
@@ -642,6 +652,8 @@ async def grade_submission(submission_id: int) -> dict[str, Any]:
             "feedback": str(qwen.get("feedback") or "待教师查看识别结果"),
             "completion": completion,
             "task_coverage": task_coverage,
+            "rubric_audit": rubric_audit,
+            "step_score_audit": step_score_audit,
             "needs_review": needs_review,
             "review_reasons": review_reasons,
             "qwen": qwen,
