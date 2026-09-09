@@ -713,7 +713,12 @@ def grade_homework(req: GradeHomeworkRequest):
                       "recognized_work": "", "matched_image_indices": [],
                       "step_scores": [], "handwriting_score": None,
                       "handwriting_note": "", "risks": ["模型结果无法解析"]}
-        score = max(0.0, min(float(problem.max_score), float(parsed.get("score", 0) or 0)))
+        try:
+            score = max(0.0, min(float(problem.max_score), float(parsed.get("score", 0) or 0)))
+        except (TypeError, ValueError):
+            score = 0.0
+            parsed["need_review"] = True
+            parsed["_schema_field_invalid"] = True
         # A separately prompted visual check prevents a correct intermediate
         # formula from silently becoming a full-credit result when the final
         # line visibly trails off.
@@ -724,11 +729,18 @@ def grade_homework(req: GradeHomeworkRequest):
             parsed["answer_present"] = completion_audit["answer_present"]
             parsed["work_complete"] = completion_audit["work_complete"]
             parsed["completion_evidence"] = completion_audit["completion_evidence"]
-        confidence = max(0.0, min(1.0, float(parsed.get("confidence", 0) or 0)))
+        try:
+            confidence = max(0.0, min(1.0, float(parsed.get("confidence", 0) or 0)))
+        except (TypeError, ValueError):
+            confidence = 0.0
+            parsed["need_review"] = True
+            parsed["_schema_field_invalid"] = True
         located_no = str(parsed.get("located_problem_no") or "").strip()
         located_text = str(parsed.get("located_problem_text") or "")
         mislocated = bool(located_no) and located_no != str(problem.problem_no)
-        risks = list(parsed.get("risks", []) or [])
+        risks = list(parsed.get("risks", []) or []) if isinstance(parsed.get("risks", []), list) else ["模型 risks 字段类型异常"]
+        if parsed.pop("_schema_field_invalid", False):
+            risks.append("模型 score 或 confidence 字段类型异常，已降级为人工复核")
         if mislocated or not located_no:
             risks.append(f"题号定位可能错配：模型定位到 {located_no or '未知'}，期望 {problem.problem_no}")
         try:
