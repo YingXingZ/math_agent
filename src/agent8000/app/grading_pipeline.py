@@ -34,6 +34,35 @@ def _recognition_is_contaminated(recognized_work: str, reference_answer: str) ->
     return len(work) >= 30 and len(reference) >= 30 and (work in reference or reference in work)
 
 
+def _numbered_task_coverage(problem_text: str, recognized_work: str) -> dict[str, Any]:
+    """Check whether every explicitly numbered equation task appears in OCR."""
+    text = str(problem_text or "")
+    markers = list(re.finditer(r"(?m)^\s*[（(]\s*(\d+)\s*[)）]", text))
+    if len(markers) < 2:
+        return {"available": False, "required": 0, "matched": 0, "missing": []}
+
+    recognized_compact = re.sub(r"[\s\\{}$]", "", str(recognized_work or "")).lower()
+    signatures: list[tuple[str, str]] = []
+    for index, part in enumerate(markers):
+        segment = text[part.end(): markers[index + 1].start() if index + 1 < len(markers) else len(text)]
+        equation = re.search(r"\$([^$]*=[^$]*)\$", segment)
+        candidate = equation.group(1) if equation else segment
+        lhs = candidate.split("=", 1)[0]
+        signature = re.sub(r"[\s\\{}$]", "", lhs).lower().strip("；;。.，,")
+        if len(signature) >= 3 and any(token in signature for token in ("'", "d/d", "fracd")):
+            signatures.append((part.group(1), signature))
+
+    if len(signatures) < 2:
+        return {"available": False, "required": 0, "matched": 0, "missing": []}
+    matched_parts = [number for number, signature in signatures if signature in recognized_compact]
+    missing_parts = [number for number, _signature in signatures if number not in matched_parts]
+    return {
+        "available": True, "required": len(signatures), "matched": len(matched_parts),
+        "matched_parts": matched_parts, "missing": missing_parts,
+        "ratio": len(matched_parts) / len(signatures),
+    }
+
+
 def _completion_check(recognized_work: str, model_result: dict[str, Any]) -> dict[str, Any]:
     """Reject obviously unfinished work before it can be auto-accepted.
 
@@ -470,6 +499,17 @@ async def grade_submission(submission_id: int) -> dict[str, Any]:
             qwen["need_review"] = False
             qwen["score_reconciled_from_rubric"] = True
         recognized = str(qwen.get("recognized_work") or "")
+        task_coverage = _numbered_task_coverage(str(row.get("content") or ""), recognized)
+        if task_coverage.get("available") and task_coverage["matched"] < task_coverage["required"]:
+            qwen["work_complete"] = False
+            qwen["completion_evidence"] = (
+                f"编号小问仅完成 {task_coverage['matched']}/{task_coverage['required']}，"
+                f"缺少第 {'、'.join(task_coverage['missing'])} 问"
+            )
+            qwen["score"] = min(
+                float(qwen.get("score") or 0),
+                float(row["max_score"]) * float(task_coverage["ratio"]),
+            )
         recognized_compact_length = len(re.sub(r"\s+", "", recognized))
         dense_ink_low_ocr_coverage = (
             qwen_input.get("mode") == "auto_pdf_text_crop"
@@ -554,9 +594,12 @@ async def grade_submission(submission_id: int) -> dict[str, Any]:
             qwen["need_review"] = True
             qwen["correct"] = False
             qwen["confidence"] = min(float(qwen.get("confidence", 0) or 0), 0.60)
+            incomplete_cap = 0.60
+            if task_coverage.get("available") and task_coverage["matched"] < task_coverage["required"]:
+                incomplete_cap = min(incomplete_cap, float(task_coverage["ratio"]))
             qwen["score"] = min(
                 float(qwen.get("score", 0) or 0),
-                float(row["max_score"]) * 0.60,
+                float(row["max_score"]) * incomplete_cap,
             )
         if any("参考答案污染" in str(risk) for risk in risks):
             review_reasons.append("识别文本疑似参考答案污染")
@@ -598,6 +641,7 @@ async def grade_submission(submission_id: int) -> dict[str, Any]:
             "recognized_work": recognized,
             "feedback": str(qwen.get("feedback") or "待教师查看识别结果"),
             "completion": completion,
+            "task_coverage": task_coverage,
             "needs_review": needs_review,
             "review_reasons": review_reasons,
             "qwen": qwen,

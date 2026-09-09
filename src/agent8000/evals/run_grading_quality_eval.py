@@ -5,7 +5,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from app.grading_pipeline import _completion_check, _math_equal, _recognition_is_contaminated
+from app.grading_pipeline import _completion_check, _math_equal, _numbered_task_coverage, _recognition_is_contaminated
 
 CASES_PATH = Path(__file__).with_name("grading_quality_cases.json")
 
@@ -26,6 +26,11 @@ def classify_case(case: dict[str, Any]) -> tuple[str, list[str]]:
     completion = _completion_check(str(case.get("recognized_work") or ""), model_result)
     if not completion["complete"]:
         reasons.append("incomplete")
+    task_coverage = _numbered_task_coverage(
+        str(case.get("problem_text") or ""), str(case.get("recognized_work") or "")
+    )
+    if task_coverage.get("available") and task_coverage["matched"] < task_coverage["required"]:
+        reasons.append("missing_numbered_parts")
 
     recognized = str(case.get("recognized_work") or "")
     standard = str(case.get("standard_answer") or "")

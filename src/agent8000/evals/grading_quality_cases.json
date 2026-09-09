@@ -142,5 +142,31 @@
     "confidence": 0.25,
     "need_review": true,
     "expected": "review"
+  },
+  {
+    "id": "multipart_only_first_answered",
+    "category": "multi_part",
+    "problem_text": "(1) $(\\cot x)'=-\\csc^2 x$；\n(2) $(\\csc x)'=-\\csc x\\cot x$。",
+    "recognized_work": "(cot x)' = -csc^2 x",
+    "standard_answer": "(1) ... (2) ...",
+    "answer_present": true,
+    "work_complete": true,
+    "model_correct": true,
+    "confidence": 0.95,
+    "need_review": false,
+    "expected": "review"
+  },
+  {
+    "id": "multipart_all_answered",
+    "category": "multi_part",
+    "problem_text": "(1) $(\\cot x)'=-\\csc^2 x$；\n(2) $(\\csc x)'=-\\csc x\\cot x$。",
+    "recognized_work": "(cot x)' = -csc^2 x; (csc x)' = -csc x cot x",
+    "standard_answer": "(1) ... (2) ...",
+    "answer_present": true,
+    "work_complete": true,
+    "model_correct": true,
+    "confidence": 0.95,
+    "need_review": false,
+    "expected": "accept"
   }
 ]
