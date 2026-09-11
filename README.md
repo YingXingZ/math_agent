@@ -57,17 +57,10 @@ flowchart LR
 ```bash
 git clone https://github.com/YingXingZ/math_agent.git
 cd math_agent/src/agent8000
-cp .env.example .env                 # Windows PowerShell: Copy-Item .env.example .env
-python -m venv .venv
-# Linux/macOS
-source .venv/bin/activate
-# Windows PowerShell
-# .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8001
+python scripts/bootstrap_local.py --run
 ```
 
-访问 `http://127.0.0.1:8001/docs` 查看 API。开发环境默认使用安全的 inline 队列；真实自动批改请使用生产 Compose 或服务器 systemd 服务，避免在 Web 请求中长时间执行模型调用。
+访问 `http://127.0.0.1:8001/docs` 查看 API。启动脚本、环境变量和完整批改栈说明见 [docs/LOCAL_DEVELOPMENT.md](docs/LOCAL_DEVELOPMENT.md)。开发环境默认使用安全的 inline 队列；真实自动批改请使用生产 Compose 或服务器 systemd 服务，避免在 Web 请求中长时间执行模型调用。
 
 ### 生产部署（Docker Compose）
 
