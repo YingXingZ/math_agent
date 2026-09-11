@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from evals.run_teacher_labeled_eval import CASES, evaluate, run
+from workbench8014.evals.run_teacher_labeled_eval import CASES, evaluate, run
 
 
 def test_teacher_labeled_cases_are_governed_and_baseline_passes(capsys, tmp_path):

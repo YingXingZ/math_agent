@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from scripts.bootstrap_local import venv_python
+from agent8000.scripts.bootstrap_local import venv_python
 
 
 def test_bootstrap_uses_platform_specific_venv_python(tmp_path: Path):
