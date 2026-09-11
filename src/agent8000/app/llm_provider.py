@@ -16,7 +16,35 @@ from .prompt_security import PROMPT_GUARD_VERSION, prepare_problems_for_model
 
 
 class LLMProviderError(RuntimeError):
-    pass
+    """Provider failure with stable, operator-visible retry semantics."""
+
+    def __init__(self, message: str, *, error_code: str = "UPSTREAM_ERROR", retryable: bool = False):
+        super().__init__(message)
+        self.error_code = error_code
+        self.retryable = retryable
+
+    def __str__(self) -> str:
+        return f"{self.error_code}: {super().__str__()}"
+
+
+def normalize_provider_error(exc: Exception) -> LLMProviderError:
+    """Map transport/model failures to a finite contract for the job runner."""
+    if isinstance(exc, LLMProviderError):
+        return exc
+    if isinstance(exc, httpx.TimeoutException):
+        return LLMProviderError("模型服务请求超时", error_code="UPSTREAM_TIMEOUT", retryable=True)
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        return LLMProviderError(
+            f"模型服务返回 HTTP {status}",
+            error_code="UPSTREAM_ERROR" if status >= 500 else "UPSTREAM_REJECTED",
+            retryable=status >= 500,
+        )
+    if isinstance(exc, httpx.RequestError):
+        return LLMProviderError("模型服务不可达", error_code="UPSTREAM_UNAVAILABLE", retryable=True)
+    if isinstance(exc, (json.JSONDecodeError, ValueError, TypeError)):
+        return LLMProviderError("模型服务返回无效 JSON", error_code="MALFORMED_RESPONSE", retryable=False)
+    return LLMProviderError("模型服务发生未分类异常", error_code="UPSTREAM_UNKNOWN", retryable=False)
 
 
 def model_runtime() -> dict[str, str]:
@@ -89,12 +117,15 @@ async def grade_homework(images: list[str], problems: list[dict[str, Any]]) -> l
     # sync with the cloud Qwen path.
     prepared_problems, _assessments = prepare_problems_for_model(problems)
     provider = (settings.llm_provider or "local_qwen").strip().lower()
-    if provider == "qwen_api":
-        return await _call_qwen_api(images, problems)
-    if provider != "local_qwen":
-        raise LLMProviderError("不支持的 LLM_PROVIDER：" + provider)
-    headers = {"X-Internal-API-Key": settings.vlm_internal_api_key} if settings.vlm_internal_api_key else {}
-    async with httpx.AsyncClient(timeout=settings.llm_request_timeout_seconds) as client:
-        response = await client.post(settings.qwen_grading_url, headers=headers, json={"images_base64": images, "problems": prepared_problems, "security_policy": "untrusted_data_only", "prompt_guard_version": PROMPT_GUARD_VERSION})
-        response.raise_for_status()
-        return list(response.json().get("results", []) or [])
+    try:
+        if provider == "qwen_api":
+            return await _call_qwen_api(images, problems)
+        if provider != "local_qwen":
+            raise LLMProviderError("不支持的 LLM_PROVIDER：" + provider, error_code="PROVIDER_NOT_CONFIGURED")
+        headers = {"X-Internal-API-Key": settings.vlm_internal_api_key} if settings.vlm_internal_api_key else {}
+        async with httpx.AsyncClient(timeout=settings.llm_request_timeout_seconds) as client:
+            response = await client.post(settings.qwen_grading_url, headers=headers, json={"images_base64": images, "problems": prepared_problems, "security_policy": "untrusted_data_only", "prompt_guard_version": PROMPT_GUARD_VERSION})
+            response.raise_for_status()
+            return list(response.json().get("results", []) or [])
+    except Exception as exc:
+        raise normalize_provider_error(exc) from exc
