@@ -91,6 +91,7 @@ def _wrap_latex_for_html(text: str) -> str:
     return text
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
@@ -137,6 +138,18 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="高数作业助手", version="0.1.0", lifespan=lifespan)
+
+# Same-origin is the secure default. A separate frontend must opt in through
+# CORS_ORIGINS; wildcard origins are deliberately not supported with cookies.
+_cors_origins = [origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]
+if _cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+        allow_headers=["Content-Type", "X-Request-ID"],
+    )
 
 
 class QuestionIn(BaseModel):

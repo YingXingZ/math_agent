@@ -93,7 +93,8 @@ async def grade_homework(images: list[str], problems: list[dict[str, Any]]) -> l
         return await _call_qwen_api(images, problems)
     if provider != "local_qwen":
         raise LLMProviderError("不支持的 LLM_PROVIDER：" + provider)
+    headers = {"X-Internal-API-Key": settings.vlm_internal_api_key} if settings.vlm_internal_api_key else {}
     async with httpx.AsyncClient(timeout=settings.llm_request_timeout_seconds) as client:
-        response = await client.post(settings.qwen_grading_url, json={"images_base64": images, "problems": prepared_problems, "security_policy": "untrusted_data_only", "prompt_guard_version": PROMPT_GUARD_VERSION})
+        response = await client.post(settings.qwen_grading_url, headers=headers, json={"images_base64": images, "problems": prepared_problems, "security_policy": "untrusted_data_only", "prompt_guard_version": PROMPT_GUARD_VERSION})
         response.raise_for_status()
         return list(response.json().get("results", []) or [])

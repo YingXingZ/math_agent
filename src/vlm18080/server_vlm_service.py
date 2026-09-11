@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hmac
 import io
 import json
 import os
@@ -10,7 +11,8 @@ import re
 from threading import Lock
 
 import torch
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from PIL import Image
 from qwen_vl_utils import process_vision_info
@@ -18,11 +20,25 @@ from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
 
 
 MODEL_PATH = os.environ.get("MATH_VLM_MODEL", "/opt/math-vlm/models/Qwen2.5-VL-3B-Instruct")
+VLM_MODE = os.environ.get("MATH_VLM_MODE", "development").strip().lower()
+INTERNAL_API_KEY = os.environ.get("VLM_INTERNAL_API_KEY", "")
+if VLM_MODE == "production" and not INTERNAL_API_KEY:
+    raise RuntimeError("VLM_INTERNAL_API_KEY is required when MATH_VLM_MODE=production")
 app = FastAPI(title="Private Math VLM Review")
 model = None
 processor = None
 load_lock = Lock()
 inference_lock = Lock()
+
+
+@app.middleware("http")
+async def internal_service_auth(request: Request, call_next):
+    """Protect inference endpoints while leaving the private health probe usable."""
+    if VLM_MODE == "production" and request.method != "GET":
+        supplied = request.headers.get("X-Internal-API-Key", "")
+        if not hmac.compare_digest(supplied, INTERNAL_API_KEY):
+            return JSONResponse(status_code=401, content={"detail": "internal service authentication required"})
+    return await call_next(request)
 
 
 class ReviewRequest(BaseModel):

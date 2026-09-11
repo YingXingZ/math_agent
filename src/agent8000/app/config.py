@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     llm_provider: str = "local_qwen"
     local_qwen_model: str = "local-grade-service"
     qwen_grading_url: str = "http://127.0.0.1:18080/grade-homework"
+    # Shared only with the private VLM service. The key is required when the
+    # VLM runs in production mode and must never be exposed to browsers.
+    vlm_internal_api_key: str = ""
     qwen_api_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     qwen_api_key: str = ""
     qwen_api_model: str = "qwen-plus"
@@ -46,6 +49,10 @@ class Settings(BaseSettings):
     # The public teaching platform always requires an authenticated account.
     # Local development can explicitly set AUTH_REQUIRED=false when needed.
     auth_required: bool = True
+    # Empty means no CORS middleware: browsers may use only same-origin API
+    # calls. Configure a comma-separated allow-list only when a separate UI
+    # origin is intentionally deployed.
+    cors_origins: str = ""
     session_days: int = 14
     session_cookie_name: str = "math_agent_session"
     cookie_secure: bool = False
