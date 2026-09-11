@@ -1,6 +1,6 @@
 import httpx
 
-from src.agent8000.app.llm_provider import LLMProviderError, normalize_provider_error
+from app.llm_provider import LLMProviderError, normalize_provider_error
 
 
 def test_timeout_is_retryable_and_stable():

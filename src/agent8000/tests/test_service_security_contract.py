@@ -1,6 +1,10 @@
 import asyncio
+from pathlib import Path
 
-from src.agent8000.app import llm_provider
+from app import llm_provider
+
+
+SRC_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_local_vlm_request_sends_internal_key(monkeypatch):
@@ -44,16 +48,14 @@ def test_local_vlm_request_sends_internal_key(monkeypatch):
 
 
 def test_vlm_security_contract_is_production_gated():
-    source = open("src/vlm18080/server_vlm_service.py", encoding="utf-8").read()
-
+    source = (SRC_ROOT / "vlm18080" / "server_vlm_service.py").read_text(encoding="utf-8")
     assert 'VLM_MODE == "production" and not INTERNAL_API_KEY' in source
-    assert 'X-Internal-API-Key' in source
-    assert 'internal service authentication required' in source
+    assert "X-Internal-API-Key" in source
+    assert "internal service authentication required" in source
 
 
 def test_agent_cors_is_opt_in_and_never_wildcarded():
-    source = open("src/agent8000/app/main.py", encoding="utf-8").read()
-
+    source = (SRC_ROOT / "agent8000" / "app" / "main.py").read_text(encoding="utf-8")
     assert "settings.cors_origins" in source
     assert "allow_credentials=True" in source
     assert 'allow_origins=["*"]' not in source
