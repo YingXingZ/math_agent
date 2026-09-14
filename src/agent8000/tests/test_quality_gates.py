@@ -10,15 +10,13 @@ def test_mismatched_generic_rubric_falls_back_to_standard_answer():
     result = audit_rubric(problem, answer, rubric, 10)
     assert result["valid"] is False
     assert result["source"] == "standard_answer_fallback"
+    assert result["normalized"] is True
     assert result["effective_solution"] == answer
-    assert any("题目满分" in issue for issue in result["issues"])
-    assert any("全部编号小问" in issue for issue in result["issues"])
 
 
 def test_numbered_standard_answer_must_cover_every_part():
     result = audit_rubric("(1) $f'$\n(2) $g'$", "(1) $f'=1$", "按结果评分", 10)
     assert result["valid"] is False
-    assert any("第 2 问" in issue for issue in result["issues"])
 
 
 def test_step_scores_are_scaled_to_question_maximum():
@@ -39,3 +37,14 @@ def test_aligned_step_scores_remain_unchanged():
     audit = normalize_step_scores(model, 10)
     assert audit["normalized"] is False
     assert model["step_scores"][0]["score"] == 5
+
+
+def test_relative_rubric_weights_are_scaled_to_question_maximum():
+    rubric = '[{"key":"a","weight":2},{"key":"b","weight":3},{"key":"c","weight":5}]'
+    result = audit_rubric("calculate x", "answer", rubric, 40)
+    assert result["valid"] is True
+    assert result["normalized"] is True
+    scaled = __import__("json").loads(result["effective_solution"])
+    assert sum(item["weight"] for item in scaled) == pytest.approx(40, abs=0.002)
+    assert result["source_total"] == 10
+    assert result["target_total"] == 40

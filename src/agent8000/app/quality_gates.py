@@ -7,9 +7,13 @@ from typing import Any
 
 
 def audit_rubric(problem_text: str, standard_answer: str, rubric: str, max_score: float) -> dict[str, Any]:
+    """Validate a rubric and normalize relative point weights to this question."""
     issues: list[str] = []
     parsed: Any = None
     raw = str(rubric or "").strip()
+    normalized = False
+    source_total: float | None = None
+    target_total = float(max_score)
     if raw.startswith("["):
         try:
             parsed = json.loads(raw)
@@ -17,20 +21,31 @@ def audit_rubric(problem_text: str, standard_answer: str, rubric: str, max_score
             issues.append("评分标准 JSON 无法解析")
     if isinstance(parsed, list) and parsed:
         try:
-            total = sum(float(item.get("weight") or item.get("max_score") or 0) for item in parsed)
-            if total <= 0 or abs(total - float(max_score)) > 0.02:
-                issues.append(f"评分点合计 {total:g} 与题目满分 {float(max_score):g} 不一致")
+            source_total = sum(float(item.get("weight") or item.get("max_score") or 0) for item in parsed)
+            if source_total <= 0:
+                issues.append("评分点分值结构无效")
+            elif abs(source_total - target_total) > 0.02:
+                scale = target_total / source_total
+                scaled: list[dict[str, Any]] = []
+                for raw_item in parsed:
+                    item = dict(raw_item)
+                    key = "weight" if item.get("weight") is not None else "max_score"
+                    item[key] = round(float(item.get(key) or 0) * scale, 3)
+                    scaled.append(item)
+                parsed = scaled
+                raw = json.dumps(parsed, ensure_ascii=False)
+                normalized = True
         except (AttributeError, TypeError, ValueError):
             issues.append("评分点分值结构无效")
 
-    expected = list(dict.fromkeys(re.findall(r"(?m)^\s*[（(]\s*(\d+)\s*[)）]", str(problem_text or ""))))
-    answers = set(re.findall(r"(?m)^\s*[（(]\s*(\d+)\s*[)）]", str(standard_answer or "")))
+    expected = list(dict.fromkeys(re.findall(r"(?m)^\s*[\uff08(]\s*(\d+)\s*[)\uff09]", str(problem_text or ""))))
+    answers = set(re.findall(r"(?m)^\s*[\uff08(]\s*(\d+)\s*[)\uff09]", str(standard_answer or "")))
     if len(expected) >= 2:
         missing = [part for part in expected if part not in answers]
         if missing:
             issues.append("标准答案缺少第 " + "、".join(missing) + " 问")
         if isinstance(parsed, list):
-            covered = set(re.findall(r"[（(]\s*(\d+)\s*[)）]", json.dumps(parsed, ensure_ascii=False)))
+            covered = set(re.findall(r"[\uff08(]\s*(\d+)\s*[)\uff09]", json.dumps(parsed, ensure_ascii=False)))
             if any(part not in covered for part in expected):
                 issues.append("结构化评分点未覆盖全部编号小问")
     return {
@@ -38,6 +53,9 @@ def audit_rubric(problem_text: str, standard_answer: str, rubric: str, max_score
         "issues": issues,
         "source": "rubric" if raw and not issues else "standard_answer_fallback",
         "effective_solution": raw if raw and not issues else str(standard_answer or ""),
+        "normalized": normalized,
+        "source_total": source_total,
+        "target_total": target_total,
     }
 
 

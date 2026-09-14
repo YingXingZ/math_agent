@@ -667,7 +667,8 @@ async def grade_submission(submission_id: int) -> dict[str, Any]:
             "evidence": {
                 "source_problem_id": row["source_problem_id"],
                 "standard_answer": standard_answer,
-                "rubric": row["rubric"] or "",
+                "rubric": rubric_audit["effective_solution"],
+                "rubric_source": row["rubric"] or "",
                 "source": json.loads(row["source_evidence_json"] or "{}"),
             },
             "risks": risks,
