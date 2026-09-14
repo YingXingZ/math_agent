@@ -4262,14 +4262,24 @@ def _released_snapshot_review(item: dict[str, Any], mode: str) -> dict[str, Any]
     answer = str(evidence.get("standard_answer") or "").strip()
     rubric = str(evidence.get("rubric") or "").strip()
     feedback = str(item.get("feedback") or "").strip()
-    reference = rubric or answer or feedback or "\u8be5\u9898\u7684\u8be6\u7ec6\u53c2\u8003\u4fe1\u606f\u6682\u65f6\u7f3a\u5931\u3002"
+    fallback = answer or feedback or "该题的详细参考信息暂时缺失。"
+    rubric_details = rubric if rubric.startswith("[") else ""
     if mode == "solution":
-        response = "\u53c2\u8003\u7b54\u6848\uff1a\n" + (answer or "\u6682\u65e0\u72ec\u7acb\u6807\u51c6\u7b54\u6848\u3002") + "\n\n\u89e3\u9898\u53c2\u8003\uff1a\n" + reference
+        response = "参考答案：\n" + (answer or "暂无独立标准答案。")
+        if rubric and not rubric_details:
+            response += "\n\n解题参考：\n" + rubric
     elif mode == "hint":
-        response = "\u5148\u56de\u770b\u672c\u9898\u7684\u8bc4\u8bed\uff0c\u518d\u5bf9\u7167\u4e0b\u65b9\u8981\u70b9\u8865\u5199\u5173\u952e\u6b65\u9aa4\uff1a\n" + (feedback or reference)
+        response = "先回看本题的评语，再对照下方要点补写关键步骤：\n" + (feedback or fallback)
     else:
-        response = "\u672c\u9898\u6279\u6539\u53cd\u9988\uff1a\n" + (feedback or "\u8bf7\u5bf9\u7167\u8bc4\u5206\u8981\u70b9\u68c0\u67e5\u5173\u952e\u63a8\u5bfc\u3002") + "\n\n\u8bc4\u5206\u53c2\u8003\uff1a\n" + reference
-    return {"response":response,"action":"released_snapshot","diagnosis":{"diagnoses":[{"code":"released_snapshot_fallback"}]},"solution_comparison":{"consistent":False},"execution_trace":[{"node":"released_snapshot","skills":["released_evidence_fallback"],"success":True}]}
+        response = "本题批改反馈：\n" + (feedback or "请对照标准答案检查关键推导。") + "\n\n参考解答：\n" + fallback
+    return {
+        "response": response,
+        "rubric_details": rubric_details,
+        "action": "released_snapshot",
+        "diagnosis": {"diagnoses": [{"code": "released_snapshot_fallback"}]},
+        "solution_comparison": {"consistent": False},
+        "execution_trace": [{"node": "released_snapshot", "skills": ["released_evidence_fallback"], "success": True}],
+    }
 
 
 @app.post("/api/student/released-submissions/{submission_id}/mistakes/{question_id}/review")
