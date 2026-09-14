@@ -117,6 +117,9 @@ def _assignment_quality_reason(row: dict[str, Any]) -> str | None:
     """Reject visibly broken imports before they can reach a student worksheet."""
     stem = str(row.get("content") or "").strip()
     answer = str(row.get("answer") or "").strip()
+    rubric = str(row.get("rubric") or "").strip()
+    if not rubric:
+        return "评分点缺失"
     plain = re.sub(r"\\[A-Za-z]+(?:\{[^{}]*\})*", "", stem)
     plain = re.sub(r"[^\w\u4e00-\u9fff]+", "", plain)
     if len(plain) < 12 or not re.search(r"求|证明|计算|判断|作图|讨论|解|导数|积分", stem):
