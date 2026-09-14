@@ -128,6 +128,49 @@ def _all_rubric_points_earned(model_result: dict[str, Any]) -> bool:
         return False
 
 
+def _rubric_coverage(recognized_work: str, effective_rubric: str) -> dict[str, Any]:
+    """Check whether every structured rubric criterion has visible work evidence."""
+    try:
+        items = json.loads(str(effective_rubric or ""))
+    except (TypeError, ValueError):
+        return {"available": False, "complete": False, "matched": [], "missing": []}
+    if not isinstance(items, list) or not items:
+        return {"available": False, "complete": False, "matched": [], "missing": []}
+    raw_work = str(recognized_work or "")
+    compact_work = re.sub(r"\s+", "", raw_work).replace("\\", "")
+    matched: list[str] = []
+    missing: list[str] = []
+    for index, item in enumerate(items, start=1):
+        if not isinstance(item, dict):
+            return {"available": False, "complete": False, "matched": [], "missing": []}
+        patterns = item.get("patterns")
+        if not isinstance(patterns, list) or not patterns:
+            return {"available": False, "complete": False, "matched": [], "missing": []}
+        found = False
+        for value in patterns:
+            pattern = str(value or "").strip()
+            if not pattern:
+                continue
+            try:
+                if re.search(pattern, raw_work, flags=re.IGNORECASE):
+                    found = True
+                    break
+            except re.error:
+                pass
+            compact_pattern = re.sub(r"\s+", "", pattern).replace("\\", "")
+            if compact_pattern and compact_pattern in compact_work:
+                found = True
+                break
+        label = str(item.get("key") or index)
+        (matched if found else missing).append(label)
+    return {
+        "available": True,
+        "complete": not missing,
+        "matched": matched,
+        "missing": missing,
+    }
+
+
 def _math_equal(student_answer: str, standard_answer: str) -> dict[str, Any]:
     """Use the existing symbolic engine as an independent check of Qwen."""
     if not student_answer.strip() or not standard_answer.strip():
@@ -567,6 +610,23 @@ async def grade_submission(submission_id: int) -> dict[str, Any]:
             qwen["need_review"] = False
             qwen["confidence"] = max(float(qwen.get("confidence") or 0), 0.95)
         feedback_text = str(qwen.get("feedback") or "")
+        rubric_coverage = _rubric_coverage(recognized, rubric_audit["effective_solution"])
+        early_completion = _completion_check(recognized, qwen)
+        if (
+            rubric_audit["valid"]
+            and normalize_question_type(row["question_type"]) == "calc"
+            and answer_present is True
+            and rubric_coverage["available"]
+            and rubric_coverage["complete"]
+            and early_completion["complete"]
+            and not (task_coverage.get("available") and task_coverage["matched"] < task_coverage["required"])
+        ):
+            qwen["score"] = float(row["max_score"])
+            qwen["max_score"] = float(row["max_score"])
+            qwen["correct"] = True
+            qwen["confidence"] = max(float(qwen.get("confidence") or 0), 0.90)
+            qwen["need_review"] = False
+            qwen["score_reconciled_from_rubric_coverage"] = True
         # A model result that explicitly says the answer is correct must not
         # retain an arbitrary partial score and create a teacher-review task.
         # Strong positive feedback is treated the same way when the provider's
@@ -653,6 +713,7 @@ async def grade_submission(submission_id: int) -> dict[str, Any]:
             "completion": completion,
             "task_coverage": task_coverage,
             "rubric_audit": rubric_audit,
+            "rubric_coverage": rubric_coverage,
             "step_score_audit": step_score_audit,
             "needs_review": needs_review,
             "review_reasons": review_reasons,

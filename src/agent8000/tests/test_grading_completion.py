@@ -1,4 +1,4 @@
-from app.grading_pipeline import _all_rubric_points_earned, _completion_check, _numbered_task_coverage
+from app.grading_pipeline import _all_rubric_points_earned, _completion_check, _numbered_task_coverage, _rubric_coverage
 
 
 def test_declared_incomplete_work_is_blocked():
@@ -50,3 +50,18 @@ def test_numbered_task_coverage_accepts_all_parts():
 (2) $(\csc x)'= -\csc x\cot x$。"""
     result = _numbered_task_coverage(problem, "(cot x)'=-csc^2 x; (csc x)'=-csc x cot x")
     assert result["matched"] == result["required"] == 2
+
+
+def test_rubric_coverage_accepts_complete_calculation_evidence():
+    rubric = '[{"key":"transform","patterns":["x^2"]},{"key":"a","patterns":["1+a=0","a=-1"]},{"key":"b","patterns":["b-1=2","b=3"]}]'
+    work = "x^2/(x+1)=x-1+1/(x+1); 1+a=0; a=-1; b-1=2; b=3"
+    result = _rubric_coverage(work, rubric)
+    assert result["available"] is True
+    assert result["complete"] is True
+    assert result["missing"] == []
+
+def test_rubric_coverage_requires_every_criterion():
+    rubric = '[{"key":"transform","patterns":["x^2"]},{"key":"a","patterns":["a=-1"]},{"key":"b","patterns":["b=3"]}]'
+    result = _rubric_coverage("x^2; a=-1", rubric)
+    assert result["complete"] is False
+    assert result["missing"] == ["b"]
