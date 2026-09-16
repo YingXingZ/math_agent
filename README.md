@@ -14,11 +14,11 @@
 4. **分层决策**：交叉验证一致且风险低的结果可作为初评参考；缺答、识别异常、表达式无法确认、结果冲突等情形进入教师复核，系统不会将其自动放行为满分。
 5. **可解释与可回归**：每题保存来源题号、裁切证据、路线、工具 Trace、置信度、错误码和人工裁定；固定评测集与 GitHub Actions 防止修改后回归。
 
-完整架构见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，90 秒演示流程见 [docs/DEMO.md](docs/DEMO.md)。
+完整架构见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ![Demo：学生手写作答样例](src/agent8000/app/demo_handwriting_sample.png)
 
-上图为可复现的 demo 手写作答样例；从提交、交叉验证、风险门禁到教师复核的实际运行流程见 [docs/DEMO.md](docs/DEMO.md)。
+上图为可复现的 demo 手写作答样例；项目通过提交、交叉验证、风险门禁与教师复核形成完整闭环。
 
 ## 架构
 
