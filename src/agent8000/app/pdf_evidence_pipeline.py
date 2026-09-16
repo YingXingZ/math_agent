@@ -118,4 +118,4 @@ def build_evidence_manifest(agent_db: Path, workbench_db: Path, image_root: Path
     counts = Counter(item["disposition"] for item in candidates)
     counts.update({"total": len(candidates), "high_risk": sum(item["risk"] == "high" for item in candidates)})
     return {"schema_version": 1, "mode": "read_only_evidence_plan", "image_root": str(image_root), "summary": dict(counts), "candidates": candidates,
-            "next_step": "Only ready_for_teacher_review records may be sent to stage_image_review_candidates.py."}
+            "next_step": "Only ready_for_teacher_review records may proceed to teacher review."}
