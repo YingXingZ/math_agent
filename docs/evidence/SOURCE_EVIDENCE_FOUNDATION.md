@@ -19,7 +19,7 @@ $env:SOURCE_DOCUMENT_ROOT = 'D:\My File\大四\高数教材答案;E:\xwechat_fil
 先做不写库核验：
 
 ```powershell
-python src/tools/register_textbook_documents.py --db api.workbench.db --mapping docs/textbook_document_registration.json --source-root 'D:\My File\大四\高数教材答案' --source-root 'E:\xwechat_files\wxid_l7836vvhxpdh11_4125\msg\file\2026-08' --dry-run
+python src/tools/register_textbook_documents.py --db api.workbench.db --mapping docs/evidence/textbook_document_registration.json --source-root 'D:\My File\大四\高数教材答案' --source-root 'E:\xwechat_files\wxid_l7836vvhxpdh11_4125\msg\file\2026-08' --dry-run
 ```
 
 核验无误后移除 `--dry-run` 执行登记。该命令会自动创建 `textbook_documents`、`problem_source_anchors` 及索引；8014 API 初始化时也会幂等创建同一结构。
@@ -27,13 +27,13 @@ python src/tools/register_textbook_documents.py --db api.workbench.db --mapping 
 只读盘点命令：
 
 ```powershell
-python src/tools/source_document_inventory.py --file 'D:\My File\大四\高数教材答案\李继成高数-教材-上册-2版(1).pdf' --file 'E:\xwechat_files\wxid_l7836vvhxpdh11_4125\msg\file\2026-08\李继成高数-答案-下册-OCR.pdf' --out docs/source_evidence_inventory.json
+python src/tools/source_document_inventory.py --file 'D:\My File\大四\高数教材答案\李继成高数-教材-上册-2版(1).pdf' --file 'E:\xwechat_files\wxid_l7836vvhxpdh11_4125\msg\file\2026-08\李继成高数-答案-下册-OCR.pdf' --out docs/evidence/source_evidence_inventory.json
 ```
 
 风险队列仅做快照、不会把候选当作已证实错误：
 
 ```powershell
-python src/tools/snapshot_risk_queue.py --agent-db src/agent8000/data/homework.db --workbench-db api.workbench.db --out docs/risk_snapshots/current.json
+python src/tools/snapshot_risk_queue.py --agent-db src/agent8000/data/homework.db --workbench-db api.workbench.db --out docs/evidence/risk_snapshots/current.json
 ```
 
 ## 边界与下一步
@@ -43,7 +43,7 @@ python src/tools/snapshot_risk_queue.py --agent-db src/agent8000/data/homework.d
 `src/tools/propose_route2_answer_anchors.py` 对 Route2 答案 PDF 的原生文本块执行三重门禁：章节标题、题号和题干前缀相似度。只有三项均满足的题才会写入 `problem_source_anchors`，状态恒为 `candidate`；它不是 `published`，也不会改题目内容。
 
 ```powershell
-python src/tools/propose_route2_answer_anchors.py --db api.workbench.db --pdf 'E:\xwechat_files\wxid_l7836vvhxpdh11_4125\msg\file\2026-08\李继成高数-答案-下册-OCR.pdf' --out docs/route2_anchor_reviews/current.json
+python src/tools/propose_route2_answer_anchors.py --db api.workbench.db --pdf 'E:\xwechat_files\wxid_l7836vvhxpdh11_4125\msg\file\2026-08\李继成高数-答案-下册-OCR.pdf' --out docs/evidence/route2_anchor_reviews/current.json
 ```
 
 加 `--apply` 才会写入通过门禁的 `candidate` 元数据。2026-08-25 的首次运行写入 14 条候选，34 条仍需教师核对，17 条无编号证据而阻塞。特别地，原 PDF 的 §5.6 在“总习题五”前只出现前两题；数据库中 §5.6 的其余题不得借用后续总习题的同号内容。

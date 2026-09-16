@@ -7,8 +7,8 @@ def test_operator_data_defaults_are_repository_relative() -> None:
     settings = Settings()
 
     assert REPOSITORY_ROOT == PROJECT_ROOT.parents[1]
-    assert Path(settings.garble_audit_csv) == REPOSITORY_ROOT / "docs" / "garble_audit.csv"
-    assert Path(settings.workbench_db_path) == REPOSITORY_ROOT / "api.workbench.db"
+    assert Path(settings.garble_audit_csv) == REPOSITORY_ROOT / "docs" / "evidence" / "garble_audit.csv"
+    assert Path(settings.workbench_db_path) == REPOSITORY_ROOT / "workbench8014" / "api.workbench.db"
 
 
 def test_operator_data_paths_can_be_overridden_by_environment(monkeypatch) -> None:

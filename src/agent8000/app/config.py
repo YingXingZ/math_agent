@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     # Operator-managed evidence files used by the teacher editing workflow.
     # Keep usable repository defaults while allowing deployments to place data
     # outside the source tree.
-    garble_audit_csv: str = str(REPOSITORY_ROOT / "docs" / "garble_audit.csv")
+    garble_audit_csv: str = str(REPOSITORY_ROOT / "docs" / "evidence" / "garble_audit.csv")
     workbench_db_path: str = str(REPOSITORY_ROOT / "workbench8014" / "api.workbench.db")
     # The public teaching platform always requires an authenticated account.
     # Local development can explicitly set AUTH_REQUIRED=false when needed.

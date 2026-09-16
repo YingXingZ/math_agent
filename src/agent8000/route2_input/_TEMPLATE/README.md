@@ -3,7 +3,7 @@
 复制本目录为 `route2_input/<章节>/`，放置该章节每题的裁切图到 `crops/`，
 并按需编辑 `manifest.json`（键名 = 裁切图文件名，含扩展名）。
 
-完成后运行（详见 `高数作业助手/ROUTE2_IMPORT_GUIDE.md`）：
+完成后运行（详见 `docs/operations/ROUTE2_IMPORT_GUIDE.md`）：
 
     VENV=C:/Users/YXZ/.workbuddy/binaries/python/envs/default/Scripts/python.exe
     $VENV route2_chapter_importer.py --chapter <章节> --input route2_input/<章节> --dry-run

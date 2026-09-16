@@ -112,7 +112,7 @@ CI 对 PR 和 `master` 推送执行相同回归，并上传教师标注评测报
 | `src/workbench8014/` | 题目、答案与证据的权威服务；Skill Registry、独立求解、交叉验证与学习 Trace。 |
 | `src/agent8000/evals/`、`src/workbench8014/evals/` | 固定评测、红队输入和发布质量门禁。 |
 | `tests/`、`src/**/tests/` | 集成、鉴权、题目定位、LaTeX、队列与回归测试。 |
-| `docs/` | 架构、Demo、评测基线和诊断文档。 |
+| `docs/` | [文档导航](docs/README.md)：核心说明、运维手册、证据材料与历史归档。 |
 
 ## 安全与数据边界
 
