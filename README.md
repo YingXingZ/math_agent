@@ -16,6 +16,10 @@
 
 完整架构见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，90 秒演示流程见 [docs/DEMO.md](docs/DEMO.md)。
 
+![Demo：学生手写作答样例](src/agent8000/app/demo_handwriting_sample.png)
+
+上图为可复现的 demo 手写作答样例；从提交、交叉验证、风险门禁到教师复核的实际运行流程见 [docs/DEMO.md](docs/DEMO.md)。
+
 ## 架构
 
 ```mermaid
@@ -74,6 +78,17 @@ curl -fsS http://127.0.0.1:8001/healthz
 ```
 
 Compose 会启动 API、RQ Worker、Scheduler 和 Redis；VLM 与 8014 证据服务应部署在仅内网可达的位置。更完整的操作说明见 [src/agent8000/DEPLOYMENT.md](src/agent8000/DEPLOYMENT.md)。
+
+### 前端页面
+
+静态教师前端位于 [`web/`](web/)；8014 服务会将教师资料中心挂载在 `/`，将 OCR 修复复核页挂载在 `/ocr-repair`：
+
+```bash
+python src/workbench8014/run_workbench_8014.py
+# 浏览器打开 http://127.0.0.1:8014/ 或 http://127.0.0.1:8014/ocr-repair
+```
+
+页面依赖本仓库的 8014 API；若只需检查静态布局，可在仓库根目录运行 `python -m http.server 8014 --directory web`。
 
 ## 验证与质量门禁
 

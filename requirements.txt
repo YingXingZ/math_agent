@@ -1,0 +1,2 @@
+# Root install entry point. The runnable service lives in src/agent8000.
+-r src/agent8000/requirements.txt

@@ -38,7 +38,7 @@ app.mount("/api", mod.app)
 @app.get("/")
 def teacher_workbench():
     """Serve the preserved teacher workbench rather than a bare API 404."""
-    page = REPOSITORY_ROOT / "teacher_vision.html"
+    page = REPOSITORY_ROOT / "web" / "teacher_vision.html"
     if not page.is_file():
         raise RuntimeError(f"Teacher workbench page does not exist: {page}")
     return FileResponse(page)
@@ -46,7 +46,7 @@ def teacher_workbench():
 
 @app.get("/ocr-repair")
 def ocr_repair_workbench():
-    page = REPOSITORY_ROOT / "ocr_repair_review.html"
+    page = REPOSITORY_ROOT / "web" / "ocr_repair_review.html"
     if not page.is_file():
         raise RuntimeError(f"OCR repair page does not exist: {page}")
     return FileResponse(page)
