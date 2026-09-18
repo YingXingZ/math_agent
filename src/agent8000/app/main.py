@@ -267,6 +267,11 @@ class InviteCreateIn(BaseModel):
     expires_days: int = Field(default=14, ge=1, le=90)
 
 
+class StudentPasswordResetIn(BaseModel):
+    token: str = Field(min_length=20, max_length=300)
+    password: str = Field(min_length=10, max_length=200)
+
+
 class StudentActivateIn(BaseModel):
     invite_code: str = Field(min_length=16, max_length=160)
     student_no: str = Field(min_length=1, max_length=32)
@@ -1341,16 +1346,64 @@ def create_class(payload: ClassIn, request: Request):
     return {"id": cur.lastrowid, "name": name, "semester": semester}
 
 
+@app.delete("/api/classes/{class_id}")
+def delete_class(class_id: int, request: Request):
+    """Delete a setup mistake only when no assignment has ever used the class."""
+    actor = require_roles(request, {"admin", "teacher"})
+    with connection() as conn:
+        row = _require_class(conn, class_id, actor)
+        assignment_count = conn.execute("SELECT COUNT(*) FROM assignments WHERE class_id=?", (class_id,)).fetchone()[0]
+        if assignment_count:
+            raise HTTPException(409, "该班级已有作业记录，不能删除；请保留教学与成绩证据。")
+        conn.execute("DELETE FROM class_invites WHERE class_id=?", (class_id,))
+        conn.execute("DELETE FROM students WHERE class_id=?", (class_id,))
+        conn.execute("DELETE FROM classes WHERE id=?", (class_id,))
+    audit(actor, "class.delete", "class", class_id, row["teacher_user_id"], {"name": row["name"]})
+    return {"ok": True, "message": "班级已删除"}
+
+
 @app.get("/api/classes/{class_id}/students")
 def list_class_students(class_id: int, request: Request):
     actor = require_roles(request, {"admin", "teacher"})
     with connection() as conn:
         _require_class(conn, class_id, actor)
         rows = conn.execute(
-            "SELECT id,student_no,name,created_at FROM students WHERE class_id=? ORDER BY student_no", (class_id,)
+            "SELECT id,student_no,name,user_id,created_at FROM students WHERE class_id=? ORDER BY student_no", (class_id,)
         ).fetchall()
     return [dict(row) for row in rows]
 
+
+@app.post("/api/classes/{class_id}/students/{student_id}/password-reset")
+def create_student_password_reset(class_id: int, student_id: int, request: Request):
+    """Teacher issues a 24-hour, one-time reset link for one activated student."""
+    actor = require_roles(request, {"admin", "teacher"})
+    raw_token = "MATH-RESET-" + __import__("secrets").token_urlsafe(24)
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+    with connection() as conn:
+        classroom = _require_class(conn, class_id, actor)
+        student = conn.execute("SELECT id,name,student_no,user_id FROM students WHERE id=? AND class_id=?", (student_id, class_id)).fetchone()
+        if not student:
+            raise HTTPException(404, "学生不在该班级名单中")
+        if not student["user_id"]:
+            raise HTTPException(409, "该学生尚未激活账号，暂时不能重置密码")
+        conn.execute("UPDATE password_reset_tokens SET used_at=? WHERE user_id=? AND used_at IS NULL", (datetime.now(timezone.utc).isoformat(), student["user_id"]))
+        cur = conn.execute("INSERT INTO password_reset_tokens(user_id,token_hash,expires_at,created_by) VALUES(?,?,?,?)", (student["user_id"], token_hash(raw_token), expires_at.isoformat(), actor.get("id")))
+    audit(actor, "student.password_reset_link.create", "student", student_id, classroom["teacher_user_id"], {"class_id": class_id, "expires_at": expires_at.isoformat()})
+    return {"id": cur.lastrowid, "student_name": student["name"], "expires_at": expires_at.isoformat(), "reset_url": f"/student-password-reset?token={quote(raw_token)}"}
+
+
+@app.post("/api/auth/student-password-reset")
+def reset_student_password(payload: StudentPasswordResetIn, request: Request):
+    """Consumes exactly one valid teacher-issued reset token without deleting the account."""
+    now = datetime.now(timezone.utc)
+    with connection() as conn:
+        row = conn.execute("SELECT * FROM password_reset_tokens WHERE token_hash=? AND used_at IS NULL", (token_hash(payload.token),)).fetchone()
+        if not row or datetime.fromisoformat(row["expires_at"]).astimezone(timezone.utc) <= now:
+            raise HTTPException(403, "重置链接无效、已过期或已使用")
+        from .auth import hash_password
+        conn.execute("UPDATE users SET password_hash=?,password_changed_at=? WHERE id=? AND role='student'", (hash_password(payload.password), now.isoformat(), row["user_id"]))
+        conn.execute("UPDATE password_reset_tokens SET used_at=? WHERE id=?", (now.isoformat(), row["id"]))
+    return {"ok": True, "message": "密码已更新，请使用原账号重新登录。"}
 
 @app.post("/api/classes/{class_id}/students/import")
 def import_roster_json(class_id: int, payload: StudentListIn, request: Request):
@@ -1575,7 +1628,7 @@ async def pipeline_publish(payload: AssignmentIn, request: Request):
 
 
 @app.get("/api/assignments")
-def list_assignments(request: Request, class_name: str | None = None, include_legacy: bool = False):
+def list_assignments(request: Request, class_name: str | None = None, class_id: int | None = None, include_legacy: bool = False):
     actor = current_user(request)
     sql, args = """SELECT a.*,
         (SELECT COUNT(*) FROM submissions s WHERE s.assignment_id=a.id) AS submission_count,
@@ -1585,6 +1638,11 @@ def list_assignments(request: Request, class_name: str | None = None, include_le
     if class_name:
         clauses.append("a.class_name=?")
         args.append(class_name)
+    if class_id is not None:
+        with connection() as conn:
+            _require_class(conn, class_id, actor)
+        clauses.append("a.class_id=?")
+        args.append(class_id)
     scope = teacher_id_for_scope(actor)
     if actor["role"] == "student":
         clauses.append("a.status='published'")
@@ -2251,6 +2309,10 @@ def login_page(request: Request):
 def student_activate_page():
     return FileResponse(Path(__file__).with_name("student_activate.html"))
 
+@app.get("/student-password-reset", response_class=HTMLResponse)
+def student_password_reset_page():
+    return FileResponse(Path(__file__).with_name("student_password_reset.html"), headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
+
 
 # 学生提交加固常量
 _ALLOWED_EXT = {".pdf", ".jpg", ".jpeg", ".png", ".doc", ".docx"}
@@ -2443,7 +2505,7 @@ def list_reviews(
                FROM submissions s JOIN assignments a ON a.id=s.assignment_id
                JOIN classes c ON c.id=a.class_id
                LEFT JOIN grading_jobs j ON j.submission_id=s.id
-               WHERE a.class_id IS NOT NULL AND (s.needs_review=1 OR j.status IN ('queued','running','failed'))
+               WHERE a.class_id IS NOT NULL AND COALESCE(a.is_demo,0)=0 AND (s.needs_review=1 OR j.status IN ('queued','running','failed'))
             """
         )
         args: list[object] = []
@@ -3089,6 +3151,9 @@ def batch_release_candidates(request: Request):
               WHERE s.status='graded' AND s.released_at IS NULL"""
         args=[]
         if scope is not None: sql+=" AND c.teacher_user_id=?";args.append(scope)
+        if class_id is not None:
+            _require_class(conn, class_id, actor)
+            sql+=" AND a.class_id=?";args.append(class_id)
         rows=conn.execute(sql+" ORDER BY a.id DESC,s.id DESC",args).fetchall()
     return {"items":[dict(x) for x in rows]}
 
@@ -4089,8 +4154,37 @@ def teacher_evaluation_cases_page(request: Request):
     return FileResponse(Path(__file__).with_name("teacher_evaluation_cases.html"),headers={"Cache-Control":"no-store, max-age=0"})
 
 
+@app.get("/api/dashboard")
+def dashboard_snapshot(request: Request, class_id: int | None = None):
+    """Read-only teacher dashboard; derives every displayed metric from live records."""
+    actor = require_roles(request, {"admin", "teacher"})
+    scope = teacher_id_for_scope(actor)
+    now = datetime.now(timezone.utc)
+    with connection() as conn:
+        where = "WHERE a.class_id IS NOT NULL AND COALESCE(a.is_demo,0)=0"
+        params = []
+        if scope is not None:
+            where += " AND c.teacher_user_id=?"; params.append(scope)
+        if class_id is not None:
+            _require_class(conn, class_id, actor)
+            where += " AND a.class_id=?"; params.append(class_id)
+        rows = conn.execute("""SELECT a.id,a.title,a.chapter,a.due_at,a.status,a.total_score,c.name AS class_name,
+          (CASE WHEN EXISTS(SELECT 1 FROM assignment_recipients ar WHERE ar.assignment_id=a.id) THEN (SELECT COUNT(*) FROM assignment_recipients ar WHERE ar.assignment_id=a.id) ELSE (SELECT COUNT(*) FROM students st WHERE st.class_id=a.class_id) END) roster_count,
+          (SELECT COUNT(*) FROM submissions s WHERE s.assignment_id=a.id) submitted_count,
+          (SELECT COUNT(*) FROM submissions s WHERE s.assignment_id=a.id AND s.needs_review=1) review_count
+          FROM assignments a JOIN classes c ON c.id=a.class_id """ + where + " ORDER BY a.due_at DESC", params).fetchall()
+        reviews = conn.execute("""SELECT COUNT(*) FROM submissions s JOIN assignments a ON a.id=s.assignment_id JOIN classes c ON c.id=a.class_id
+          LEFT JOIN grading_jobs j ON j.submission_id=s.id """ + where.replace("WHERE", "WHERE") + " AND (s.needs_review=1 OR j.status IN ('queued','running','failed'))", params).fetchone()[0]
+    active=[]
+    for row in rows:
+        item=dict(row)
+        try: due=datetime.fromisoformat(str(item['due_at']).replace('Z','+00:00'))
+        except ValueError: continue
+        if item['status']=='published' and due>=now: active.append(item)
+    expected=sum(int(x['roster_count'] or 0) for x in active); submitted=sum(min(int(x['submitted_count'] or 0),int(x['roster_count'] or 0)) for x in active)
+    return {"submission_rate": round(submitted/expected*100,1) if expected else None, "submitted_count":submitted, "expected_submission_count":expected, "unsubmitted_count":max(expected-submitted,0), "pending_review_count":reviews, "active_assignments":active}
 @app.get("/api/reports/teaching-actions")
-def teaching_actions(request: Request):
+def teaching_actions(request: Request, class_id: int | None = None):
     """Teacher-home action counts.  Excludes demo/legacy assignments from live teaching reminders."""
     actor=require_roles(request,{"admin","teacher"});scope=teacher_id_for_scope(actor)
     now=datetime.now(timezone.utc)
@@ -4102,6 +4196,9 @@ def teaching_actions(request: Request):
                 WHERE a.class_id IS NOT NULL AND COALESCE(a.is_demo,0)=0"""
         args=[]
         if scope is not None: sql+=" AND c.teacher_user_id=?";args.append(scope)
+        if class_id is not None:
+            _require_class(conn, class_id, actor)
+            sql+=" AND a.class_id=?";args.append(class_id)
         assignments=conn.execute(sql,args).fetchall()
         pending_sql="""SELECT COUNT(*) FROM submissions s JOIN assignments a ON a.id=s.assignment_id
           JOIN classes c ON c.id=a.class_id LEFT JOIN grading_jobs j ON j.submission_id=s.id
@@ -4159,8 +4256,28 @@ def agent_evaluation(request: Request):
             params.append(scope)
         rows = conn.execute("SELECT t.qwen_called,t.qwen_success,t.qwen_adopted,t.teacher_review_needed,t.handwriting_ocr_failed,t.latency_ms,t.question_type,t.learning_outcome,t.execution_trace_json FROM agent_learning_traces t" + where, params).fetchall()
     total = len(rows)
-    def rate(key: str) -> float:
-        return round((sum(int(r[key] or 0) for r in rows) / total * 100), 1) if total else 0.0
+
+    def rate(key: str) -> float | None:
+        """Return None rather than a fabricated 0% for an empty sample."""
+        return round((sum(int(r[key] or 0) for r in rows) / total * 100), 1) if total else None
+
+    def percentile(values: list[float], percent: float) -> float | None:
+        if not values:
+            return None
+        ordered = sorted(values)
+        index = (len(ordered) - 1) * percent
+        lower, upper = int(index), min(int(index) + 1, len(ordered) - 1)
+        return round(ordered[lower] + (ordered[upper] - ordered[lower]) * (index - lower), 1)
+
+    latencies = [float(r["latency_ms"]) for r in rows if r["latency_ms"] is not None]
+    failed_trace_count = 0
+    for row in rows:
+        try:
+            events = json.loads(row["execution_trace_json"] or "[]")
+        except (TypeError, ValueError):
+            events = []
+        if any(event.get("error_code") for event in events):
+            failed_trace_count += 1
     with connection() as conn:
         attempt_where = ""
         attempt_params: list[object] = []
@@ -4197,31 +4314,34 @@ def agent_evaluation(request: Request):
         mode_attempts = [r for r in attempts if r["mode"] == mode]
         effectiveness[mode] = {
             "attempt_count": len(mode_attempts),
-            "verified_correct_rate": round(sum(int(r["correct"] or 0) for r in mode_attempts) / len(mode_attempts) * 100, 1) if mode_attempts else 0.0,
+            "verified_correct_rate": round(sum(int(r["correct"] or 0) for r in mode_attempts) / len(mode_attempts) * 100, 1) if mode_attempts else None,
         }
     reattempt_by_input = {}
     for input_kind in ("text", "image"):
         input_attempts = [r for r in attempts if (r["input_kind"] or "text") == input_kind]
         reattempt_by_input[input_kind] = {
             "attempt_count": len(input_attempts),
-            "verified_correct_rate": round(sum(int(r["correct"] or 0) for r in input_attempts) / len(input_attempts) * 100, 1) if input_attempts else 0.0,
+            "verified_correct_rate": round(sum(int(r["correct"] or 0) for r in input_attempts) / len(input_attempts) * 100, 1) if input_attempts else None,
         }
     return {
         "sample_size": total,
-        "sympy_direct_rate": round(100 - rate("qwen_called"), 1) if total else 0.0,
+        "sympy_direct_rate": round(100 - rate("qwen_called"), 1) if total else None,
         "qwen_fallback_rate": rate("qwen_called"),
         "qwen_success_rate": rate("qwen_success"),
         "qwen_adopted_rate": rate("qwen_adopted"),
         "teacher_review_rate": rate("teacher_review_needed"),
         "handwriting_ocr_failure_rate": rate("handwriting_ocr_failed"),
-        "average_response_ms": round(sum(float(r["latency_ms"] or 0) for r in rows) / total, 1) if total else 0.0,
+        "average_response_ms": round(sum(latencies) / len(latencies), 1) if latencies else None,
+        "p50_latency_ms": percentile(latencies, 0.5),
+        "p95_latency_ms": percentile(latencies, 0.95),
+        "failure_rate": round(failed_trace_count / total * 100, 1) if total else None,
         "review_rate_by_type": {kind: round(sum(int(r["teacher_review_needed"] or 0) for r in rows if r["question_type"] == kind) / sum(1 for r in rows if r["question_type"] == kind) * 100, 1) for kind in sorted({r["question_type"] for r in rows})},
         "learning_outcomes": {kind: sum(1 for r in rows if r["learning_outcome"] == kind) for kind in ("reworked", "corrected", "requested_solution", "not_resolved")},
         "verified_reattempt_count": len(attempted_traces),
         "verified_corrected_count": len(corrected_traces),
         "image_reattempt_count": sum(1 for r in attempts if r["input_kind"] == "image"),
-        "verified_reattempt_rate": round(len(attempted_traces) / total * 100, 1) if total else 0.0,
-        "verified_corrected_rate": round(len(corrected_traces) / len(attempted_traces) * 100, 1) if attempted_traces else 0.0,
+        "verified_reattempt_rate": round(len(attempted_traces) / total * 100, 1) if total else None,
+        "verified_corrected_rate": round(len(corrected_traces) / len(attempted_traces) * 100, 1) if attempted_traces else None,
         "hint_effectiveness": effectiveness,
         "reattempt_by_input": reattempt_by_input,
         "average_minutes_to_first_reattempt": round(sum(reattempt_minutes) / len(reattempt_minutes), 1) if reattempt_minutes else None,
