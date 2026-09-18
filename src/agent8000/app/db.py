@@ -248,6 +248,11 @@ CREATE TABLE IF NOT EXISTS class_invites (
   created_by INTEGER NOT NULL, revoked_at TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_class_invites_class ON class_invites(class_id, expires_at);
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, token_hash TEXT NOT NULL UNIQUE,
+  expires_at TEXT NOT NULL, used_at TEXT, created_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id, expires_at);
 CREATE TABLE IF NOT EXISTS audit_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT, actor_user_id INTEGER,
   tenant_teacher_id INTEGER, action TEXT NOT NULL, resource_type TEXT NOT NULL,
