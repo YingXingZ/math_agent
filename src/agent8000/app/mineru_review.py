@@ -174,7 +174,7 @@ async def create_session(answer_book: dict) -> dict:
     section_cache: dict[str, list[dict]] = {}
     for section in {str(item.get("section_no") or "") for item in candidates}:
         if section:
-            section_cache[section] = (await retrieve_section_problems(section, limit=100, textbook_id=textbook_id)).get("items", [])
+            section_cache[section] = (await retrieve_section_problems(section, limit=1000, textbook_id=textbook_id)).get("items", [])
     with connection() as conn:
         session_id = conn.execute(
             "INSERT INTO mineru_review_sessions(document_name, status) VALUES(?,?)",

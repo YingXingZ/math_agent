@@ -989,6 +989,107 @@ async def approve_textbook_question_candidate(document_id: int, candidate_id: st
     return {"ok": True, "source_problem_id": result.get("id"), "message": "题目已写入 8014；请在答案导入审核中处理对应答案 PDF。"}
 
 
+
+@app.post("/api/materials/textbooks/{document_id}/auto-ingest")
+async def auto_ingest_textbook_candidates(document_id: int, request: Request):
+    """Batch-import only high-quality textbook exercise candidates."""
+    actor = require_roles(request, {"admin", "teacher"})
+    scope = teacher_id_for_scope(actor)
+    with connection() as conn:
+        doc = conn.execute(
+            "SELECT title,original_filename,evidence_textbook_id,owner_teacher_id FROM textbook_documents WHERE id=?" +
+            (" AND owner_teacher_id=?" if scope is not None else ""),
+            (document_id, scope) if scope is not None else (document_id,),
+        ).fetchone()
+        job = conn.execute(
+            "SELECT output_path FROM textbook_ocr_jobs WHERE document_id=? AND status='completed' ORDER BY id DESC LIMIT 1",
+            (document_id,),
+        ).fetchone()
+    if not doc:
+        raise HTTPException(404, "教材不存在")
+    if re.search(r"答案|解答|全解|习题解|解析|answer|solution", str(doc["original_filename"] or ""), re.I):
+        raise HTTPException(409, "该文件名显示为答案/解析册。请先上传教材习题 PDF，再把此文件作为对应答案 PDF 上传。")
+    textbook_id = str(doc["evidence_textbook_id"] or "")
+    if not textbook_id:
+        raise HTTPException(409, "该教材尚未关联 8014 题库")
+    if not job or not job["output_path"]:
+        raise HTTPException(409, "请先完成教材 OCR")
+    markdown_path = Path(job["output_path"])
+    staged_path = markdown_path.with_name("textbook_question_candidates.json")
+    staged = json.loads(staged_path.read_text(encoding="utf-8")) if staged_path.is_file() else {}
+    if not staged.get("quality_report", {}).get("item_count") and markdown_path.is_file():
+        staged = stage_markdown(markdown_path.read_text(encoding="utf-8", errors="replace"), "textbook", doc["title"])
+        staged["document"]["textbook_document_id"] = document_id
+    sections = staged.get("sections", [])
+    items = [item for section in sections for item in section.get("items", [])]
+    if not items:
+        raise HTTPException(409, "没有识别到编号习题；请检查上传的是教材习题 PDF，或在候选审核中补充题号。")
+
+    await create_evidence_sections(textbook_id, [
+        {"section_no": section.get("section_no"), "title": section.get("title") or section.get("section_no")}
+        for section in sections if section.get("section_no")
+    ])
+    title_by_section = {str(section.get("section_no")): str(section.get("title") or "") for section in sections}
+    imported = already = needs_review = 0
+    failed: list[dict[str, str]] = []
+    for item in items:
+        if item.get("review_status") == "approved" and item.get("source_problem_id"):
+            already += 1
+            continue
+        text = str(item.get("text") or "").strip()
+        quality = item.get("quality") or {}
+        try:
+            score = float(quality.get("score") or 0)
+        except (TypeError, ValueError):
+            score = 0
+        if not quality.get("pass") or score < 0.90 or len(text) < 12 or "�" in text:
+            needs_review += 1
+            continue
+        section_no = str(item.get("section_no") or "").strip()
+        kp_names = _suggest_section_knowledge_points(section_no, title_by_section.get(section_no, ""))
+        try:
+            result = await create_evidence_problem(textbook_id, {
+                "section_no": section_no,
+                "problem_no": str(item.get("question_no") or ""),
+                "sub_no": item.get("subquestion_no"),
+                "content_text": text,
+                "ptype": "calc",
+                "difficulty": 3,
+                "knowledge_pts": ",".join(kp_names),
+            })
+            item["review_status"] = "approved"
+            item["source_problem_id"] = result.get("id")
+            item["auto_ingest"] = True
+            item["knowledge_points"] = kp_names
+            imported += 1
+        except Exception as exc:
+            failed.append({"item_id": str(item.get("item_id") or ""), "error": str(exc)[:180]})
+    staged_path.write_text(json.dumps(staged, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    knowledge_count = 0
+    with connection() as conn:
+        chapter_rows = conn.execute(
+            "SELECT id,section_no,title FROM textbook_sections WHERE document_id=?", (document_id,)
+        ).fetchall()
+        for chapter in chapter_rows:
+            for name in _suggest_section_knowledge_points(str(chapter["section_no"]), str(chapter["title"])):
+                cursor = conn.execute(
+                    "INSERT OR IGNORE INTO textbook_section_knowledge_points(section_id,name,source,status) VALUES(?,?,?,?)",
+                    (chapter["id"], name, "auto", "pending"),
+                )
+                knowledge_count += cursor.rowcount
+    audit(actor, "textbook.auto_ingest", "textbook", document_id, actor.get("id"), {
+        "imported": imported, "already": already, "needs_review": needs_review,
+        "failed": len(failed), "knowledge_suggestions": knowledge_count,
+    })
+    return {
+        "ok": not failed, "imported": imported, "already_imported": already,
+        "needs_review": needs_review, "failed": failed[:30],
+        "knowledge_suggestions": knowledge_count,
+        "message": f"已自动入库 {imported} 道高置信题目；{needs_review} 道保留待核；生成 {knowledge_count} 条待确认知识点。随后上传答案 PDF 即可按章节和题号匹配。",
+    }
+
+
 @app.post("/api/materials/textbooks/{document_id}/ocr", status_code=202)
 def start_textbook_ocr(document_id: int, background_tasks: BackgroundTasks, request: Request):
     actor = require_roles(request, {"admin", "teacher"})

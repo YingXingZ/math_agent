@@ -473,6 +473,7 @@ class TextbookProblemImportReq(BaseModel):
     ptype: str = "calc"
     difficulty: int = 3
     content_text: str
+    knowledge_pts: str = ""
     std_answer: Optional[str] = None
     full_solution: Optional[str] = None
 
@@ -940,8 +941,8 @@ def add_textbook_problem(tid: str, req: TextbookProblemImportReq):
         return {"id": existing["id"], "existing": True}
     pid = str(uuid.uuid4())
     conn.execute(
-        "INSERT INTO problems(id,section_id,exercise_set,problem_no,sub_no,ptype,crop_image_path,content_text,difficulty,extract_status,std_answer,full_solution,answer_status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (pid, sec["id"], section_no, problem_no, req.sub_no, req.ptype, None, content, req.difficulty, "manual", req.std_answer, req.full_solution, "unverified"),
+        "INSERT INTO problems(id,section_id,exercise_set,problem_no,sub_no,ptype,crop_image_path,content_text,difficulty,knowledge_pts,extract_status,std_answer,full_solution,answer_status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (pid, sec["id"], section_no, problem_no, req.sub_no, req.ptype, None, content, req.difficulty, req.knowledge_pts, "manual", req.std_answer, req.full_solution, "unverified"),
     )
     conn.commit()
     conn.close()
