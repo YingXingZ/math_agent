@@ -17,14 +17,16 @@ from typing import Iterable
 
 
 SCHEMA_VERSION = "math-knowledge-staging/v1"
-SECTION_RE = re.compile(r"(?mi)^\s*#{1,6}\s*(?:习题\s*)?(?:第\s*)?(\d+[.．]\d+)\s*(.*)$")
-EXERCISE_SECTION_RE = re.compile(r"(?mi)^\s*#{1,6}\s*习题\s*(\d+[.．]\d+)\s*(.*)$")
+SECTION_RE = re.compile(r"(?mi)^\s*#{1,6}\s*(?:习题\s*)?(?:第\s*)?(\d+\s*[.．-]\s*\d+)\s*(.*)$")
+EXERCISE_SECTION_RE = re.compile(r"(?mi)^\s*#{1,6}\s*习题\s*(\d+\s*[.．-]\s*\d+)\s*(.*)$")
 QUESTION_RE = re.compile(r"(?m)^\s*(?:第\s*)?(\d{1,3})\s*[.、．：:]\s*")
 SUBQUESTION_RE = re.compile(r"[（(]\s*(\d{1,2})\s*[）)]")
 GARBLED_RE = re.compile(r"[锟鈫愇禲]|(?:[JHVUR]{2,})|(?:[VJH]\d)")
 
 
 def norm_section(value: str) -> str:
+    value = re.sub(r"\s+", "", value)
+    value = re.sub(r"(?<=\d)-(?=\d)", ".", value)
     return re.sub(r"[．。]", ".", value).strip()
 
 
