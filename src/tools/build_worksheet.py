@@ -96,23 +96,55 @@ class WorksheetBuilder:
         s = min(1.0, max_w / w_pt)
         return w_pt * s, h_pt * s
 
-    def add_problem(self, img_path, answer_space):
-        """单列题目：整宽题干 + 手写区"""
+    def _draw_answer_box(self, height, label):
+        """Draw a clearly labeled, printable writing frame without clipping it."""
+        if self._remaining() < min(height, 90):
+            self._new_page()
+        box_top = self.y
+        box_bottom = min(box_top + height, A4_H - MARGIN_BOTTOM)
+        if box_bottom - box_top < 70:
+            self._new_page()
+            box_top = self.y
+            box_bottom = min(box_top + height, A4_H - MARGIN_BOTTOM)
+        self.page.draw_rect(
+            fitz.Rect(MARGIN_LEFT, box_top, A4_W - MARGIN_RIGHT, box_bottom),
+            color=(0.43, 0.51, 0.62), width=0.8,
+        )
+        self.page.insert_text(
+            (MARGIN_LEFT + 8, box_top + 13), label,
+            fontname="song", fontsize=8.5, color=(0.43, 0.51, 0.62),
+        )
+        # Light writing guides make the intended answer region clear while
+        # keeping the outer frame dominant for scanning and segmentation.
+        guide_y = box_top + 27
+        while guide_y < box_bottom - 8:
+            self.page.draw_line(
+                fitz.Point(MARGIN_LEFT + 7, guide_y),
+                fitz.Point(A4_W - MARGIN_RIGHT - 7, guide_y),
+                color=(0.90, 0.92, 0.94), width=0.35,
+            )
+            guide_y += 27
+        self.y = box_bottom + 11
+
+    def add_problem(self, img_path, answer_space, problem_no=""):
+        """Single-column question with an individually labeled answer frame."""
         dw, dh = self._img_size(img_path, CONTENT_W)
-        block = dh + answer_space + 12
-        if self._remaining() < block:
-            if self._remaining() < dh + 55:
-                self._new_page()
-            else:
-                answer_space = max(48, self._remaining() - dh - 14)
+        # Keep the question with a usable amount of writing room when possible.
+        # If a long stem leaves too little space, put its complete answer frame
+        # on the next page instead of clipping the bottom of the frame.
+        if self._remaining() < dh + min(answer_space, 110) + 16:
+            self._new_page()
+        if self._remaining() < dh + min(answer_space, 80) + 8:
+            raise ValueError(f"{problem_no or '本题'}题干过长，无法在 A4 单页内安全排版")
         self.page.insert_image(
             fitz.Rect(MARGIN_LEFT, self.y, MARGIN_LEFT + dw, self.y + dh),
             filename=img_path)
         self.y += dh + 5
-        bot = min(self.y + answer_space, A4_H - MARGIN_BOTTOM)
-        self.page.draw_rect(fitz.Rect(MARGIN_LEFT, self.y, A4_W - MARGIN_RIGHT, bot),
-                            color=(0.87, 0.87, 0.87), width=0.5, dashes="[2 3] 0")
-        self.y = bot + 11
+        label = f"{problem_no} 作答区" if problem_no else "本题作答区"
+        if self._remaining() < answer_space:
+            self._new_page()
+            label += "（续）"
+        self._draw_answer_box(answer_space, label)
 
     def add_problem_pair(self, left_img, right_img, answer_space):
         """双列题目：一行放两个小题，各自独立手写区"""

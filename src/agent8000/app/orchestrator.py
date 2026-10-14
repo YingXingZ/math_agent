@@ -37,8 +37,10 @@ async def publish_homework(
     basic_ratio: float = 0.5,
     advanced_ratio: float = 0.35,
     subpart_limit: int = 3,
+    selected_problem_nos: list[str] | None = None,
     build_pdf: bool = True,
     out_dir: str | None = None,
+    textbook_id: str | None = None,
 ) -> dict[str, Any]:
     """Run the full ingestion → assignment pipeline for one or more sections.
 
@@ -52,11 +54,11 @@ async def publish_homework(
     AI-review workflow.
     """
     step_sync: list[dict[str, Any]] = list(
-        await asyncio.gather(*(sync_section(s) for s in sections))
+        await asyncio.gather(*(sync_section(s, textbook_id=textbook_id) for s in sections))
     )
 
     step_strat: list[dict[str, Any]] = list(
-        await asyncio.gather(*(stratify_section_difficulty(s) for s in sections))
+        await asyncio.gather(*(stratify_section_difficulty(s, textbook_id=textbook_id) for s in sections))
     )
 
     result = assemble(
@@ -69,8 +71,10 @@ async def publish_homework(
         basic_ratio=basic_ratio,
         advanced_ratio=advanced_ratio,
         subpart_limit=subpart_limit,
+        selected_problem_nos=selected_problem_nos,
         build_pdf=build_pdf,
         out_dir=out_dir,
+        textbook_id=textbook_id,
     )
 
     # Resolve each selected question back to its 8014 source id so the

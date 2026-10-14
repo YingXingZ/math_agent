@@ -85,14 +85,27 @@ def current_user(request: Request) -> dict:
         raise HTTPException(401, "请先登录")
     with connection() as conn:
         row = conn.execute(
-            """SELECT u.id,u.username,u.display_name,u.role,u.active,s.id AS session_id,s.expires_at
+            """SELECT u.id,u.username,u.display_name,u.role,u.active,s.id AS session_id,s.expires_at,s.last_seen_at
                FROM user_sessions s JOIN users u ON u.id=s.user_id
                WHERE s.token_hash=? AND s.revoked_at IS NULL""",
             (token_hash(token),),
         ).fetchone()
         if not row or not row["active"] or datetime.fromisoformat(row["expires_at"]).astimezone(timezone.utc) <= _utc_now():
             raise HTTPException(401, "登录已过期，请重新登录")
-        conn.execute("UPDATE user_sessions SET last_seen_at=? WHERE id=?", (_utc_now().isoformat(), row["session_id"]))
+        # A dashboard opens several API requests in parallel.  Persisting a
+        # heartbeat for every single one creates needless SQLite write races
+        # with grading status and region-mapping saves.  A five-minute session
+        # heartbeat is sufficient for expiry/audit purposes.
+        now = _utc_now()
+        previous = row["last_seen_at"]
+        should_touch = not previous
+        if previous:
+            try:
+                should_touch = datetime.fromisoformat(previous).astimezone(timezone.utc) <= now - timedelta(minutes=5)
+            except (TypeError, ValueError):
+                should_touch = True
+        if should_touch:
+            conn.execute("UPDATE user_sessions SET last_seen_at=? WHERE id=?", (now.isoformat(), row["session_id"]))
     user = _public_user(dict(row))
     request.state.user = user
     return user

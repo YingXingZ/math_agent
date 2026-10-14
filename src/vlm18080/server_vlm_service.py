@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import base64
-import hmac
+import ast
 import io
 import json
 import os
 import re
+import subprocess
+import sys
+import tempfile
 from threading import Lock
 
 import torch
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from PIL import Image
 from qwen_vl_utils import process_vision_info
@@ -20,25 +22,14 @@ from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
 
 
 MODEL_PATH = os.environ.get("MATH_VLM_MODEL", "/opt/math-vlm/models/Qwen2.5-VL-3B-Instruct")
-VLM_MODE = os.environ.get("MATH_VLM_MODE", "development").strip().lower()
-INTERNAL_API_KEY = os.environ.get("VLM_INTERNAL_API_KEY", "")
-if VLM_MODE == "production" and not INTERNAL_API_KEY:
-    raise RuntimeError("VLM_INTERNAL_API_KEY is required when MATH_VLM_MODE=production")
+MODEL_DEVICE_MAP = os.environ.get("MATH_VLM_DEVICE_MAP", "auto")
+FORMULA_OCR_ENABLED = os.environ.get("FORMULA_OCR_ENABLED", "false").strip().lower() in {"1", "true", "yes"}
+FORMULA_OCR_MODEL_DIR = os.environ.get("FORMULA_OCR_MODEL_DIR", "/opt/math-vlm/models/PP-FormulaNet_plus-L")
 app = FastAPI(title="Private Math VLM Review")
 model = None
 processor = None
 load_lock = Lock()
 inference_lock = Lock()
-
-
-@app.middleware("http")
-async def internal_service_auth(request: Request, call_next):
-    """Protect inference endpoints while leaving the private health probe usable."""
-    if VLM_MODE == "production" and request.method != "GET":
-        supplied = request.headers.get("X-Internal-API-Key", "")
-        if not hmac.compare_digest(supplied, INTERNAL_API_KEY):
-            return JSONResponse(status_code=401, content={"detail": "internal service authentication required"})
-    return await call_next(request)
 
 
 class ReviewRequest(BaseModel):
@@ -69,12 +60,22 @@ class GradeProblem(BaseModel):
     problem_text: str = ""
     std_answer: str
     full_solution: str = ""
+    question_type: str = "计算题"
     max_score: float = 10.0
 
 
 class GradeHomeworkRequest(BaseModel):
     images_base64: list[str]
     problems: list[GradeProblem]
+
+
+class FormulaRecognitionRequest(BaseModel):
+    image_base64: str
+
+
+class LocateHomeworkRequest(BaseModel):
+    images_base64: list[str]
+    problem_nos: list[str]
 
 
 class SolveRequest(BaseModel):
@@ -102,7 +103,7 @@ def ensure_model():
         model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             MODEL_PATH,
             torch_dtype=torch.bfloat16,
-            device_map="auto",
+            device_map=MODEL_DEVICE_MAP,
             attn_implementation="sdpa",
         ).eval()
 
@@ -170,45 +171,9 @@ def try_parse_json(text: str):
                     return value
             except (json.JSONDecodeError, TypeError):
                 pass
-        stitched = re.sub(r'(?<!\\)"[ \t]*\r?\n[ \t]*"', "", candidate)
-        if stitched != candidate:
-            try:
-                value = json.loads(_escape_math_backslashes(stitched))
-                if isinstance(value, dict):
-                    return value
-            except (json.JSONDecodeError, TypeError):
-                pass
     return None
 
 
-
-def verify_indefinite_integral(problem_text: str, answer: str) -> dict:
-    """Check F'(x)=f(x) for simple one-variable text-form indefinite integrals."""
-    match = re.search(r"\u222b\s*(.*?)\s*d\s*x\b", problem_text or "", re.S)
-    if not match:
-        return {"status": "not_applicable", "reason": "unrecognized_integral"}
-    try:
-        import sympy as sp
-        from sympy.parsing.sympy_parser import (
-            parse_expr, standard_transformations,
-            implicit_multiplication_application, convert_xor,
-        )
-        transformations = standard_transformations + (implicit_multiplication_application, convert_xor)
-        x = sp.symbols("x")
-        def parse_math(value: str):
-            value = value.replace("^", "**").replace("\\left", "").replace("\\right", "")
-            value = re.sub(r"e\*\*\(?([A-Za-z0-9]+)\)?", r"exp(\1)", value)
-            return parse_expr(value.strip(), local_dict={"x": x, "e": sp.E, "exp": sp.exp},
-                              transformations=transformations, evaluate=True)
-        integrand = parse_math(match.group(1))
-        primitive_text = (answer or "").rsplit("=", 1)[-1].strip()
-        primitive_text = re.sub(r"\+\s*[Cc]\b", "", primitive_text)
-        residual = sp.simplify(sp.diff(parse_math(primitive_text), x) - integrand)
-        if residual == 0:
-            return {"status": "passed", "method": "sympy_derivative"}
-        return {"status": "failed", "method": "sympy_derivative", "residual": str(residual)[:240]}
-    except Exception as exc:
-        return {"status": "not_verifiable", "reason": str(exc)[:180]}
 def _generate_unlocked(messages, max_new_tokens=2400):
     chat_text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     image_inputs, video_inputs = process_vision_info(messages)
@@ -238,7 +203,38 @@ def health():
         "cuda": torch.cuda.is_available(),
         "gpu_count": torch.cuda.device_count(),
         "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+        "device_map": MODEL_DEVICE_MAP,
+        "formula_ocr_enabled": FORMULA_OCR_ENABLED,
     }
+
+
+@app.post("/recognize-formula")
+def recognize_formula(req: FormulaRecognitionRequest):
+    """Run FormulaNet on one isolated crop; it returns evidence, never a score."""
+    if not FORMULA_OCR_ENABLED:
+        raise HTTPException(503, "formula OCR is disabled")
+    try:
+        image = Image.open(io.BytesIO(base64.b64decode(req.image_base64))).convert("RGB")
+    except Exception as exc:
+        raise HTTPException(400, "invalid formula image") from exc
+    try:
+        with tempfile.TemporaryDirectory(prefix="math_formula_") as directory:
+            source = os.path.join(directory, "formula.png")
+            output_dir = os.path.join(directory, "out")
+            image.save(source, format="PNG")
+            completed = subprocess.run(
+                [sys.executable, "-m", "paddleocr", "formula_recognition", "-i", source, "--model_name", "PP-FormulaNet_plus-L", "--model_dir", FORMULA_OCR_MODEL_DIR, "--device", "gpu:0", "--save_path", output_dir],
+                capture_output=True, text=True, timeout=90, check=False,
+            )
+            output = (completed.stdout or "") + "\n" + (completed.stderr or "")
+            match = re.search(r"(\{'res':\s*\{.*?\}\})", output, flags=re.DOTALL)
+            payload = ast.literal_eval(match.group(1)) if match else {}
+            latex = str((payload.get("res") or {}).get("rec_formula") or "").strip()
+    except Exception as exc:
+        raise HTTPException(502, f"formula OCR failed: {str(exc)[:120]}") from exc
+    if not latex:
+        raise HTTPException(422, "formula OCR returned no formula")
+    return {"provider": "PP-FormulaNet_plus-L", "latex_text": latex}
 
 
 @app.post("/review")
@@ -433,19 +429,7 @@ def solve_without_answer_book(req: SolveRequest):
     raw = generate([{"role": "user", "content": [{"type": "text", "text": prompt}]}], 1800)
     result = try_parse_json(raw)
     if not result or not str(result.get("std_answer", "")).strip():
-        repair_prompt = f"""Convert the following draft into strict JSON only.
-The result must contain a non-empty std_answer final answer.
-Format: {{"ptype":"calc","std_answer":"final answer","full_solution":"derivation","confidence":0.0,"risks":[]}}
-Draft:
-{raw[:5000]}"""
-        repaired = generate(
-            [{"role": "user", "content": [{"type": "text", "text": repair_prompt}]}],
-            700,
-        )
-        result = try_parse_json(repaired)
-    if not result or not str(result.get("std_answer", "")).strip():
-        raise HTTPException(422, detail={"message": "independent solve did not return a usable answer",
-                                         "raw_preview": raw[:800]})
+        raise HTTPException(422, "independent solve did not return a usable answer")
     result["ptype"] = result.get("ptype") if result.get("ptype") in {"calc", "proof"} else "calc"
     result["std_answer"] = str(result.get("std_answer") or "")
     result["full_solution"] = str(result.get("full_solution") or "")
@@ -454,15 +438,6 @@ Draft:
     except Exception:
         result["confidence"] = 0.0
     result["risks"] = result.get("risks") if isinstance(result.get("risks"), list) else [str(result.get("risks") or "")]
-    verification = verify_indefinite_integral(req.problem_text, result["std_answer"])
-    result["symbolic_verification"] = verification
-    result["symbolic_verified"] = verification.get("status") == "passed"
-    if verification.get("status") == "failed":
-        result["confidence"] = 0.0
-        result["risks"].append("symbolic_derivative_check_failed")
-    elif verification.get("status") != "passed" and result["ptype"] == "calc":
-        result["confidence"] = min(float(result["confidence"] or 0), 0.5)
-        result["risks"].append("symbolic_derivative_check_unavailable")
     result["model"] = "Qwen2.5-VL-3B-Instruct"
     return result
 
@@ -590,6 +565,37 @@ def _recover_answer_only(image, req, prev: dict) -> dict:
     return prev
 
 
+def _normalize_answer_region(raw: object, page_indices: list[int]) -> dict | None:
+    """Accept only conservative, normalized VLM region proposals.
+
+    These coordinates are *suggestions* for the teacher UI, never grading
+    evidence by themselves. Reject malformed, implausibly tiny, or
+    page-mismatched rectangles before they reach the application.
+    """
+    if not isinstance(raw, dict):
+        return None
+    try:
+        page_index = int(raw.get("page_index"))
+        x = float(raw.get("x"))
+        y = float(raw.get("y"))
+        width = float(raw.get("width"))
+        height = float(raw.get("height"))
+    except (TypeError, ValueError):
+        return None
+    if page_index not in page_indices:
+        return None
+    if not (0.0 <= x < 1.0 and 0.0 <= y < 1.0 and 0.04 <= width <= 1.0 and 0.03 <= height <= 1.0):
+        return None
+    if x + width > 1.0001 or y + height > 1.0001:
+        return None
+    return {
+        "page_index": page_index,
+        "x": round(x, 4),
+        "y": round(y, 4),
+        "width": round(width, 4),
+        "height": round(height, 4),
+    }
+
 def _locate_problems(images: list[Image.Image], problem_nos: list[str]) -> dict[str, dict]:
     """Pass 1 — cheap single call that maps each problem_no to the page(s) it appears on.
 
@@ -602,9 +608,10 @@ def _locate_problems(images: list[Image.Image], problem_nos: list[str]) -> dict[
     locator_prompt = f"""你是高等数学阅卷助手。所给多张图片是一名学生的整份手写作业。
 请逐页扫描，找出下列各题号分别出现在哪些图片页上，并摘录该题可见的题干开头片段。
 待定位题号：{", ".join(problem_nos)}
-图片按 0 起序号（第 0 张为第一页）。只输出严格 JSON，不要 Markdown。格式示例（<...> 为需你填写的字段，输出时不要保留尖括号）：
-{{"mapping":[{{"problem_no":"<题号>","page_indices":[<图片序号>],"snippet":"<题干开头片段>"}}]}}
-若某题号在图片中找不到，page_indices 留空数组 []。严禁照抄占位文字。"""
+图片按 0 起序号（第 0 张为第一页）。同时为每个确实找到作答的题给出“学生作答区域”的建议框，不要框题干、其他题或空白。坐标必须是 0 到 1 的比例：x/y 为左上角，width/height 为宽高；不确定时 answer_region 为 null。
+只输出严格 JSON，不要 Markdown。格式示例（<...> 为需你填写的字段，输出时不要保留尖括号）：
+{{"mapping":[{{"problem_no":"<题号>","page_indices":[<图片序号>],"snippet":"<题干开头片段>","answer_region":{{"page_index":0,"x":0.08,"y":0.20,"width":0.84,"height":0.30}}}}]}}
+若某题号在图片中找不到，page_indices 留空数组 [] 且 answer_region 为 null。严禁照抄占位文字。"""
     content = [{"type": "image", "image": image} for image in images]
     content.append({"type": "text", "text": locator_prompt})
     raw = generate([{"role": "user", "content": content}], 900)
@@ -614,58 +621,158 @@ def _locate_problems(images: list[Image.Image], problem_nos: list[str]) -> dict[
         for item in locator["mapping"]:
             pn = str(item.get("problem_no") or "").strip()
             pidx = item.get("page_indices") or []
+            page_indices = [int(x) for x in pidx if str(x).strip().isdigit()]
             mapping[pn] = {
-                "page_indices": [int(x) for x in pidx if str(x).strip().isdigit()],
+                "page_indices": page_indices,
                 "snippet": str(item.get("snippet") or ""),
             }
+            answer_region = _normalize_answer_region(item.get("answer_region"), page_indices)
+            if answer_region:
+                mapping[pn]["answer_region"] = answer_region
     return mapping
 
 
-def _audit_completion_for_full_credit(
-    images: list[Image.Image],
-    problem_no: str,
-    page_indices: list[int],
-) -> dict | None:
-    """Independently verify that this exact problem has visible student ink.
+def _grading_template(question_type: str) -> str:
+    """Return the evidence requirements for the requested question type."""
+    label = str(question_type or "").strip().lower()
+    if any(token in label for token in ("证明", "proof")):
+        return "证明题：评分点必须覆盖前提/定义或定理的正确使用、关键推理链、结论；不能把重复抄题或无关公式计分。"
+    if any(token in label for token in ("选择", "单选", "多选", "choice")):
+        return "选择题：先核对学生实际选择的选项及理由（如有）；仅对正确选项或明确等价判断计分，不能按长篇无关推导给分。"
+    if any(token in label for token in ("填空", "fill", "填")):
+        return "填空题：核对最终填入结果、符号、条件与必要单位；没有明确结果不得给分，过程仅可作为核对依据。"
+    return "计算题：评分点必须覆盖方法选择、关键计算/变形、最终结论及必要条件；允许等价步骤，但不能给未出现的步骤计分。"
 
-    This pass deliberately receives neither the standard answer nor a solution,
-    preventing the grade pass from turning a reference answer into evidence of
-    a student response.
+@app.post("/locate-homework")
+def locate_homework(req: LocateHomeworkRequest):
+    """Find physical heading rows first, then read only their left-edge digits.
+
+    The model never invents coordinates: pixel rows come from dark-ink projection.
+    Ambiguous rows are omitted so grading cannot treat a guessed heading as evidence.
     """
-    selected = [images[index] for index in page_indices if 0 <= index < len(images)] or images
-    prompt = f"""你是严格的高等数学试卷视觉审计员。只看题号 {problem_no} 的纸面学生作答，不要解题，也没有标准答案可参考。
-必须先判断该题是否真的写了可归属的学生作答。空白、只有题目印刷文字、或只能看到别题作答时 answer_present=false。
-若 answer_present=true，再判断作答是否在纸面上完成。只要最后一行等号右侧有完整表达式、没有尾随运算符，即使没有化简或没有另写最终答案，也必须判 work_complete=true。只有末尾孤立运算符、未闭合分式或括号、省略号，或当前等式明显截断，才判 work_complete=false。不要因手写分数线、根号或排版不工整误判未完成。
-无法将笔迹对应到题号时 answer_present=false；能清楚看到完整表达式时不要保守判 false。
-只输出严格 JSON：{{"answer_present":true或false,"work_complete":true或false,"evidence":"不超过30字的可见纸面证据"}}。"""
-    content = [{"type": "image", "image": image} for image in selected]
-    content.append({"type": "text", "text": prompt})
-    raw_audit = generate([{"role": "user", "content": content}], 280)
-    audit = try_parse_json(raw_audit)
-    if not isinstance(audit, dict):
-        present_match = re.search(r"answer_present[\"'：:=\s]+(true|false|是|否|有|无)", raw_audit, re.I)
-        complete_match = re.search(r"work_complete[\"'：:=\s]+(true|false|是|否|完整|未完成)", raw_audit, re.I)
-        if present_match:
-            audit = {
-                "answer_present": present_match.group(1).lower() in {"true", "是", "有"},
-                "work_complete": bool(complete_match and complete_match.group(1).lower() in {"true", "是", "完整"}),
-                "evidence": raw_audit[:120],
-            }
-        else:
-            return None
-    answer_present = audit.get("answer_present")
-    work_complete = audit.get("work_complete")
-    if isinstance(answer_present, str):
-        answer_present = answer_present.strip().lower() in {"true", "1", "yes", "有", "是"}
-    if isinstance(work_complete, str):
-        work_complete = work_complete.strip().lower() in {"true", "1", "yes", "完整", "是"}
-    if not isinstance(answer_present, bool):
-        return None
-    return {
-        "answer_present": answer_present,
-        "work_complete": bool(work_complete) if answer_present else True,
-        "completion_evidence": str(audit.get("evidence") or ""),
-    }
+    ensure_model()
+    import numpy as np
+    from PIL import ImageEnhance
+
+    try:
+        pages = [Image.open(io.BytesIO(base64.b64decode(value))).convert("RGB") for value in req.images_base64]
+    except Exception as exc:
+        raise HTTPException(400, "invalid student work image") from exc
+    allowed = {int(value) for value in req.problem_nos if str(value).strip().isdigit()}
+    candidates = []
+    layout_rows = []
+    # First ask the VLM to inspect the complete submission and propose an
+    # answer rectangle for every visible requested question.  The former
+    # left-margin digit scan is retained below as a precision fallback, but it
+    # misses perfectly valid work when students omit a large handwritten
+    # heading or start in the middle of a page.
+    semantic_numbers = set()
+    try:
+        semantic = _locate_problems(pages, [str(value) for value in sorted(allowed)])
+        for raw_number, located in semantic.items():
+            try:
+                number = int(raw_number)
+            except (TypeError, ValueError):
+                continue
+            if number not in allowed:
+                continue
+            region = located.get("answer_region") if isinstance(located, dict) else None
+            if not isinstance(region, dict):
+                continue
+            try:
+                page_index = int(region["page_index"])
+                x = float(region["x"])
+                y = float(region["y"])
+                width = float(region["width"])
+                height = float(region["height"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if (0 <= page_index < len(pages) and 0 <= x < 1 and 0 <= y < 1
+                    and width >= .04 and height >= .03 and x + width <= 1.0001
+                    and y + height <= 1.0001):
+                candidates.append({"page_index": page_index, "number": number,
+                                   "x": round(x, 4), "y": round(y, 4),
+                                   "width": round(width, 4), "height": round(height, 4),
+                                   "source": "full_page_vlm"})
+                semantic_numbers.add(number)
+    except Exception:
+        # A failed semantic pass must not prevent the older physical locator
+        # from returning its useful high-confidence headings.
+        pass
+    if semantic_numbers == allowed and allowed:
+        return {"candidates": candidates, "layout_rows": layout_rows,
+                "page_count": len(pages), "strategy": "full_page_vlm"}
+    for page_index, page in enumerate(pages):
+        width, height = page.size
+        grey = np.asarray(page.convert("L"))
+        left = grey[:, max(0, int(width * .01)):max(1, int(width * .24))]
+        ink = (left < 100).sum(axis=1)
+        active = np.flatnonzero(ink >= 4)
+        groups = []
+        for y in active:
+            if not groups or int(y) - groups[-1][-1] > 3:
+                groups.append([int(y)])
+            else:
+                groups[-1].append(int(y))
+        margin = grey[:, max(0, int(width * .01)):max(1, int(width * .12))]
+        strong_ink = (margin < 100).sum(axis=1)
+        strong_active = np.flatnonzero(strong_ink >= 4)
+        strong_groups = []
+        for marker_y in strong_active:
+            if not strong_groups or int(marker_y) - strong_groups[-1][-1] > 3:
+                strong_groups.append([int(marker_y)])
+            else:
+                strong_groups[-1].append(int(marker_y))
+        for strong_group in strong_groups:
+            if len(strong_group) >= 6 and height * .025 < strong_group[0] < height * .94:
+                layout_rows.append({"page_index": page_index, "y": round((strong_group[0] + strong_group[-1]) / (2 * height), 4)})
+        for group in groups:
+            if len(group) < 5 or group[0] < height * .025 or group[0] > height * .94:
+                continue
+            y = (group[0] + group[-1]) / 2
+            top = max(0, int(y - height * .028))
+            bottom = min(height, int(y + height * .040))
+            crop = page.crop((0, top, int(width * .32), bottom))
+            crop = ImageEnhance.Contrast(crop).enhance(1.8)
+            prompt = ("只辨认这张手写作业行左侧开头的大题题号。"
+                      "必须是行首独立的大题编号，不是公式、页码、章节号、小问或解题步骤。"
+                      "可能的题号：" + "、".join(map(str, sorted(allowed))) + "。"
+                      "只输出一个阿拉伯数字；没有清楚的大题号就输出无。")
+            raw = generate([{"role": "user", "content": [{"type": "image", "image": crop},
+                     {"type": "text", "text": prompt}]}], 24).strip()
+            if not re.fullmatch(r"\d{1,2}", raw):
+                continue
+            number = int(raw)
+            if number not in allowed:
+                continue
+            candidates.append({"page_index": page_index, "number": number,
+                               "y": round(y / height, 4), "raw": raw})
+    return {"candidates": candidates, "layout_rows": layout_rows,
+            "page_count": len(pages), "strategy": "full_page_vlm+heading_fallback"}
+@app.post("/read-heading-crops")
+def read_heading_crops(req: LocateHomeworkRequest):
+    ensure_model()
+    outputs = []
+    for encoded in req.images_base64:
+        image = Image.open(io.BytesIO(base64.b64decode(encoded))).convert("RGB")
+        options = "、".join(req.problem_nos)
+        prompt = f"这张小图是手写作业某一行的左侧。请仔细辨认最左边的大题题号；可能的题号有：{options}。只输出你实际看到的阿拉伯数字；没有大题题号就输出无。"
+        raw = generate([{"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": prompt}]}], 40)
+        outputs.append(raw.strip())
+    return {"outputs": outputs}
+
+@app.post("/read-work-crop")
+def read_work_crop(req: SolveImageRequest):
+    """Transcribe an isolated student answer without the grading key."""
+    ensure_model()
+    try:
+        image = Image.open(io.BytesIO(base64.b64decode(req.image_base64))).convert("RGB")
+    except Exception as exc:
+        raise HTTPException(400, "invalid crop image") from exc
+    prompt = "只逐行转写图片中学生亲笔写下的数学作答。保留公式和证明步骤；不要解题，不要补写，不要给分；看不清写[不清]。不要描述图片。"
+    raw = generate([{"role": "user", "content": [{"type": "image", "image": image},
+                    {"type": "text", "text": prompt}]}], 1200).strip()
+    return {"text": raw}
 
 
 @app.post("/grade-homework")
@@ -688,28 +795,34 @@ def grade_homework(req: GradeHomeworkRequest):
         raise HTTPException(400, "invalid student work image") from exc
 
     problem_nos = [str(p.problem_no) for p in req.problems]
-    locator = _locate_problems(images, problem_nos)
+    isolated_crop = len(images) == 1 and len(req.problems) == 1 and any(
+        str(req.problems[0].problem_text).startswith(prefix)
+        for prefix in ("【教师已确认", "【照片题号自动定位")
+    )
+    locator = {} if isolated_crop else _locate_problems(images, problem_nos)
 
     results = []
     for problem in req.problems:
         located = locator.get(str(problem.problem_no), {})
         located_pages = located.get("page_indices", [])
         located_snippet = located.get("snippet", "")
-        prompt = f"""你是严谨的高等数学阅卷教师。所给多张图片是一名学生的整份手写作业。
-请在所有图片中定位题号 {problem.problem_no} 的学生作答，只批改这一题；这一步同时完成切题、题号匹配和手写识别。
-题号定位提示：该题应出现在图片页 {located_pages if located_pages else '未知'}（0 起序号）；题干开头片段参考：{located_snippet or '未提供'}。
-题目：{problem.problem_text or '题目文字缺失，请结合题号和标准答案定位'}
+        suggested_region = located.get("answer_region")
+        scope_instruction = ("这是一张已经裁切出的单题作答图片。不要再搜索其他页或要求图中出现完整教材题号；先逐行识别实际笔迹，再给候选评分。"
+                             if isolated_crop else "所给多张图片是一名学生的整份手写作业。请定位指定题号的学生作答。")
+        prompt = f"""你是严谨的高等数学阅卷教师。{scope_instruction}
+只批改题号 {problem.problem_no}；不可把其他题或参考答案当作学生作答。
+题号定位提示：该题应出现在图片页 {located_pages if located_pages else '未知'}（0 起序号）；题干开头片段参考：{located_snippet or '未提供'}；题区建议坐标仅供辅助定位：{suggested_region or '未提供'}。题目：{problem.problem_text or '题目文字缺失，请结合题号和标准答案定位'}
 标准答案：{problem.std_answer}
 参考解答：{problem.full_solution or '未提供'}
+题型：{problem.question_type}
+本题评分模板：{_grading_template(problem.question_type)}
 满分：{problem.max_score}
 
 请逐步骤比较学生过程与参考解答。允许等价解法；不要因为书写形式不同扣分。若找不到作答、题号错配、图片不清、识别不确定或证明过程需教师判断，need_review 必须为 true。
-
-首先核查作答是否真正完成：若图中算式末尾留有孤立的 +、-、=、乘除号，未写完的分式/括号，或只停在中间步骤而没有写完当前算式，work_complete 必须为 false，need_review 必须为 true，不得给满分或 correct=true。
-一个完整的、未化简的正确求导/商法则算式仍可以视为完成；只有明显截断或缺步时才拦截。若作答完整性无法从图中确认，按未完成处理。
+step_scores 必须列出 1–6 个实际可核对的评分点；每项须有明确 step、score、max_score，所有 max_score 合计必须严格等于本题满分，所有 score 合计必须严格等于 score。若没有可识别作答，返回 score=0 且 step_scores=[]，并 need_review=true；禁止把参考答案或其他题的文字当作学生作答计分。
 你必须真实阅读图片中学生的实际作答，据此给出分数与中文反馈；严禁照抄下面的格式示例里的占位文字。
 只输出严格 JSON，不要 Markdown。格式示例（<...> 为需你填写的字段，输出时不要保留尖括号）：
-{{"located_problem_no":"<你实际定位到的题号，应等于 {problem.problem_no}>","located_problem_text":"<你实际看到的该题题干片段>","score": <数字>, "max_score": {problem.max_score}, "correct": true或false, "confidence": <0到1之间的数字>, "feedback": "<给学生的中文反馈>", "need_review": true或false, "work_complete": true或false, "completion_evidence": "<作答末尾是否完整的图像证据>", "recognized_work": "<识别到的学生步骤>", "matched_image_indices": [<图片序号>], "step_scores": [{{"step": "<步骤说明>", "score": <数字>, "max_score": <数字>}}], "handwriting_score": <0到100整数>, "handwriting_note": "<书写整洁度评价>", "risks": [<风险描述>]}}
+{{"located_problem_no":"<你实际定位到的题号，应等于 {problem.problem_no}>","located_problem_text":"<你实际看到的该题题干片段>","score": <数字>, "max_score": {problem.max_score}, "correct": true或false, "confidence": <0到1之间的数字>, "feedback": "<给学生的中文反馈>", "need_review": true或false, "recognized_work": "<识别到的学生步骤>", "matched_image_indices": [<图片序号>], "step_scores": [{{"step": "<步骤说明>", "score": <数字>, "max_score": <数字>}}], "handwriting_score": <0到100整数>, "handwriting_note": "<书写整洁度评价>", "risks": [<风险描述>]}}
 批改结束后请自检：located_problem_no 是否确实等于 {problem.problem_no}？若不等或无法确定，need_review 必须为 true 并在 risks 写明"题号定位可能错配"。
 """
         content = [{"type": "image", "image": image} for image in images]
@@ -718,7 +831,7 @@ def grade_homework(req: GradeHomeworkRequest):
         parsed = try_parse_json(raw)
         if not parsed:
             repair = f"""把以下阅卷草稿整理成严格 JSON，只输出 JSON。数学反斜杠须正确转义。
-格式：{{"located_problem_no":"{problem.problem_no}","score":0.0,"max_score":{problem.max_score},"correct":false,"confidence":0.0,"feedback":"...","need_review":true,"work_complete":false,"completion_evidence":"无法从草稿确认完整性","recognized_work":"...","matched_image_indices":[],"step_scores":[],"handwriting_score":60,"handwriting_note":"","risks":[]}}
+格式：{{"located_problem_no":"{problem.problem_no}","score":0.0,"max_score":{problem.max_score},"correct":false,"confidence":0.0,"feedback":"...","need_review":true,"recognized_work":"...","matched_image_indices":[],"step_scores":[],"handwriting_score":60,"handwriting_note":"","risks":[]}}
 草稿：{raw[:5000]}"""
             parsed = try_parse_json(generate(
                 [{"role": "user", "content": [{"type": "text", "text": repair}]}], 900
@@ -729,34 +842,26 @@ def grade_homework(req: GradeHomeworkRequest):
                       "recognized_work": "", "matched_image_indices": [],
                       "step_scores": [], "handwriting_score": None,
                       "handwriting_note": "", "risks": ["模型结果无法解析"]}
-        try:
-            score = max(0.0, min(float(problem.max_score), float(parsed.get("score", 0) or 0)))
-        except (TypeError, ValueError):
-            score = 0.0
-            parsed["need_review"] = True
-            parsed["_schema_field_invalid"] = True
-        # A separately prompted visual check prevents a correct intermediate
-        # formula from silently becoming a full-credit result when the final
-        # line visibly trails off.
-        completion_audit = _audit_completion_for_full_credit(
-            images, str(problem.problem_no), located_pages
-        )
-        if completion_audit is not None:
-            parsed["answer_present"] = completion_audit["answer_present"]
-            parsed["work_complete"] = completion_audit["work_complete"]
-            parsed["completion_evidence"] = completion_audit["completion_evidence"]
-        try:
-            confidence = max(0.0, min(1.0, float(parsed.get("confidence", 0) or 0)))
-        except (TypeError, ValueError):
-            confidence = 0.0
-            parsed["need_review"] = True
-            parsed["_schema_field_invalid"] = True
-        located_no = str(parsed.get("located_problem_no") or "").strip()
+        if isolated_crop and not str(parsed.get("recognized_work") or "").strip():
+            # Retry transcription without exposing the standard answer. A failed
+            # first grading pass must not turn a visibly written crop into a
+            # fabricated blank answer. Any recovered text stays review-only.
+            ocr_prompt = "只转写这张裁切图片中学生实际写下的数学作答，逐行保留公式和文字；不要解题、不要补写、不要输出参考答案。看不清的地方写[不清]。"
+            ocr_raw = generate([{"role": "user", "content": [
+                {"type": "image", "image": images[0]}, {"type": "text", "text": ocr_prompt}]}], 650).strip()
+            if len(ocr_raw) >= 8 and not any(word in ocr_raw[:30] for word in ("无法识别", "没有作答", "未见作答")):
+                parsed["recognized_work"] = ocr_raw
+                parsed["independent_ocr"] = True
+                parsed["need_review"] = True
+                parsed["score"] = 0.0
+                parsed["step_scores"] = []
+                parsed["risks"] = list(parsed.get("risks") or []) + ["初次识别失败；已独立重读笔迹，评分需教师确认"]
+        score = max(0.0, min(float(problem.max_score), float(parsed.get("score", 0) or 0)))
+        confidence = max(0.0, min(1.0, float(parsed.get("confidence", 0) or 0)))
+        located_no = str(problem.problem_no) if isolated_crop else str(parsed.get("located_problem_no") or "").strip()
         located_text = str(parsed.get("located_problem_text") or "")
-        mislocated = bool(located_no) and located_no != str(problem.problem_no)
-        risks = list(parsed.get("risks", []) or []) if isinstance(parsed.get("risks", []), list) else ["模型 risks 字段类型异常"]
-        if parsed.pop("_schema_field_invalid", False):
-            risks.append("模型 score 或 confidence 字段类型异常，已降级为人工复核")
+        mislocated = (not isolated_crop) and bool(located_no) and located_no != str(problem.problem_no)
+        risks = list(parsed.get("risks", []) or [])
         if mislocated or not located_no:
             risks.append(f"题号定位可能错配：模型定位到 {located_no or '未知'}，期望 {problem.problem_no}")
         try:
@@ -765,22 +870,7 @@ def grade_homework(req: GradeHomeworkRequest):
                 handwriting_score = max(0, min(100, handwriting_score))
         except (TypeError, ValueError):
             handwriting_score = None
-        work_complete = parsed.get("work_complete")
-        if isinstance(work_complete, str):
-            work_complete = work_complete.strip().lower() in {"true", "1", "yes", "complete", "完整"}
-        answer_present = parsed.get("answer_present")
-        if answer_present is False:
-            score = 0.0
-            parsed["correct"] = False
-            confidence = 0.95
-            risks.append("视觉审计确认该题未见可归属学生作答")
-        elif work_complete is False:
-            score = min(score, float(problem.max_score) * 0.60)
-            confidence = min(confidence, 0.60)
-            risks.append("作答疑似未完成：" + str(parsed.get("completion_evidence") or "视觉识别结果"))
-        if answer_present is None:
-            risks.append("纸面作答存在性审计未返回可解析结果")
-        need_review = False if answer_present is False else (answer_present is not True or bool(parsed.get("need_review", True)) or confidence < 0.85 or mislocated or work_complete is False)
+        need_review = bool(parsed.get("need_review", True)) or confidence < 0.85 or mislocated
         results.append({
             "problem_id": problem.problem_id,
             "problem_no": problem.problem_no,
@@ -792,11 +882,11 @@ def grade_homework(req: GradeHomeworkRequest):
             "confidence": confidence,
             "feedback": str(parsed.get("feedback", "")),
             "need_review": need_review,
-            "answer_present": answer_present,
-            "work_complete": work_complete,
-            "completion_evidence": str(parsed.get("completion_evidence", "")),
             "recognized_work": str(parsed.get("recognized_work", "")),
             "matched_image_indices": parsed.get("matched_image_indices", []),
+            # UI-only proposal. It becomes grading evidence only after the
+            # teacher explicitly accepts/saves this rectangle in the mapper.
+            "suggested_region": located.get("answer_region"),
             "step_scores": parsed.get("step_scores", []),
             "handwriting_score": handwriting_score,
             "handwriting_note": str(parsed.get("handwriting_note", "")),

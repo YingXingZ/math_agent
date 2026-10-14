@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import re
 import sys
 import tempfile
@@ -25,15 +26,24 @@ from typing import Any
 
 import fitz
 
+# Keep the PDF renderer isolated from the API/model environment.  A missing
+# renderer must fail visibly, never silently print raw TeX commands to pupils.
+PDF_RENDER_VENDOR = Path(os.environ.get(
+    "MATHBENCH_PDF_RENDER_VENDOR", "/home/zhangzhuohan/math-agent/runtime-deps/pdf-render-v1"))
+if PDF_RENDER_VENDOR.is_dir() and str(PDF_RENDER_VENDOR) not in sys.path:
+    sys.path.insert(0, str(PDF_RENDER_VENDOR))
+
 # --- reuse the workspace worksheet engine -----------------------------------
-TOOLS_ROOT = Path(__file__).resolve().parents[2] / "tools"
+TOOLS_ROOT = Path(os.environ.get(
+    "MATHBENCH_WORKSHEET_TOOLS", str(Path(__file__).resolve().parents[2] / "tools")))
 if str(TOOLS_ROOT) not in sys.path:
     sys.path.insert(0, str(TOOLS_ROOT))
 
 from build_worksheet import WorksheetBuilder  # noqa: E402  (workspace engine)
 
-FONT_SONG = str(Path(__file__).resolve().parents[1] / "assets" / "fonts" / "NotoSansCJKsc-Regular.otf")
-FONT_HEI = str(Path(__file__).resolve().parents[1] / "assets" / "fonts" / "NotoSansCJKsc-Regular.otf")
+FONT_SONG = FONT_HEI = os.environ.get(
+    "MATHBENCH_PDF_FONT",
+    str(Path(__file__).resolve().parents[1] / "assets" / "fonts" / "NotoSansCJKsc-Regular.otf"))
 CONTENT_W = 595.28 - 56.7 - 45.4  # matches build_worksheet.py CONTENT_W
 
 # Pre-compile the LaTeX detector.  We only treat tokens that look like real
@@ -41,7 +51,8 @@ CONTENT_W = 595.28 - 56.7 - 45.4  # matches build_worksheet.py CONTENT_W
 # regex below matches either a backslash-letter command or a backslash symbol
 # (e.g. \le, \ge, \to, \infty) followed by an optional braced group.
 _LATEX_SCAN = re.compile(
-    r"\\[A-Za-z]+(?:\s*\{[^{}]*\})*"
+    r"\\(?:dfrac|tfrac|frac)\s*\{(?:[^{}]|\{[^{}]*\})*\}\s*\{(?:[^{}]|\{[^{}]*\})*\}"
+    r"|\\[A-Za-z]+(?:\s*\{[^{}]*\})*"
     r"|\\\([^()]*\)"
     r"|\\\[^[\]]*\]"
 )
@@ -49,7 +60,7 @@ _LATEX_SCAN = re.compile(
 # Match the textbook-standard math delimiters: $$...$$ (display) first, then
 # $...$ (inline).  Everything between the delimiters is a single formula span
 # that mathtext should render as one glyph run, not token-by-token.
-_MATH_DOLLAR = re.compile(r"\$\$(.+?)\$\$|\$(.+?)\$")
+_MATH_DOLLAR = re.compile(r"\$\$(.+?)\$\$|\$(.+?)\$|\\\((.+?)\\\)|\\\[(.+?)\\\]")
 
 
 def _normalise_mathtext(tex: str) -> str:
@@ -60,13 +71,63 @@ def _normalise_mathtext(tex: str) -> str:
     normalise the fraction/style macros.  Applied to the *inner* content of a
     $...$ span (delimiters already stripped by the caller).
     """
-    return (
+    normalised = (
         tex.replace("\\operatorname", "\\mathrm")
            .replace("\\dfrac", "\\frac")
            .replace("\\tfrac", "\\frac")
            .replace("\\text{", "\\mathrm{")
            .replace("\\text ", "\\mathrm ")
     )
+    # Matplotlib mathtext accepts the long relation commands but rejects the
+    # common textbook aliases ``\\le``/``\\ge``.  Do not use a plain replace:
+    # it would also corrupt commands beginning with those letters (e.g. \\left).
+    normalised = re.sub(r"\\le(?![A-Za-z])", r"\\leq", normalised)
+    normalised = re.sub(r"\\ge(?![A-Za-z])", r"\\geq", normalised)
+
+    # ``cases`` is another standard textbook environment that matplotlib's
+    # compact mathtext backend cannot lay out.  Preserve every branch and its
+    # condition in a readable, single-line brace form instead of leaking raw
+    # LaTeX or refusing to build the student's printable worksheet.
+    def _flatten_cases(match: re.Match[str]) -> str:
+        body = match.group(1)
+        body = re.sub(r"\s*&\s*", " ", body)
+        body = re.sub(r"\s*\\\\\s*", "; ", body)
+        body = re.sub(r"\s*,\s*;", ";", body)
+        return r"\{ " + body.strip() + r" \}"
+
+    normalised = re.sub(
+        r"\\begin\{cases\}(.*?)\\end\{cases\}",
+        _flatten_cases,
+        normalised,
+        flags=re.DOTALL,
+    )
+    return normalised
+
+
+def _plain_limit_to_tex(text: str) -> str:
+    """Turn common OCR/plain limit notation into one renderable math span."""
+    value = text.strip().rstrip(";；")
+    value = re.sub(r"lim_\(([^()]*)\)", r"\\lim_{\1}", value)
+    value = re.sub(r"(?<!\\)lim_\{([^{}]*)\}", r"\\lim_{\1}", value)
+    value = value.replace("→", r"\to ").replace("∞", r"\infty ")
+    value = re.sub(r"√\s*([A-Za-z0-9]+)", r"\\sqrt{\1}", value)
+    value = value.replace("√", r"\sqrt")
+    value = re.sub(r"\\sqrt\s*\(([^()]*)\)", r"\\sqrt{\1}", value)
+    # OCR often omits TeX slashes on named operators. Keep inverse/trig
+    # functions upright and spaced as operators (arcsin, tan, cot, etc.), not
+    # as adjacent italic variables.
+    def _operator(match: re.Match[str]) -> str:
+        name = match.group(1)
+        return r"\operatorname{arccot}" if name == "arccot" else "\\" + name
+
+    value = re.sub(
+        r"(?<!\\)\b(arcsin|arccos|arctan|arccot|sinh|cosh|tanh|sin|cos|tan|cot|sec|csc|ln|log)\b",
+        _operator, value,
+    )
+    # Mathtext does not give \lim the generous operator spacing that TeX
+    # does. Add an explicit thin space before the expression.
+    value = re.sub(r"(\\lim_\{[^{}]*\})\s*", r"\1\\; ", value)
+    return value
 
 
 def _answer_space_for(question_type: str, content: str, *, is_subpart: bool = False) -> int:
@@ -140,9 +201,15 @@ _SOURCE_PROBLEM_PREFIX_RE = re.compile(r"^\s*\d+\s*[.．、]\s*")
 
 
 def display_problem_no(row: dict[str, Any], index: int) -> str:
-    """Show a traceable textbook locator such as 1.1 第10题."""
+    """Show a compact, traceable exercise reference such as Ex1.2第6题."""
     raw = str(row.get("original_no") or row.get("source_problem_no") or row.get("sort_order") or (index + 1)).strip()
     chapter = str(row.get("chapter") or "").strip()
+    match = re.fullmatch(r"Ex\s*(\d+\.\d+)\s*#\s*(\d+)", raw, re.IGNORECASE)
+    if match:
+        return f"Ex{match.group(1)}第{match.group(2)}题"
+    match = re.fullmatch(r"Ex\s*(\d+\.\d+)\s*第\s*(\d+)\s*题", raw, re.IGNORECASE)
+    if match:
+        return f"Ex{match.group(1)}第{match.group(2)}题"
     if "第" in raw and "题" in raw:
         return raw
     return f"{chapter} 第{raw}题".strip() if chapter else f"第{raw}题"
@@ -190,6 +257,19 @@ def render_problem_image(content: str, original_no: str, out_path: str | Path,
     margin = 6.0
     label = f"{original_no}. " if original_no else ""
     body = strip_source_problem_prefix(content, original_no)
+    body = re.sub(r"([;；])\s*(?=\(\d{1,2}\)\s*lim[_\s])", r"\1\n", body)
+
+    # A source question may place a display/inline math block across several
+    # database lines (especially ``\\begin{cases}``).  Split only *after*
+    # making each delimited formula one physical line; otherwise the tokenizer
+    # sees the unsupported ``\\begin`` fragment by itself and aborts PDF
+    # generation even though the full expression is valid.
+    def _one_line_math(match: re.Match[str]) -> str:
+        return re.sub(r"\s+", " ", match.group(0))
+
+    body = re.sub(r"\\\((.*?)\\\)", _one_line_math, body, flags=re.DOTALL)
+    body = re.sub(r"\\\[(.*?)\\\]", _one_line_math, body, flags=re.DOTALL)
+    body = re.sub(r"\$\$(.*?)\$\$", _one_line_math, body, flags=re.DOTALL)
 
     y = margin
     max_x = CONTENT_W - margin
@@ -235,18 +315,7 @@ def render_problem_image(content: str, original_no: str, out_path: str | Path,
             return
         png = _render_latex_png(inner, fontsize=font_size + 2.0)
         if png is None:
-            # mathtext could not render the whole span (some mixes of `\le`,
-            # `\in`, unmatched bars, etc. are out of mathtext's grammar).  Fall
-            # back to per-token rendering so known `\cmd` fragments become
-            # real glyphs while the rest of the line is drawn as text.  The
-            # ``from_text_span`` guard breaks the cycle: a token called from
-            # ``draw_text_span`` only falls back to literal text (not another
-            # text-span pass) to avoid infinite recursion.
-            if from_text_span:
-                draw_literal(inner)
-            else:
-                draw_text_span(inner)
-            return
+            raise ValueError("数学公式未能排版，已阻止输出含 LaTeX 源码的 PDF：" + inner[:70])
         tmp = Path(tempfile.gettempdir()) / "_latex_seg.png"
         tmp.write_bytes(png)
         with fitz.open(str(tmp)) as png_doc:
@@ -286,6 +355,34 @@ def render_problem_image(content: str, original_no: str, out_path: str | Path,
             y += line_h * 0.6
             continue
         cursor_x = margin
+        if not _MATH_DOLLAR.search(line) and re.search(r"\blim\s*[_({]", line):
+            # Some legacy questions use bare ``lim_{...}`` inside a Chinese
+            # sentence.  Rendering the whole sentence as math drops Chinese
+            # glyphs; instead, isolate each bare limit expression and keep its
+            # surrounding explanation in the CJK text font.
+            if re.search(r"[\u4e00-\u9fff]", line):
+                last_limit_end = 0
+                for bare_limit in re.finditer(
+                    r"\blim(?:_\{[^{}]*\}|_\([^()]*\))\s*(?:[A-Za-z0-9_{}|=+\-*/().→∞]+)",
+                    line,
+                ):
+                    draw_text_span(line[last_limit_end:bare_limit.start()])
+                    draw_math(_plain_limit_to_tex(bare_limit.group(0)))
+                    last_limit_end = bare_limit.end()
+                draw_text_span(line[last_limit_end:])
+            else:
+                # Keep the printed sub-question marker in the normal worksheet
+                # font. Rendering the whole line as math makes "(1)" italic and
+                # visually collide with the limit operator in compact scans.
+                numbered = re.match(r"^\s*([（(]\s*\d+\s*[)）])\s*(.*)$", line)
+                if numbered:
+                    label, expression = numbered.groups()
+                    draw_literal(label + "  ")
+                    draw_math(_plain_limit_to_tex(expression))
+                else:
+                    draw_math(_plain_limit_to_tex(line))
+            y += line_h
+            continue
         # Tokenize on $ delimiters: text gaps are drawn with the CJK font, math
         # spans are rendered as one glyph run.  The $ delimiters themselves are
         # consumed as boundaries and never drawn.
@@ -294,7 +391,7 @@ def render_problem_image(content: str, original_no: str, out_path: str | Path,
             text_seg = line[last:m.start()]
             if text_seg:
                 draw_text_span(text_seg)
-            inner = m.group(1) if m.group(1) is not None else m.group(2)
+            inner = next((group for group in m.groups() if group is not None), "")
             draw_math(inner)
             last = m.end()
         tail = line[last:]
@@ -351,6 +448,8 @@ def _format_due(value: Any) -> str:
 def build_assignment_pdf(assignment: dict[str, Any], items: list[dict[str, Any]],
                          out_path: str | Path) -> tuple[str, int]:
     """Build the printable A4 homework PDF. Returns (path, page_count)."""
+    if not _has_matplotlib():
+        raise RuntimeError("服务器缺少数学公式渲染器，已阻止生成含 LaTeX 源码的作业 PDF")
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as td:
@@ -359,11 +458,13 @@ def build_assignment_pdf(assignment: dict[str, Any], items: list[dict[str, Any]]
         wb = WorksheetBuilder(
             title=assignment.get("title") or "高等数学作业",
             subtitle=f"章节 {assignment.get('chapter') or ''} · 课后作业",
-            # 班级/学号/姓名留空给学生填写；右上 meta 只放截止时间和教材信息。
-            meta_line=f"截止时间：{_format_due(assignment.get('due_at'))}　教材：李继成《高等数学》第二版",
+            # The worksheet header reserves a narrow right-hand column.  Keep
+            # this short so mobile-generated PDFs do not clip the metadata at
+            # the page edge; the subject is already clear from the title.
+            meta_line=f"截止：{_format_due(assignment.get('due_at'))}",
         )
         for d in descriptors:
-            wb.add_problem(d["img_path"], d["answer_space"])
+            wb.add_problem(d["img_path"], d["answer_space"], d["original_no"])
         path, n = wb.save(str(out_path))
     return path, n
 

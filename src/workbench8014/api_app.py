@@ -506,7 +506,13 @@ def health():
 @app.get("/textbooks")
 def list_textbooks():
     conn = get_db()
-    rows = conn.execute("SELECT * FROM textbooks").fetchall()
+    rows = conn.execute("""SELECT t.*,
+                                  COUNT(DISTINCT s.id) AS section_count,
+                                  COUNT(DISTINCT p.id) AS problem_count
+                           FROM textbooks t
+                           LEFT JOIN sections s ON s.textbook_id=t.id
+                           LEFT JOIN problems p ON p.section_id=s.id
+                           GROUP BY t.id ORDER BY t.name,t.volume""").fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -528,6 +534,31 @@ def list_sections(tid: str):
     rows = conn.execute("SELECT * FROM sections WHERE textbook_id=?", (tid,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+@app.post("/textbooks/{tid}/sections", status_code=201)
+def create_textbook_section(tid: str, payload: dict = Body(...)):
+    section_no = str(payload.get("section_no") or "").strip()
+    title = str(payload.get("title") or "").strip()
+    if not section_no:
+        raise HTTPException(422, "section_no 不能为空")
+    conn = get_db()
+    if not conn.execute("SELECT 1 FROM textbooks WHERE id=?", (tid,)).fetchone():
+        conn.close()
+        raise HTTPException(404, "教材不存在")
+    existing = conn.execute("SELECT id FROM sections WHERE textbook_id=? AND section_no=? ORDER BY id LIMIT 1",
+                            (tid, section_no)).fetchone()
+    if existing:
+        conn.execute("UPDATE sections SET title=CASE WHEN ?='' THEN title ELSE ? END WHERE id=?",
+                     (title, title, existing["id"]))
+        section_id = existing["id"]
+    else:
+        section_id = str(uuid.uuid4())
+        conn.execute("INSERT INTO sections(id,textbook_id,section_no,title) VALUES(?,?,?,?)",
+                     (section_id, tid, section_no, title))
+    conn.commit()
+    conn.close()
+    return {"id": section_id, "textbook_id": tid, "section_no": section_no, "title": title}
 
 
 # ----- 入库 -----
@@ -606,6 +637,7 @@ def kp_problems(code: str):
 @app.get("/problems")
 def query_problems(
     section_no: Optional[str] = None,
+    textbook_id: Optional[str] = None,
     ptype: Optional[str] = None,
     difficulty_min: Optional[int] = None,
     difficulty_max: Optional[int] = None,
@@ -628,6 +660,8 @@ def query_problems(
                     ELSE 0 END AS parent_answer_verified
              FROM problems p JOIN sections s ON s.id=p.section_id WHERE 1=1"""
     where, args = _where_clause(section_no, ptype, difficulty_min, difficulty_max, knowledge_pts, q)
+    if textbook_id:
+        where += " AND s.textbook_id=?"; args.append(textbook_id)
     sql += where
     sql += " ORDER BY s.section_no, p.problem_no, p.sub_no LIMIT ? OFFSET ?"
     args += [size, (page - 1) * size]
@@ -1407,7 +1441,7 @@ def _vision_grade_submission(submission_id: str):
     placeholders = ",".join("?" * len(pids))
     rows = conn.execute(f"""
         SELECT p.id,p.problem_no,p.sub_no,p.ptype,p.content_text,p.std_answer,
-               p.full_solution,p.answer_status,p.answer_invalid_reason
+               p.full_solution,p.grading_steps,p.answer_status,p.answer_invalid_reason
         FROM problems p WHERE p.id IN ({placeholders})
     """, pids).fetchall() if pids else []
     by_id = {row["id"]: dict(row) for row in rows}
@@ -1430,6 +1464,8 @@ def _vision_grade_submission(submission_id: str):
             ready_problems.append({
                 "problem_id": pid, "problem_no": no, "problem_text": problem.get("content_text") or "",
                 "std_answer": problem.get("std_answer") or "", "full_solution": problem.get("full_solution") or "",
+                "rubric": problem.get("grading_steps") or "",
+                "ptype": problem.get("ptype", "calc"),
                 "max_score": max_score,
             })
     image_payload = []
@@ -1438,24 +1474,60 @@ def _vision_grade_submission(submission_id: str):
         image_payload.append(base64.b64encode(open(disk, "rb").read()).decode("ascii"))
     ai_results = []
     if ready_problems:
-        url = os.environ.get("MATH_VLM_URL", "http://127.0.0.1:18080").rstrip("/") + "/grade-homework"
+        # Scoring alone routes to the local Qwen3.5 evidence-first gateway.
+        # MATH_VLM_URL remains untouched for solve/review and other vision tasks.
+        url = os.environ.get("MATH_GRADING_URL", "http://127.0.0.1:18086").rstrip("/") + "/grade-homework"
         request = urllib.request.Request(
             url, data=json.dumps({"images_base64": image_payload, "problems": ready_problems}, ensure_ascii=False).encode("utf-8"),
             headers={"Content-Type": "application/json"}, method="POST")
         try:
             with urllib.request.urlopen(request, timeout=1800) as response:
-                ai_results = json.loads(response.read().decode("utf-8")).get("results", [])
+                gateway_payload = json.loads(response.read().decode("utf-8"))
+                ai_results = gateway_payload.get("results", [])
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")
             conn.close()
-            raise HTTPException(502, "vision grading failed: " + body[:500])
-    ready_by_id = {item["problem_id"]: item for item in ready_problems}
-    for item in ai_results:
-        source = ready_by_id.get(item.get("problem_id"), {})
-        item["std_answer"] = source.get("std_answer", "")
-        item["ptype"] = by_id.get(item.get("problem_id"), {}).get("ptype", "calc")
-    all_by_id = {item["problem_id"]: item for item in blocked_results + ai_results}
-    results = [all_by_id[pid] for pid in pids if pid in all_by_id]
+            raise HTTPException(502, "Qwen3.5 grading failed: " + body[:500])
+        if not isinstance(ai_results, list):
+            conn.close()
+            raise HTTPException(502, "Qwen3.5 returned an invalid results list")
+        expected_ids = {str(item["problem_id"]) for item in ready_problems}
+        actual_ids = [str(item.get("problem_id")) for item in ai_results if isinstance(item, dict)]
+        if len(ai_results) != len(expected_ids) or len(actual_ids) != len(expected_ids) or set(actual_ids) != expected_ids:
+            conn.close()
+            raise HTTPException(502, "Qwen3.5 returned missing, duplicate or unexpected problem IDs")
+        ready_by_id = {str(item["problem_id"]): item for item in ready_problems}
+        evidence_id = (gateway_payload.get("private_evidence") or {}).get("evidence_id", "")
+        for item in ai_results:
+            item["problem_id"] = str(item.get("problem_id"))
+            source = ready_by_id.get(item["problem_id"], {})
+            item["std_answer"] = source.get("std_answer", "")
+            item["ptype"] = source.get("ptype", "calc")
+            zero_based = item.get("matched_image_indices") or []
+            page_indices = []
+            for index in zero_based:
+                try:
+                    value = int(index)
+                    if value >= 0:
+                        page_indices.append(value)
+                except (TypeError, ValueError):
+                    continue
+            item["source_page_indices"] = page_indices
+            item["matched_image_indices"] = [index + 1 for index in page_indices]
+            item["crop_evidence"] = [
+                {key: value for key, value in crop.items() if key != "crop_base64"}
+                for crop in item.get("crop_evidence", []) if isinstance(crop, dict)
+            ]
+            item["gateway_evidence_id"] = evidence_id
+            item["grading_backend"] = "qwen35_gateway"
+            item["model_name"] = "Qwen3.5-9B"
+            item["need_review"] = True
+            item["needs_review"] = True
+            review_note = "Qwen3.5-9B 上线初期候选分须教师确认"
+            item.setdefault("review_reasons", []).append(review_note)
+            item.setdefault("risks", []).append(review_note)
+        all_by_id = {str(item["problem_id"]): item for item in blocked_results + ai_results}
+        results = [all_by_id[str(pid)] for pid in pids if str(pid) in all_by_id]
     total = round(sum(float(item.get("score", 0) or 0) for item in results), 1)
     max_total = sum(float(item.get("max_score", 0) or 0) for item in results)
     review_count = sum(1 for item in results if item.get("need_review"))

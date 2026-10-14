@@ -42,13 +42,24 @@ async def evidence_status() -> dict[str, Any]:
         }
 
 
-async def list_evidence_sections() -> list[dict[str, str]]:
-    """Return selectable textbook sections from the 8014 evidence source."""
+async def list_evidence_textbooks() -> list[dict[str, Any]]:
+    """Return the registered books and available question coverage from 8014."""
+    base = evidence_url("").rstrip("/")
+    async with evidence_client(timeout=15) as client:
+        response = await client.get(base + "/textbooks")
+        response.raise_for_status()
+        return response.json() or []
+
+
+async def list_evidence_sections(textbook_id: str | None = None) -> list[dict[str, str]]:
+    """Return selectable sections, optionally restricted to one source book."""
     base = evidence_url("").rstrip("/")
     async with evidence_client(timeout=15) as client:
         textbooks_response = await client.get(base + "/textbooks")
         textbooks_response.raise_for_status()
         textbooks = textbooks_response.json() or []
+        if textbook_id:
+            textbooks = [book for book in textbooks if str(book.get("id")) == str(textbook_id)]
         sections: list[dict[str, str]] = []
         for textbook in textbooks:
             textbook_id = textbook.get("id")
@@ -59,8 +70,10 @@ async def list_evidence_sections() -> list[dict[str, str]]:
             for section in response.json() or []:
                 section_no = str(section.get("section_no") or "").strip()
                 if section_no:
-                    sections.append({"section_no": section_no, "title": str(section.get("title") or "")})
-    return sorted(sections, key=lambda item: tuple(int(part) if part.isdigit() else part for part in item["section_no"].split(".")))
+                    sections.append({"section_no": section_no, "title": str(section.get("title") or ""),
+                                     "textbook_id": str(textbook_id or textbook.get("id") or ""),
+                                     "textbook_name": str(textbook.get("name") or "")})
+    return sorted(sections, key=lambda item: (item["textbook_name"], tuple(int(part) if part.isdigit() else part for part in item["section_no"].split("."))))
 
 
 async def _gather(client: httpx.AsyncClient, base: str):
@@ -75,24 +88,58 @@ async def _gather(client: httpx.AsyncClient, base: str):
     return tuple(response.json() for response in responses)
 
 
-async def retrieve_section_problems(section_no: str, limit: int = 30) -> dict[str, Any]:
+async def retrieve_section_problems(section_no: str, limit: int = 30,
+                                    textbook_id: str | None = None) -> dict[str, Any]:
     """Retrieve assignment-ready evidence without mutating the source library."""
     base = evidence_url("").rstrip("/")
     async with evidence_client(timeout=15) as client:
-        response = await client.get(base + "/problems", params={"section_no": section_no, "page": 1, "size": limit})
+        params = {"section_no": section_no, "page": 1, "size": limit}
+        if textbook_id:
+            params["textbook_id"] = textbook_id
+        response = await client.get(base + "/problems", params=params)
         response.raise_for_status()
         payload = response.json()
     items = payload.get("items", [])
     return {"section_no": section_no, "total": payload.get("total", len(items)), "items": [
-        {"source_problem_id": item.get("id"), "problem_no": item.get("problem_no"),
+        {"source_problem_id": item.get("id"), "textbook_id": item.get("textbook_id") or textbook_id,
+         "problem_no": item.get("problem_no"),
          "sub_no": item.get("sub_no"), "difficulty": item.get("difficulty"),
          "ptype": item.get("ptype"), "content_text": item.get("content_text"),
          "std_answer": item.get("std_answer"), "full_solution": item.get("full_solution"),
          "grading_steps": item.get("grading_steps"), "answer_status": item.get("answer_status"),
          "evidence": {"source": "8014", "section_no": item.get("section_no"),
+                      "textbook_id": item.get("textbook_id") or textbook_id,
                       "crop_image_path": item.get("crop_image_path")}}
         for item in items
     ]}
+
+
+async def create_evidence_textbook(name: str, volume: str = "", edition: str = "",
+                                   pdf_path: str = "", page_offset: int = 0) -> str:
+    base = evidence_url("").rstrip("/")
+    async with evidence_client(timeout=20) as client:
+        response = await client.post(base + "/textbooks", params={
+            "name": name, "volume": volume, "edition": edition,
+            "pdf_path": pdf_path, "page_offset": page_offset,
+        })
+        response.raise_for_status()
+        payload = response.json()
+    textbook_id = str(payload.get("id") or "").strip()
+    if not textbook_id:
+        raise ValueError("8014 未返回教材编号")
+    return textbook_id
+
+
+async def create_evidence_sections(textbook_id: str, sections: list[dict[str, Any]]) -> None:
+    if not sections:
+        return
+    base = evidence_url("").rstrip("/")
+    async with evidence_client(timeout=30) as client:
+        for section in sections:
+            response = await client.post(base + f"/textbooks/{quote(textbook_id, safe='')}/sections",
+                                         json={"section_no": str(section["section_no"]),
+                                               "title": str(section.get("title") or "")})
+            response.raise_for_status()
 
 
 async def retrieve_problem(problem_id: str) -> dict[str, Any]:

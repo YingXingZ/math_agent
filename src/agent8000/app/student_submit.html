@@ -1,44 +1,202 @@
 <!doctype html>
 <html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>查看与提交高数作业</title>
-<style>
-:root{--ink:#102a43;--muted:#60758a;--blue:#2563eb;--line:#cdd9e6;--red:#b42318}*{box-sizing:border-box}body{margin:0;background:#f6f8fc;font:16px "Microsoft YaHei",sans-serif;color:var(--ink)}.box{max-width:620px;margin:7vh auto;background:#fff;border:1px solid #e4ebf3;border-radius:18px;padding:30px;box-shadow:0 12px 35px #102a4312}h1{margin:0;font-size:28px}p{color:var(--muted);line-height:1.7}label{display:block;font-weight:700;margin-top:18px}input{width:100%;margin-top:7px;padding:12px;border:1px solid var(--line);border-radius:10px;font:inherit;min-height:46px;background:#fff}input[type=file]{padding:9px}button{padding:11px 15px;border:0;border-radius:10px;background:var(--blue);color:#fff;font:inherit;font-weight:700;cursor:pointer;min-height:44px}button:disabled{opacity:.55;cursor:not-allowed}.secondary{background:#eaf1fb;color:#1d4ed8}.note{margin-top:18px;padding:14px;background:#eef6ff;border-radius:10px;line-height:1.65}.err{background:#fff1f0;border-color:#ffccc7;color:var(--red)}.logout{position:fixed;right:20px;top:14px;background:#475569;z-index:2}.pages{margin-top:12px;display:grid;gap:10px}.page{display:flex;gap:10px;padding:9px;border:1px solid var(--line);border-radius:10px;align-items:center}.page img{width:72px;height:72px;object-fit:cover;border-radius:7px;background:#eef2f6}.page .meta{min-width:0;flex:1}.page .meta b,.page .meta span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.hint{color:var(--muted);font-size:14px;margin-top:4px}.warn{color:#9a6700}.actions{display:flex;gap:5px;flex-wrap:wrap}.actions button{min-height:34px;padding:6px 9px;font-size:14px}.progress{height:9px;border-radius:99px;background:#e2e8f0;margin-top:12px;overflow:hidden}.progress>i{display:block;background:#2563eb;height:100%;width:0;transition:width .2s}.hidden{display:none}
-@media(max-width:640px){body{background:#fff}.box{min-height:100dvh;margin:0;border:0;border-radius:0;box-shadow:none;padding:76px 20px 30px}h1{font-size:25px}p{font-size:15px}.logout{right:12px;top:12px;min-height:40px;padding:8px 12px;font-size:14px}button[type=submit]{width:100%;font-size:17px;margin-top:22px}.note{font-size:15px}.page img{width:62px;height:62px}.page{align-items:flex-start}.actions{justify-content:flex-end}}
-</style>
-<button class="logout" type="button" onclick="logout()">退出登录</button>
-<main class="box"><a href="/student" class="hint" style="display:inline-block;text-decoration:none">← 返回我的作业</a><h1 style="margin-top:12px">查看与提交高数作业</h1><p id="assignment">正在读取作业信息…</p><section id="assignmentSheet" class="note">正在加载老师布置的题目…</section><div id="submitStart" class="actions" style="margin:16px 0"><button type="button" onclick="openSubmissionForm()">我已查看题目，开始提交作业</button></div>
-<form id="form" class="hidden"><label>姓名<input name="student_name" required autocomplete="name"></label><label>学号<input name="student_no" required placeholder="仅限字母、数字、下划线" pattern="[A-Za-z0-9_]{1,32}"></label>
-<label>拍照或选择作业页<input id="photoFiles" type="file" accept="image/png,image/jpeg,application/pdf" multiple capture="environment"></label>
-<div class="hint">推荐一页一拍，题号和完整作答都要进入画面。图片会先在手机本地压缩、修正方向并检查清晰度；最多 10 页。PDF 请单独上传。</div>
-<div id="pages" class="pages"></div><div id="progress" class="progress hidden"><i></i></div><button id="btn" type="submit">提交并开始智能初评</button></form>
-<section id="submittedRecord" class="note hidden"></section>
-<div class="note" id="result">可连续拍摄多页并调整顺序；服务器会按该顺序合并归档。提交失败后照片会保留，可直接重试。</div></main>
-<script>window.MathJax={tex:{inlineMath:[["$","$"],["\\(","\\)"]],displayMath:[["$$","$$"],["\\[","\\]"]]},svg:{fontCache:"global"},startup:{typeset:false}};</script>
-<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<title>提交高数作业</title>
+<style>body{margin:0;background:#f6f8fc;font:16px "Microsoft YaHei",sans-serif;color:#102a43}.box{max-width:620px;margin:9vh auto;background:#fff;border:1px solid #e4ebf3;border-radius:18px;padding:30px;box-shadow:0 12px 35px #102a4312}h1{margin-top:0}p{color:#60758a;line-height:1.7}label{display:block;font-weight:700;margin-top:15px}input{width:100%;box-sizing:border-box;margin-top:6px;padding:10px;border:1px solid #cdd9e6;border-radius:8px;font:inherit}button{margin-top:22px;padding:11px 16px;border:0;border-radius:9px;background:#2563eb;color:#fff;font-weight:700;cursor:pointer}.note{margin-top:15px;padding:12px;background:#eef6ff;border-radius:10px;line-height:1.6}.err{background:#fff1f0;border-color:#ffccc7;color:#cf1322}.file-summary{margin-top:8px;padding:10px;border:1px solid #bfdbfe;border-radius:9px;background:#f8fbff;color:#31516b;line-height:1.6}.file-summary.warn{border-color:#f59e0b;background:#fffbeb;color:#92400e}</style>
+<main class="box"><h1>提交高数作业</h1><p id="assignment">正在读取作业信息…</p><p class="note">需要手写作业单？<a id="printSheet" target="_blank" rel="noopener">打开并打印作业 PDF</a></p><div class="note" id="submissionStatus" style="display:none" aria-live="polite"></div><form id="form"><label>姓名<input name="student_name" required></label><label>学号<input name="student_no" required placeholder="仅限字母、数字、下划线" pattern="[A-Za-z0-9_]{1,32}"></label><label>从相册或文件选择全部作业图片 / PDF<input name="file" type="file" accept="image/*,application/pdf" multiple required></label><div id="fileSummary" class="file-summary warn" aria-live="polite">尚未选择文件。请一次选齐全部页面后再提交。</div><p class="note"><b>请检查页数：</b>可一次选择多张图片（最多 10 张），选择后下方会显示页数和文件名；如果只显示“1页”，服务器实际只能收到1页。PDF 请单独选择。</p><button id="btn" type="submit">确认页数并开始智能初评</button></form><div class="note" id="result">图片和 PDF 都支持。PDF 会自动逐页转为图片，再交给智能体识别。全部文件合计不超过 30MB。</div></main>
 <script>
-async function logout(){if(!confirm('确认退出当前账号？'))return;try{await fetch('/api/auth/logout',{method:'POST'})}finally{location.replace('/login')}}
-const $=id=>document.getElementById(id);const id=new URLSearchParams(location.search).get('assignment_id'),result=document.getElementById('result'),btn=document.getElementById('btn'),form=document.getElementById('form'),picker=document.getElementById('photoFiles'),pagesBox=document.getElementById('pages'),progress=document.getElementById('progress'),record=document.getElementById('submittedRecord'),MAX=30*1024*1024;let pages=[];
-function setMsg(text,isErr){result.textContent=text;result.className='note'+(isErr?' err':'')}
-function sizeText(n){return n>1048576?(n/1048576).toFixed(1)+'MB':Math.ceil(n/1024)+'KB'}
-function setProgress(n,visible=true){progress.classList.toggle('hidden',!visible);progress.firstElementChild.style.width=Math.max(0,Math.min(100,n))+'%'}
-function clarity(canvas){const side=180,c=document.createElement('canvas'),scale=Math.min(1,side/Math.max(canvas.width,canvas.height));c.width=Math.max(2,Math.round(canvas.width*scale));c.height=Math.max(2,Math.round(canvas.height*scale));const x=c.getContext('2d',{willReadFrequently:true});x.drawImage(canvas,0,0,c.width,c.height);const d=x.getImageData(0,0,c.width,c.height).data;let total=0,count=0;for(let y=1;y<c.height;y+=2)for(let x0=1;x0<c.width;x0+=2){let k=(y*c.width+x0)*4,kl=(y*c.width+x0-1)*4,ku=((y-1)*c.width+x0)*4;let lum=i=>d[i]*.299+d[i+1]*.587+d[i+2]*.114;total+=Math.abs(lum(k)-lum(kl))+Math.abs(lum(k)-lum(ku));count+=2}return count?total/count:0}
-function loadImage(file){return new Promise((resolve,reject)=>{const img=new Image();const u=URL.createObjectURL(file);img.onload=()=>{URL.revokeObjectURL(u);resolve(img)};img.onerror=()=>{URL.revokeObjectURL(u);reject(new Error('图片无法读取'))};img.src=u})}
-async function optimizeImage(file){let img=await loadImage(file),max=2048,ratio=Math.min(1,max/Math.max(img.naturalWidth,img.naturalHeight)),w=Math.max(1,Math.round(img.naturalWidth*ratio)),h=Math.max(1,Math.round(img.naturalHeight*ratio));let canvas=document.createElement('canvas');canvas.width=w;canvas.height=h;canvas.getContext('2d').drawImage(img,0,0,w,h);let score=clarity(canvas),blob=await new Promise(ok=>canvas.toBlob(ok,'image/jpeg',.86));if(!blob)throw new Error('图片压缩失败');let name=(file.name||'作业页').replace(/\.[^.]+$/,'')+'.jpg';return {file:new File([blob],name,{type:'image/jpeg'}),url:URL.createObjectURL(blob),score,w,h}}
-function renderPages(){pagesBox.innerHTML=pages.map((p,i)=>{let warn=p.score!=null&&p.score<10?'<span class="hint warn">清晰度偏低，建议重拍</span>':'<span class="hint">清晰度正常</span>';return '<div class="page"><img src="'+p.url+'" alt="第 '+(i+1)+' 页预览"><div class="meta"><b>第 '+(i+1)+' 页 · '+sizeText(p.file.size)+'</b>'+warn+'</div><div class="actions"><button class="secondary" type="button" '+(i===0?'disabled':'')+' onclick="movePage('+i+',-1)">上移</button><button class="secondary" type="button" '+(i===pages.length-1?'disabled':'')+' onclick="movePage('+i+',1)">下移</button><button class="secondary" type="button" onclick="removePage('+i+')">删除</button></div></div>'}).join('')}
-function movePage(i,d){let j=i+d;if(j<0||j>=pages.length)return;[pages[i],pages[j]]=[pages[j],pages[i]];renderPages()}
-function removePage(i){URL.revokeObjectURL(pages[i].url);pages.splice(i,1);renderPages()}
-picker.onchange=async()=>{const chosen=[...picker.files];picker.value='';if(!chosen.length)return;if(chosen.some(f=>f.type==='application/pdf')){if(chosen.length!==1||pages.length){setMsg('PDF 必须单独上传，不能与图片混合。',true);return}pages=[{file:chosen[0],url:'',score:null,pdf:true}];pagesBox.innerHTML='<div class="page"><div class="meta"><b>PDF 作业 · '+sizeText(chosen[0].size)+'</b><span class="hint">将按 PDF 页序提交</span></div><div class="actions"><button class="secondary" type="button" onclick="removePage(0)">删除</button></div></div>';return}if(pages.some(p=>p.pdf)){setMsg('已选择 PDF；请先删除 PDF 后再添加图片。',true);return}if(pages.length+chosen.length>10){setMsg('一次最多 10 页图片。',true);return}setMsg('正在本机压缩与检查图片…',false);try{for(const file of chosen){if(!/^image\/(jpeg|png)$/.test(file.type))throw new Error('仅支持 JPG、PNG 或 PDF');pages.push(await optimizeImage(file))}renderPages();let bad=pages.filter(p=>p.score!=null&&p.score<10).length;setMsg(bad?'已加入 '+pages.length+' 页，其中 '+bad+' 页偏模糊，建议重拍后替换。':'已加入 '+pages.length+' 页，可调整页序后提交。',false)}catch(e){setMsg(e.message,true)}}
-function esc(s){return String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
-function openSubmissionForm(){form.classList.remove('hidden');$('submitStart').classList.add('hidden');form.scrollIntoView({behavior:'smooth',block:'start'});}
-async function loadAssignmentSheet(){
-  const sheet=$('assignmentSheet');
-  try{
-    const r=await fetch('/api/student/assignments/'+encodeURIComponent(id)+'/detail');const x=await r.json();if(!r.ok)throw Error(x.detail||'读取题目失败');
-    const items=x.items||[];
-    sheet.innerHTML='<h2 style="margin:0 0 10px;font-size:20px">本次作业题目</h2><p class="hint">共 '+items.length+' 道，满分 '+esc(x.total_score??'—')+' 分。请完成后拍照上传你的完整作答。</p>'+items.map((q,i)=>'<article style="border-top:1px solid #dbe5f0;padding:15px 0"><b>第 '+esc(q.label||i+1)+' 题 · '+esc(q.score??'—')+' 分</b><div class="assignment-question" style="white-space:pre-wrap;line-height:1.8;margin-top:8px">'+esc(q.content)+'</div></article>').join('');
-    if(window.MathJax?.typesetPromise){MathJax.typesetClear?.([sheet]);await MathJax.typesetPromise([sheet]);}
-  }catch(e){sheet.className='note err';sheet.textContent='作业题目读取失败：'+e.message;}
+const id=new URLSearchParams(location.search).get('assignment_id');
+const makeupToken=new URLSearchParams(location.search).get('makeup_token')||'';
+const makeupQuery=makeupToken?'?makeup_token='+encodeURIComponent(makeupToken):'';
+const result=document.getElementById('result');
+const btn=document.getElementById('btn');
+const form=document.getElementById('form');
+const statusBox=document.getElementById('submissionStatus');
+const fileInput=form.elements.file;
+const fileSummary=document.getElementById('fileSummary');
+let expectedQuestions=0;
+const MAX=30*1024*1024;
+document.getElementById('printSheet').href=id?'/api/assignments/'+id+'/pdf'+makeupQuery:'#';
+function setMsg(text,isErr,isOk){result.textContent=text;result.className='note'+(isErr?' err':isOk?' ok':'');}
+function showStatus(item){
+  if(!item||!item.submission_id)return;
+  if(item.state==='returned'){
+    statusBox.replaceChildren();const title=document.createElement('strong');title.textContent='老师退回了这份作业，请补齐后重新上传';const reason=document.createElement('span');reason.textContent='退回原因：'+(item.return_reason||'请补齐缺交页面或题目后重新上传。');statusBox.append(title,document.createElement('br'),reason);statusBox.style.display='block';btn.textContent='补齐后重新上传';setMsg('请按老师说明补齐作业。重新上传后会生成新的提交记录，原提交及批改记录会保留。',false,false);return;
+  }
+  const labels={grading:['已成功提交，正在智能初评','作业已安全保存，正在智能初评。你可以退出此页，稍后仍可查看状态。'],reviewing:['已成功提交，等待老师复核','作业已安全保存，智能初评已完成，正在等待老师复核。'],released:['老师已发布成绩与反馈','本次作业已经完成批改，请返回学生工作台查看成绩与反馈。'],submitted:['已成功提交','作业已安全保存，等待后续处理。']};
+  const state=labels[item.state]||labels.submitted;
+  const time=item.submitted_at?new Date(item.submitted_at).toLocaleString():'刚刚';
+  const workbenchLink='<a href="/student" style="display:inline-block;margin-top:10px;padding:8px 12px;border-radius:8px;background:#2563eb;color:#fff;text-decoration:none;font-weight:700">进入我的作业（学生工作台）</a>';
+  statusBox.innerHTML='<strong>'+state[0]+'</strong><br><span>'+state[1]+' 提交时间：'+time+'。</span><br>'+workbenchLink;
+  statusBox.style.display='block';
+  form.querySelectorAll('input,button').forEach(function(el){el.disabled=true;});
 }
-async function submitPages(){if(!pages.length){setMsg('请先拍照或选择作业文件。',true);return}let total=pages.reduce((n,p)=>n+p.file.size,0);if(total>MAX){setMsg('照片总大小 '+sizeText(total)+' 超过 30MB，请删除部分页面或重新拍摄。',true);return}let fd=new FormData();fd.append('student_name',form.student_name.value.trim());fd.append('student_no',form.student_no.value.trim());pages.forEach(p=>fd.append('files',p.file,p.file.name));btn.disabled=true;btn.textContent='上传中…';setProgress(0);setMsg('正在上传，照片会按当前顺序归档并开始初评…',false);try{let x=await new Promise((resolve,reject)=>{let xhr=new XMLHttpRequest();xhr.open('POST','/api/assignments/'+encodeURIComponent(id)+'/submissions');xhr.upload.onprogress=e=>{if(e.lengthComputable)setProgress(Math.round(e.loaded/e.total*100))};xhr.onerror=()=>reject(new Error('网络连接中断，请检查网络后直接重试'));xhr.onload=()=>{let data={};try{data=JSON.parse(xhr.responseText||'{}')}catch{};xhr.status>=200&&xhr.status<300?resolve(data):reject(new Error(data.detail||'提交失败'))};xhr.send(fd)});setProgress(100);setMsg('提交成功：共 '+(x.page_count||pages.length)+' 页。'+(x.completion_score?'本次已记录提交完成度 '+x.completion_score+' / 20 分；':'')+'老师完成复核后会发布总评与错题反馈。',false);pages.forEach(p=>p.url&&URL.revokeObjectURL(p.url));pages=[];pagesBox.innerHTML='';form.reset()}catch(e){setMsg(e.message+' 已保留当前照片，你可以直接再次点击提交。',true)}finally{btn.disabled=false;btn.textContent='提交并开始智能初评';setTimeout(()=>setProgress(0,false),700)}}
-if(!id){setMsg('缺少作业编号，请从老师发送的链接进入。',true);form.style.display='none'}else{fetch('/api/student/assignments').then(r=>r.json()).then(data=>{let a=(data.assignments||[]).find(x=>String(x.id)===id);if(!a)throw Error('未找到本班作业');document.getElementById('assignment').textContent=a.title+'｜截止：'+new Date(a.due_at).toLocaleString();loadAssignmentSheet();form.student_name.value=a.roster_name||'';form.student_no.value=a.student_no||'';form.student_name.readOnly=true;form.student_no.readOnly=true;form.student_name.title='已按班级名单自动填写';form.student_no.title='已按班级名单自动填写';if(a.submission_id){form.style.display='none';$('submitStart').classList.add('hidden');record.classList.remove('hidden');let labels={submitted:'已提交，等待处理',grading:'正在智能初评',reviewing:'等待教师复核',released:'成绩已发布'};record.innerHTML='<b>这份作业已经提交</b><br>提交时间：'+new Date(a.submitted_at).toLocaleString()+'<br>当前状态：'+(labels[a.state]||'处理中')+'<p><a class="secondary" style="display:inline-block;text-decoration:none;padding:9px 12px;border-radius:9px" href="/api/student/submissions/'+encodeURIComponent(a.submission_id)+'/file" target="_blank">打开 / 下载我提交的原作业</a></p>'+ (a.state==='released'?'成绩已发布，请返回“我的作业”后进入错题复盘。':'老师完成复核后，成绩会显示在“我的作业”中。');setMsg('你正在查看已提交记录，不能重复覆盖原作业。',false)}}).catch(e=>{setMsg('读取作业失败：'+e.message,true);form.style.display='none'});form.onsubmit=e=>{e.preventDefault();submitPages()}}
+async function loadMakeupDetail(){
+  if(!makeupToken)return false;
+  try{
+    const r=await fetch('/api/student/assignments/'+id+'/detail'+makeupQuery,{cache:'no-store'});
+    if(!r.ok)return false;
+    const detail=await r.json();
+    expectedQuestions=(detail.items||[]).length;
+    document.getElementById('assignment').textContent=detail.title+'｜截止：'+new Date(detail.due_at).toLocaleString()+'｜补交通道';
+    setMsg('这是老师发放的补交链接。请按班级名单填写姓名和学号后提交；链接到期后将自动失效。',false,false);
+    return true;
+  }catch(_err){return false;}
+}
+async function loadAssignment(){
+  try{
+    const r=await fetch('/api/student/assignments',{cache:'no-store'});
+    if(!r.ok)throw new Error('无法读取作业状态');
+    const data=await r.json();
+    const item=(data.assignments||[]).find(function(x){return String(x.id)===id;});
+    if(!item){
+      if(await loadMakeupDetail())return;
+      document.getElementById('assignment').textContent='当前账号尚未显示本作业。请填写教师名单中的姓名和学号：若信息一致且账号尚未绑定，提交时会自动关联；若不在本次指定名单中，系统会明确提示联系教师添加。';
+      setMsg('请核对姓名和学号后再提交。首次使用也可直接通过教师发送的作业链接完成提交。',false,false);
+      return;
+    }
+    document.getElementById('assignment').textContent=item.title+'｜截止：'+new Date(item.due_at).toLocaleString();
+    form.elements.student_name.value=item.roster_name||'';
+    form.elements.student_no.value=item.student_no||'';
+    try{const detailResponse=await fetch('/api/student/assignments/'+id+'/detail',{cache:'no-store'});if(detailResponse.ok){const detail=await detailResponse.json();expectedQuestions=(detail.items||[]).length;}}
+    catch(_detailErr){}
+    showStatus(item);
+  }catch(err){
+    if(await loadMakeupDetail())return;
+    document.getElementById('assignment').textContent='请填写教师名单中的姓名和学号后提交本次作业。';
+    setMsg('首次使用或未登录时仍可通过教师发送的链接提交；系统会按姓名、学号和指定名单核验身份。',false,false);
+  }
+}
+async function preflightImages(selected){
+  const images=selected.filter(function(file){return /^image\//.test(file.type);});
+  const warnings=[];
+  for(const file of images){
+    const data=await new Promise(function(resolve,reject){const reader=new FileReader();reader.onload=function(){resolve(reader.result)};reader.onerror=function(){reject(new Error('无法读取 '+file.name))};reader.readAsDataURL(file);});
+    const image=await new Promise(function(resolve,reject){const probe=new Image();probe.onload=function(){resolve(probe)};probe.onerror=function(){reject(new Error('无法读取图片 '+file.name))};probe.src=data;});
+    const shortEdge=Math.min(image.naturalWidth,image.naturalHeight);
+    if(shortEdge<520)throw new Error(file.name+' 分辨率过低，请重新拍摄或选择原图。');
+    if(shortEdge<900)warnings.push(file.name+' 较小，公式可能不清楚');
+    if(image.naturalWidth>image.naturalHeight*1.8)warnings.push(file.name+' 为横向图片，请确认题号和完整作答均在画面内');
+  }
+  if(warnings.length&&!window.confirm('上传前检查：\n'+warnings.join('\n')+'\n\n仍要继续提交吗？'))throw new Error('已取消提交，请检查或重拍作业图片后再试。');
+}
+function renderFileSummary(){
+  const selected=Array.from(fileInput.files||[]);
+  if(!selected.length){fileSummary.className='file-summary warn';fileSummary.textContent='尚未选择文件。请一次选齐全部页面后再提交。';return;}
+  const isPdf=selected.length===1&&/\.pdf$/i.test(selected[0].name);
+  const countText=isPdf?'已选择1个PDF（PDF内部页数将在服务器核对）':'已选择 '+selected.length+' 页图片';
+  fileSummary.className='file-summary'+(!isPdf&&selected.length===1?' warn':'');
+  fileSummary.textContent=countText+'：'+selected.map(function(file){return file.name}).join('；')+(!isPdf&&selected.length===1?'。请确认全部作答确实只在这一页。':'');
+}
+fileInput.addEventListener('change',renderFileSummary);
+function uploadSubmission(fd){
+  return new Promise(function(resolve,reject){
+    const xhr=new XMLHttpRequest();
+    xhr.open('POST','/api/assignments/'+id+'/submissions');
+    xhr.responseType='json';
+    xhr.upload.onprogress=function(e){if(e.lengthComputable){const pct=Math.min(99,Math.round(e.loaded/e.total*100));setMsg('正在上传作业：'+pct+'%（请保持此页打开）',false,false);}};
+    xhr.upload.onload=function(){setMsg('图片已传到服务器，正在归档并进入智能初评队列，请勿关闭页面…',false,false);};
+    xhr.onerror=function(){reject(new Error('网络连接中断，未收到服务器确认。请重新进入本页查看提交状态后再决定是否重传。'));};
+    xhr.onload=function(){
+      const body=xhr.response||{};
+      if(xhr.status<200||xhr.status>=300)reject(new Error(body.detail||'提交失败，请稍后重试'));
+      else resolve(body);
+    };
+    xhr.send(fd);
+  });
+}
+async function uploadJson(url,options){
+  let response;
+  try{response=await fetch(url,Object.assign({cache:'no-store'},options||{}));}
+  catch(_err){throw new Error('网络中断，PDF 上传进度已保留。请保持同一文件，点“继续上传”。');}
+  let body={};
+  try{body=await response.json();}catch(_err){}
+  if(!response.ok){
+    const detail=typeof body.detail==='string'?body.detail:'服务器未接收请求（HTTP '+response.status+'）。请稍后继续上传。';
+    throw new Error(detail);
+  }
+  return body;
+}
+async function uploadPdfInChunks(file,studentNo,studentName){
+  const key='mathbench-pdf:'+id+':'+makeupToken+':'+studentNo+':'+file.name+':'+file.size+':'+file.lastModified;
+  const base='/api/assignments/'+id+'/pdf-upload';
+  let token=localStorage.getItem(key);
+  let state;
+  if(token){
+    try{state=await uploadJson(base+'/'+token);}
+    catch(_err){token=null;localStorage.removeItem(key);}
+  }
+  if(!token){
+    state=await uploadJson(base,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({student_no:studentNo,student_name:studentName,filename:file.name,size:file.size,makeup_token:makeupToken})});
+    token=state.upload_id;
+    localStorage.setItem(key,token);
+  }
+  if(state.completed&&state.result){localStorage.removeItem(key);return state.result;}
+  let offset=state.offset||0;
+  if(offset>file.size)throw new Error('服务器上传进度异常，请重新选择文件。');
+  const chunkBytes=2*1024*1024;
+  let failures=0;
+  while(offset<file.size){
+    const next=Math.min(file.size,offset+chunkBytes);
+    setMsg('正在上传 PDF：'+Math.round(offset/file.size*100)+'%（断线后可继续）',false,false);
+    try{
+      const step=await uploadJson(base+'/'+token,{method:'PUT',headers:{'X-Upload-Offset':String(offset),'Content-Type':'application/octet-stream'},body:file.slice(offset,next)});
+      offset=step.offset;
+      failures=0;
+    }catch(err){
+      failures++;
+      try{const progress=await uploadJson(base+'/'+token);offset=progress.offset;if(progress.completed&&progress.result){localStorage.removeItem(key);return progress.result;}}
+      catch(_statusErr){}
+      if(failures>=3)throw new Error('PDF 网络连接多次中断，已保存 '+Math.round(offset/file.size*100)+'%。稍后选择同一文件，点“继续上传”即可。');
+      await new Promise(function(resolve){setTimeout(resolve,1000*failures);});
+    }
+  }
+  setMsg('PDF 已传完，正在核对并保存提交记录…',false,false);
+  let result;
+  try{result=await uploadJson(base+'/'+token+'/complete',{method:'POST'});}
+  catch(err){
+    const progress=await uploadJson(base+'/'+token);
+    if(!progress.completed||!progress.result)throw err;
+    result=progress.result;
+  }
+  localStorage.removeItem(key);
+  return result;
+}
+if(!id){setMsg('缺少作业编号，请从老师发送的链接进入。',true,false);form.style.display='none';}
+else{
+  loadAssignment();
+  form.onsubmit=async function(e){
+    e.preventDefault();
+    const selected=Array.from(form.elements.file.files||[]);
+    if(!selected.length){setMsg('请先选择作业文件',true,false);return;}
+    if(selected.length>10){setMsg('一次最多上传 10 张作业图片',true,false);return;}
+    const total=selected.reduce(function(sum,file){return sum+file.size;},0);
+    if(total>MAX){setMsg('所选文件合计 '+(total/1048576).toFixed(1)+'MB，超过 30MB 上限，请压缩后重试',true,false);return;}
+    if(selected.length>1&&selected.some(function(file){return !/^image\//.test(file.type);})){setMsg('多页提交请仅选择 JPG 或 PNG 图片；PDF 请作为单个文件上传。',true,false);return;}
+    if(selected.length===1&&/^image\//.test(selected[0].type)){
+      const scope=expectedQuestions>1?'本作业包含 '+expectedQuestions+' 道题，':'';
+      if(!window.confirm(scope+'你目前只选择了1张图片。\n\n如果还有其他页面，请点“取消”后重新一次选齐；只有全部作答确实都在这一张时才点“确定”。')){setMsg('已取消提交。请重新选择全部页面，看到正确页数后再提交。',true,false);return;}
+    }
+    try{await preflightImages(selected);}catch(err){setMsg(err.message||'图片检查未通过',true,false);return;}
+    const fd=new FormData();
+    fd.append('student_name',form.elements.student_name.value.trim());
+    fd.append('student_no',form.elements.student_no.value.trim());
+    if(makeupToken)fd.append('makeup_token',makeupToken);
+    selected.forEach(function(file){fd.append('files',file,file.name);});
+    btn.disabled=true;btn.textContent='上传中…';setMsg('正在准备上传，请保持此页打开…',false,false);
+    try{
+      const response=selected.length===1&&/\.pdf$/i.test(selected[0].name)
+        ?await uploadPdfInChunks(selected[0],form.elements.student_no.value.trim(),form.elements.student_name.value.trim())
+        :await uploadSubmission(fd);
+      const qualityWarnings=(response.upload_quality||[]).flatMap(function(item){return item.warnings||[];});
+      const qualityNote=qualityWarnings.length?' 上传提示：'+qualityWarnings.join('；')+'。':'';
+      setMsg('已成功提交并保存（共 '+(response.page_count||selected.length)+' 页）。现在可以安全退出；重新进入本页仍可查看处理状态。'+qualityNote,false,true);
+      form.reset();
+      renderFileSummary();
+      await loadAssignment();
+    }catch(err){
+      setMsg(err.message||'提交失败，请稍后重试',true,false);
+      btn.disabled=false;btn.textContent='继续上传 / 重新提交';
+    }
+  };
+}
 </script></html>

@@ -45,7 +45,8 @@ def heuristic_difficulty(content: str, question_type: str) -> str:
     return "提高"
 
 
-async def stratify_section_difficulty(section_no: str) -> dict[str, Any]:
+async def stratify_section_difficulty(section_no: str,
+                                     textbook_id: str | None = None) -> dict[str, Any]:
     """Apply the difficulty heuristic to every published cache row.
 
     ``_difficulty_label`` already converts any 8014-supplied numeric/text tier,
@@ -59,8 +60,8 @@ async def stratify_section_difficulty(section_no: str) -> dict[str, Any]:
             dict(r)
             for r in conn.execute(
                 "SELECT id, content, question_type, difficulty FROM questions "
-                "WHERE chapter=? AND review_status='published'",
-                (section_no,),
+                "WHERE chapter=? AND review_status='published'" + (" AND source_textbook_id=?" if textbook_id else ""),
+                (section_no, textbook_id) if textbook_id else (section_no,),
             ).fetchall()
         ]
         for row in rows:
@@ -79,8 +80,8 @@ async def stratify_section_difficulty(section_no: str) -> dict[str, Any]:
             r["difficulty"]: r["n"]
             for r in conn.execute(
                 "SELECT difficulty, COUNT(*) as n FROM questions "
-                "WHERE chapter=? AND review_status='published' GROUP BY difficulty",
-                (section_no,),
+                "WHERE chapter=? AND review_status='published'" + (" AND source_textbook_id=?" if textbook_id else "") + " GROUP BY difficulty",
+                (section_no, textbook_id) if textbook_id else (section_no,),
             ).fetchall()
         }
     return {

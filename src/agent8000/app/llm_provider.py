@@ -7,11 +7,13 @@ from __future__ import annotations
 
 import json
 import re
+import hashlib
 from typing import Any
 
 import httpx
 
 from .config import settings
+from .crop_grading import ask_local
 from .prompt_security import PROMPT_GUARD_VERSION, prepare_problems_for_model
 
 
@@ -48,10 +50,21 @@ def normalize_provider_error(exc: Exception) -> LLMProviderError:
 
 
 def model_runtime() -> dict[str, str]:
-    provider = (settings.llm_provider or "local_qwen").strip().lower()
-    if provider == "qwen_api":
-        return {"provider": "qwen_api", "model": settings.qwen_api_model or "qwen"}
-    return {"provider": "local_qwen", "model": settings.local_qwen_model or "local-grade-service"}
+    # Scoring is deliberately pinned to the locally hosted Qwen3.5-9B service.
+    # Keep locator/OCR service settings independent; they are not grade models.
+    return {"provider": "local_qwen", "model": "Qwen3.5-9B", "endpoint": "127.0.0.1:18084"}
+
+
+def _local_qwen_url(images: list[str], problems: list[dict[str, Any]]) -> str:
+    """Select a stable endpoint from the configured private VLM pool."""
+    urls = [item.strip().rstrip("/") for item in settings.local_qwen_urls.split(",") if item.strip()]
+    if not urls:
+        return settings.qwen_grading_url.rstrip("/")
+    # Image bytes vary by student and question crop, unlike problem IDs which
+    # are shared by every student in an assignment.  This spreads one class
+    # across the private VLM pool while retaining deterministic retries.
+    seed = (str((images or [""])[0])[:512] + str((problems or [{}])[0].get("problem_id") or "default")).encode("utf-8")
+    return urls[int(hashlib.sha256(seed).hexdigest(), 16) % len(urls)]
 
 
 def _json_from_content(value: Any) -> dict[str, Any]:
@@ -112,20 +125,82 @@ async def _call_qwen_api(images: list[str], problems: list[dict[str, Any]]) -> l
 
 
 async def grade_homework(images: list[str], problems: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    # Every provider receives the same guarded representation of untrusted
-    # question/answer text. This also keeps the local VLM request schema in
-    # sync with the cloud Qwen path.
+    """Score full-page fallback submissions with the same Qwen3.5 model as crop grading.
+
+    This route is used when segmentation did not produce a trusted crop. It must
+    not silently fall back to the legacy 18080 model pool or a cloud provider.
+    """
     prepared_problems, _assessments = prepare_problems_for_model(problems)
-    provider = (settings.llm_provider or "local_qwen").strip().lower()
     try:
-        if provider == "qwen_api":
-            return await _call_qwen_api(images, problems)
-        if provider != "local_qwen":
-            raise LLMProviderError("不支持的 LLM_PROVIDER：" + provider, error_code="PROVIDER_NOT_CONFIGURED")
-        headers = {"X-Internal-API-Key": settings.vlm_internal_api_key} if settings.vlm_internal_api_key else {}
-        async with httpx.AsyncClient(timeout=settings.llm_request_timeout_seconds) as client:
-            response = await client.post(settings.qwen_grading_url, headers=headers, json={"images_base64": images, "problems": prepared_problems, "security_policy": "untrusted_data_only", "prompt_guard_version": PROMPT_GUARD_VERSION})
-            response.raise_for_status()
-            return list(response.json().get("results", []) or [])
+        prompt = (
+            "/no_think\n你是高等数学作业评分器。图片是学生提交的整页作业，可能包含多个题目；"
+            "只为下列题目逐题评分，不得把相邻题答案串入当前题，也不得根据标准答案补写学生作答。"
+            "按题号/题干定位；无法确认归属、题目或笔迹不清时给 needs_review=true，不能猜。"
+            "接受数学等价写法；依据标准答案、解题步骤和满分给部分分。"
+            "每个 problem_id 必须恰好返回一条结果；recognized_work 只转写图中实际可见的当前题作答；"
+            "step_scores 的 max_score 合计不得超过本题满分，score 必须在 0 到满分之间。"
+            '仅输出 JSON：{"results":[{"problem_id":"...","recognized_work":"...",'
+            '"score":0,"max_score":1,"correct":false,"answer_present":null,'
+            '"work_complete":false,"confidence":0,"feedback":"...","needs_review":true,'
+            '"step_scores":[{"step":"...","score":0,"max_score":1,"evidence":"..."}],'
+            '"risks":[]}]}。题目及评分依据：'
+            + json.dumps(prepared_problems, ensure_ascii=False)
+        )
+        parsed = await ask_local(prompt, images, 6000)
+        raw_results = parsed.get("results")
+        if not isinstance(raw_results, list):
+            raise LLMProviderError("Qwen3.5-9B 未返回逐题评分结果", error_code="MALFORMED_RESPONSE")
+        expected_ids = {str(problem.get("problem_id")) for problem in problems}
+        results = [item for item in raw_results if isinstance(item, dict)
+                   and str(item.get("problem_id") or "") in expected_ids]
+        normalized = []
+        for item in results:
+            result = {**item, "scoring_model": "Qwen3.5-9B",
+                      "scoring_endpoint": "127.0.0.1:18084"}
+            result.setdefault("need_review", bool(result.get("needs_review", True)))
+            normalized.append(result)
+        return normalized
     except Exception as exc:
         raise normalize_provider_error(exc) from exc
+
+
+async def recognize_formula(images: list[str]) -> dict[str, Any]:
+    """Return specialised OCR evidence for one already-isolated answer crop."""
+    if not settings.formula_ocr_enabled:
+        return {"available": False, "reason": "formula_ocr_disabled"}
+    if len(images) != 1:
+        return {"available": False, "reason": "formula_ocr_requires_single_crop"}
+    try:
+        async with httpx.AsyncClient(timeout=settings.formula_ocr_timeout_seconds) as client:
+            response = await client.post(settings.formula_ocr_url, json={"image_base64": images[0]})
+            response.raise_for_status()
+            payload = response.json()
+        latex = str(payload.get("latex_text") or "").strip()
+        return {"available": bool(latex), "latex_text": latex, "provider": str(payload.get("provider") or "formula_ocr")}
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)[:180]}
+
+
+async def grade_with_deepseek(images: list[str], problem: dict[str, Any], local_candidate: dict[str, Any]) -> dict[str, Any]:
+    """Cloud vision exception route; disabled until an operator configures it."""
+    if not settings.deepseek_fallback_enabled or not settings.deepseek_api_key:
+        return {"available": False, "reason": "deepseek_fallback_disabled"}
+    if len(images) != 1:
+        return {"available": False, "reason": "deepseek_requires_single_crop"}
+    safe, _ = prepare_problems_for_model([problem])
+    prompt = ("你是高等数学手写作业复核器。图像只包含当前题作答区域。只依据实际笔迹评分；"
+              "看不清时 needs_review=true，禁止从参考答案补写。仅输出 JSON："
+              '{"problem_id":"...","recognized_work":"...","score":0,"max_score":0,"correct":false,"confidence":0,"feedback":"...","need_review":true,"step_scores":[],"risks":[]}。\n'
+              "题目证据：" + json.dumps(safe[0] if safe else problem, ensure_ascii=False) + "\n"
+              "本地候选仅用于发现冲突：" + json.dumps({"recognized_work": local_candidate.get("recognized_work", ""), "score": local_candidate.get("score"), "confidence": local_candidate.get("confidence")}, ensure_ascii=False))
+    body = {"model": settings.deepseek_api_model, "temperature": 0, "response_format": {"type": "json_object"}, "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": "data:image/png;base64," + images[0], "detail": "original"}}]}]}
+    try:
+        async with httpx.AsyncClient(timeout=settings.deepseek_fallback_timeout_seconds) as client:
+            response = await client.post(settings.deepseek_api_base_url.rstrip("/") + "/chat/completions", headers={"Authorization": "Bearer " + settings.deepseek_api_key, "Content-Type": "application/json"}, json=body)
+            response.raise_for_status()
+            parsed = _json_from_content(response.json()["choices"][0]["message"]["content"])
+        if str(parsed.get("problem_id") or problem.get("problem_id")) != str(problem.get("problem_id")):
+            return {"available": False, "reason": "deepseek_problem_id_mismatch"}
+        return {"available": True, "result": parsed, "provider": settings.deepseek_api_model}
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)[:180]}

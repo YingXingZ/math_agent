@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from html import escape
 from io import BytesIO, StringIO
-from PIL import Image
+from PIL import Image, ImageFilter, ImageOps, ImageStat
 from pathlib import Path
 from typing import Any, Literal
 import json
@@ -56,6 +56,11 @@ def _wrap_latex_for_html(text: str) -> str:
     # useful provenance in the source record but must not appear in a student
     # worksheet.  This is display-only; the stored question is untouched.
     text = _clean_assignment_math(_PRINT_PAGE_HEADER_RE.sub('', text or ''))
+    # Normalize VLM/OCR math names before wrapping raw LaTeX.
+    text = re.sub(r"(?<!\\)\\arccot\b", r"\\operatorname{arccot}", text)
+    text = re.sub(r"(?<!\\)\barccot\b", r"\\operatorname{arccot}", text)
+    text = re.sub(r"(?<!\\)\blim(?=\s*_)", r"\\lim", text)
+    text = re.sub(r"(?<!\\)\b(sin|cos|tan|cot|sec|csc|ln|log)(?=\s*(?:[A-Za-z0-9(]))", r"\\\1", text)
     placeholders: list[str] = []
 
     def _stash(m: re.Match) -> str:
@@ -92,15 +97,20 @@ def _wrap_latex_for_html(text: str) -> str:
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 
 from .config import settings
 from .evidence_client import client as evidence_client, url as evidence_url
 from .db import connection, init_db, queue_due_grading as enqueue_due_grading, normalize_question_type
+from .region_sets import expand_regions, public_mapping, validate_regions
 from .auth import audit, current_user, ensure_bootstrap_admin, login, require_roles, teacher_id_for_scope, token_hash
 from .dify import run_workflow
-from .knowledge_bridge import build_image_solve_candidate, evidence_status, list_evidence_sections, rescue_formula_from_crop, retrieve_section_problems
+from .teacher_chat import router as teacher_chat_router
+from .segmentation_compare import router as segmentation_compare_router
+from .knowledge_bridge import (build_image_solve_candidate, create_evidence_sections,
+                               create_evidence_textbook, evidence_status, list_evidence_sections,
+                               list_evidence_textbooks, rescue_formula_from_crop, retrieve_section_problems)
 from .grading_pipeline import run_grading_job
 from .queueing import QueueUnavailable, _rq_objects, dispatch_grading_job, enqueue_pending_grading_jobs, queue_health, rq_enabled
 from .mineru_staging import match_staged, stage_markdown
@@ -141,6 +151,8 @@ app = FastAPI(title="高数作业助手", version="0.1.0", lifespan=lifespan)
 
 # Same-origin is the secure default. A separate frontend must opt in through
 # CORS_ORIGINS; wildcard origins are deliberately not supported with cookies.
+app.include_router(teacher_chat_router)
+app.include_router(segmentation_compare_router)
 _cors_origins = [origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]
 if _cors_origins:
     app.add_middleware(
@@ -215,15 +227,23 @@ class DemoCleanupIn(BaseModel):
     confirm: bool = False
 
 
-class SubmissionRegionIn(BaseModel):
-    question_id: int = Field(gt=0)
-    subpart_no: str = Field(default="", max_length=30)
-    sort_order: int = Field(ge=1)
+class ReturnSubmissionIn(BaseModel):
+    reason: str = Field(min_length=2, max_length=500)
+
+
+class AnswerRectangleIn(BaseModel):
     page_no: int = Field(ge=1)
     x: float = Field(default=0.0, ge=0.0, le=1.0)
     y: float = Field(default=0.0, ge=0.0, le=1.0)
     width: float = Field(default=1.0, gt=0.0, le=1.0)
     height: float = Field(default=1.0, gt=0.0, le=1.0)
+
+
+class SubmissionRegionIn(AnswerRectangleIn):
+    question_id: int = Field(gt=0)
+    subpart_no: str = Field(default="", max_length=30)
+    sort_order: int = Field(ge=1)
+    regions: list[AnswerRectangleIn] | None = Field(default=None, min_length=1, max_length=12)
 
 
 class SubmissionRegionBatchIn(BaseModel):
@@ -235,16 +255,31 @@ class AssignmentUpdateIn(BaseModel):
     due_at: datetime
 
 
+class AssignmentRecipientsIn(BaseModel):
+    student_ids: list[int] = Field(min_length=1, max_length=1000)
+
+
 class AssignmentDraftItemIn(BaseModel):
     question_id: int = Field(gt=0)
     subpart_no: str = Field(default='', max_length=30)
     content: str = Field(min_length=1, max_length=20000)
     score: float = Field(gt=0, le=100)
+    rubric: str | None = Field(default=None, max_length=20000)
+
+
+class AssignmentDraftSaveIn(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+    due_at: datetime
+    items: list[AssignmentDraftItemIn] = Field(min_length=1, max_length=300)
 
 
 class ClassIn(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     semester: str = Field(default="", max_length=40)
+
+
+class ClassTextbookIn(BaseModel):
+    textbook_id: str = Field(min_length=1, max_length=100)
 
 
 class StudentListIn(BaseModel):
@@ -265,6 +300,11 @@ class TeacherCreateIn(BaseModel):
 class InviteCreateIn(BaseModel):
     max_uses: int = Field(default=1, ge=1, le=500)
     expires_days: int = Field(default=14, ge=1, le=90)
+
+
+class StudentPasswordResetIn(BaseModel):
+    token: str = Field(min_length=20, max_length=300)
+    password: str = Field(min_length=10, max_length=200)
 
 
 class StudentActivateIn(BaseModel):
@@ -563,9 +603,10 @@ async def _validate_or_rescue(item: dict) -> tuple[dict, bool]:
     return None, False
 
 
-async def _sync_section_into_local_cache(section_no: str, limit: int = 80) -> dict:
+async def _sync_section_into_local_cache(section_no: str, limit: int = 80,
+                                         textbook_id: str | None = None) -> dict:
     """Import a traceable working copy of one 8014 section without changing 8014."""
-    packet = await retrieve_section_problems(section_no, limit)
+    packet = await retrieve_section_problems(section_no, limit, textbook_id)
     source_items = packet["items"]
     usable_items: list[dict] = []
     ai_candidate_count = 0
@@ -665,6 +706,7 @@ async def _sync_section_into_local_cache(section_no: str, limit: int = 80) -> di
             values = (
                 item["content_text"].strip(),
                 section_no,
+                str(item.get("textbook_id") or textbook_id or ""),
                 difficulty,
                 str(item.get("ptype") or "计算题"),
                 str(item.get("std_answer") or ""),
@@ -677,7 +719,7 @@ async def _sync_section_into_local_cache(section_no: str, limit: int = 80) -> di
             ).fetchone()
             if existing:
                 conn.execute(
-                    """UPDATE questions SET content=?, chapter=?, difficulty=?, question_type=?,
+                    """UPDATE questions SET content=?, chapter=?, source_textbook_id=?, difficulty=?, question_type=?,
                        answer=?, rubric=?, source_evidence_json=?, source_problem_no=?, review_status='published'
                        WHERE id=?""",
                     (*values, existing["id"]),
@@ -686,9 +728,9 @@ async def _sync_section_into_local_cache(section_no: str, limit: int = 80) -> di
             else:
                 cursor = conn.execute(
                     """INSERT INTO questions
-                       (content,chapter,difficulty,question_type,answer,rubric,source_evidence_json,source_problem_id,source_problem_no)
-                       VALUES(?,?,?,?,?,?,?,?,?)""",
-                    (*values[:7], source_id, values[7]),
+                       (content,chapter,source_textbook_id,difficulty,question_type,answer,rubric,source_evidence_json,source_problem_id,source_problem_no)
+                       VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                    (*values[:8], source_id, values[8]),
                 )
                 synced_ids.append(cursor.lastrowid)
     return {
@@ -704,6 +746,290 @@ async def _sync_section_into_local_cache(section_no: str, limit: int = 80) -> di
         "question_ids": synced_ids,
     }
 
+
+def _textbook_sections_from_pdf(path: Path) -> tuple[int, list[tuple[str, str, int]], str]:
+    """Extract conservative chapter candidates from a text-layer PDF; never fabricates OCR."""
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        return 0, [], "服务器未安装 PDF 文本解析组件，已保存原文件，等待解析环境配置。"
+    try:
+        reader = PdfReader(str(path))
+        pages = len(reader.pages)
+        candidates: list[tuple[str, str, int]] = []
+        pattern = re.compile(r"(?:^|\\n)\\s*(第\\s*[一二三四五六七八九十百0-9]+\\s*章)\\s*([^\\n]{0,80})")
+        for number, page in enumerate(reader.pages, start=1):
+            text = page.extract_text() or ""
+            for match in pattern.finditer(text):
+                label = re.sub(r"\\s+", "", match.group(1))
+                title = re.sub(r"\\s+", " ", match.group(2)).strip(" -—·") or label
+                if not any(existing[0] == label for existing in candidates):
+                    candidates.append((label, title, number))
+        if not candidates:
+            return pages, [], "未从 PDF 文字层识别到章节目录；可能是扫描件，请后续使用 OCR 解析。"
+        return pages, candidates, "已提取章节候选，等待教师审核确认。"
+    except Exception as exc:
+        return 0, [], f"PDF 解析失败：{str(exc)[:120]}"
+
+
+@app.post("/api/materials/textbooks", status_code=201)
+async def upload_textbook(request: Request, file: UploadFile = File(...), title: str = Form(""),
+                          volume: str = Form(""), edition: str = Form("")):
+    actor = require_roles(request, {"admin", "teacher"})
+    filename = (file.filename or "教材.pdf").strip()
+    if Path(filename).suffix.lower() != ".pdf":
+        raise HTTPException(415, "教材 MVP 当前仅支持 PDF 文件")
+    raw = await file.read()
+    if not raw or len(raw) > 80 * 1024 * 1024:
+        raise HTTPException(413, "教材文件必须介于 1 字节与 80 MB 之间")
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", filename)[:100] or "textbook.pdf"
+    target_dir = Path(settings.upload_dir) / "textbooks"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / f"{uuid.uuid4().hex}_{safe_name}"
+    target.write_bytes(raw)
+    page_count, sections, message = _textbook_sections_from_pdf(target)
+    status = "pending_review" if sections else "needs_ocr"
+    document_title = title.strip()[:160] or Path(filename).stem[:160]
+    try:
+        evidence_textbook_id = await create_evidence_textbook(
+            document_title, volume.strip()[:80], edition.strip()[:80], str(target), 0)
+    except Exception as exc:
+        target.unlink(missing_ok=True)
+        raise HTTPException(502, "教材文件未能登记到题库目录：" + str(exc)[:180]) from exc
+    with connection() as conn:
+        cursor = conn.execute("INSERT INTO textbook_documents(title,file_path,original_filename,page_count,parse_status,parse_message,volume,edition,evidence_textbook_id,owner_teacher_id) VALUES(?,?,?,?,?,?,?,?,?,?)", (document_title, str(target), filename, page_count, status, message, volume.strip()[:80], edition.strip()[:80], evidence_textbook_id, actor.get("id")))
+        document_id = cursor.lastrowid
+        for index, (section_no, section_title, page_start) in enumerate(sections):
+            page_end = sections[index + 1][2] - 1 if index + 1 < len(sections) else page_count
+            conn.execute("INSERT INTO textbook_sections(document_id,section_no,title,page_start,page_end) VALUES(?,?,?,?,?)", (document_id, section_no, section_title, page_start, page_end))
+    audit(actor, "textbook.upload", "textbook", document_id, actor.get("id"), {"filename": filename, "sections": len(sections)})
+    return {"id": document_id, "evidence_textbook_id": evidence_textbook_id,
+            "title": document_title, "page_count": page_count, "parse_status": status,
+            "parse_message": message, "section_count": len(sections), "question_count": 0,
+            "message": "教材已登记；题目和答案还需导入题库并审核，才能用于自动组卷。"}
+
+
+@app.get("/api/materials/textbooks")
+def list_textbooks(request: Request):
+    actor = require_roles(request, {"admin", "teacher"})
+    scope = teacher_id_for_scope(actor)
+    with connection() as conn:
+        sql = "SELECT d.*,COUNT(s.id) AS section_count,SUM(CASE WHEN s.status='approved' THEN 1 ELSE 0 END) AS approved_section_count FROM textbook_documents d LEFT JOIN textbook_sections s ON s.document_id=d.id"
+        params: list[object] = []
+        if scope is not None:
+            sql += " WHERE d.owner_teacher_id=?"; params.append(scope)
+        rows = conn.execute(sql + " GROUP BY d.id ORDER BY d.id DESC", params).fetchall()
+    return [dict(row) for row in rows]
+
+
+@app.get("/api/materials/textbooks/{document_id}/sections")
+def list_textbook_sections(document_id: int, request: Request):
+    actor = require_roles(request, {"admin", "teacher"})
+    scope = teacher_id_for_scope(actor)
+    with connection() as conn:
+        where = " WHERE d.id=?"; params: list[object] = [document_id]
+        if scope is not None:
+            where += " AND d.owner_teacher_id=?"; params.append(scope)
+        exists = conn.execute("SELECT d.id FROM textbook_documents d" + where, params).fetchone()
+        if not exists: raise HTTPException(404, "教材不存在")
+        rows = conn.execute("SELECT * FROM textbook_sections WHERE document_id=? ORDER BY page_start, id", (document_id,)).fetchall()
+    return [dict(row) for row in rows]
+
+
+@app.patch("/api/materials/textbooks/{document_id}/sections/{section_id}")
+async def review_textbook_section(document_id: int, section_id: int, payload: dict, request: Request):
+    actor = require_roles(request, {"admin", "teacher"})
+    status = str(payload.get("status") or "").strip()
+    title = str(payload.get("title") or "").strip()[:160]
+    if status not in {"approved", "rejected", "pending"}: raise HTTPException(422, "章节状态不合法")
+    with connection() as conn:
+        doc = conn.execute("SELECT owner_teacher_id,evidence_textbook_id FROM textbook_documents WHERE id=?", (document_id,)).fetchone()
+        if not doc or (teacher_id_for_scope(actor) is not None and doc["owner_teacher_id"] != actor["id"]): raise HTTPException(404, "教材不存在")
+        section_row = conn.execute("SELECT section_no,title FROM textbook_sections WHERE id=? AND document_id=?", (section_id, document_id)).fetchone()
+        if not section_row: raise HTTPException(404, "章节不存在")
+    if status == "approved" and doc["evidence_textbook_id"]:
+        try:
+            await create_evidence_sections(doc["evidence_textbook_id"], [
+                {"section_no": section_row["section_no"], "title": title or section_row["title"]}
+            ])
+        except Exception as exc:
+            raise HTTPException(502, "章节未能写入题库目录，因此本次未确认：" + str(exc)[:160]) from exc
+    with connection() as conn:
+        conn.execute("UPDATE textbook_sections SET status=?,title=COALESCE(NULLIF(?,''),title) WHERE id=?", (status, title, section_id))
+        if status == "approved":
+            section = conn.execute("SELECT section_no,title FROM textbook_sections WHERE id=?", (section_id,)).fetchone()
+            for name in _suggest_section_knowledge_points(section["section_no"], section["title"]):
+                conn.execute("INSERT OR IGNORE INTO textbook_section_knowledge_points(section_id,name,source,status) VALUES(?,?,?,?)", (section_id, name, "auto", "pending"))
+    return {"ok": True}
+
+def _textbook_sections_from_markdown(markdown: str) -> list[tuple[str, str, int]]:
+    """Extract chapter headings from MinerU Markdown without pretending headings are questions."""
+    pattern = re.compile(r"(?mi)^\s*#{0,6}\s*(第\s*[一二三四五六七八九十百0-9]+\s*章)\s*([^\n]{0,100})")
+    found: list[tuple[str, str, int]] = []
+    for match in pattern.finditer(markdown or ""):
+        label = re.sub(r"\s+", "", match.group(1))
+        title = re.sub(r"\s+", " ", match.group(2)).strip(" -—·#") or label
+        if not any(row[0] == label for row in found):
+            found.append((label, title, 0))
+    return found
+
+
+def _run_textbook_ocr_job(job_id: int, document_id: int) -> None:
+    """Run MinerU outside the request path and save only reviewable chapter candidates."""
+    with connection() as conn:
+        doc = conn.execute("SELECT * FROM textbook_documents WHERE id=?", (document_id,)).fetchone()
+        if not doc:
+            return
+        conn.execute("UPDATE textbook_ocr_jobs SET status='running',message='MinerU 正在识别扫描教材…',started_at=CURRENT_TIMESTAMP WHERE id=?", (job_id,))
+        conn.execute("UPDATE textbook_documents SET parse_status='processing',parse_message='MinerU OCR 解析中，可稍后刷新。' WHERE id=?", (document_id,))
+    pdf = Path(doc["file_path"])
+    mineru_bin = settings.mineru_bin.strip() or "/opt/mineru-env/bin/mineru"
+    output_root = Path(settings.mineru_output_dir.strip()) if settings.mineru_output_dir.strip() else Path(settings.upload_dir) / "textbook-ocr"
+    output_dir = output_root / f"document-{document_id}-job-{job_id}"
+    try:
+        if not pdf.is_file():
+            raise RuntimeError("原始教材文件不存在，无法执行 OCR")
+        if not (Path(mineru_bin).is_file() or shutil.which(mineru_bin)):
+            raise RuntimeError("MinerU OCR 环境未配置；请联系管理员配置 MINERU_BIN")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        run = subprocess.run([mineru_bin, "--path", str(pdf), "--output", str(output_dir), "--backend", "pipeline", "--method", "ocr", "--lang", "ch"], text=True, capture_output=True, timeout=60 * 30, check=False)
+        if run.returncode:
+            raise RuntimeError((run.stderr or run.stdout or f"MinerU 退出码 {run.returncode}")[-1200:])
+        markdowns = sorted(output_dir.rglob("*.md"), key=lambda item: item.stat().st_size, reverse=True)
+        if not markdowns:
+            raise RuntimeError("MinerU 已完成，但未生成可用 Markdown")
+        markdown_path = markdowns[0]
+        sections = _textbook_sections_from_markdown(markdown_path.read_text(encoding="utf-8", errors="replace"))
+        with connection() as conn:
+            for section_no, title, page_start in sections:
+                conn.execute("INSERT OR IGNORE INTO textbook_sections(document_id,section_no,title,page_start,page_end) VALUES(?,?,?,?,?)", (document_id, section_no, title, page_start, None))
+            message = f"MinerU OCR 完成，提取 {len(sections)} 个章节候选，等待教师审核。"
+            status = "pending_review" if sections else "needs_ocr"
+            if not sections:
+                message = "MinerU OCR 已完成，但未识别到章节标题；可保留原文并人工补充章节。"
+            conn.execute("UPDATE textbook_ocr_jobs SET status='completed',message=?,output_path=?,completed_at=CURRENT_TIMESTAMP WHERE id=?", (message, str(markdown_path), job_id))
+            conn.execute("UPDATE textbook_documents SET parse_status=?,parse_message=? WHERE id=?", (status, message, document_id))
+    except Exception as exc:
+        message = f"MinerU OCR 失败：{str(exc)[:1200]}"
+        with connection() as conn:
+            conn.execute("UPDATE textbook_ocr_jobs SET status='failed',message=?,completed_at=CURRENT_TIMESTAMP WHERE id=?", (message, job_id))
+            conn.execute("UPDATE textbook_documents SET parse_status='needs_ocr',parse_message=? WHERE id=?", (message, document_id))
+
+
+@app.post("/api/materials/textbooks/{document_id}/ocr", status_code=202)
+def start_textbook_ocr(document_id: int, background_tasks: BackgroundTasks, request: Request):
+    actor = require_roles(request, {"admin", "teacher"})
+    with connection() as conn:
+        scope = teacher_id_for_scope(actor)
+        doc = conn.execute("SELECT id FROM textbook_documents WHERE id=?" + (" AND owner_teacher_id=?" if scope is not None else ""), (document_id, scope) if scope is not None else (document_id,)).fetchone()
+        if not doc:
+            raise HTTPException(404, "教材不存在")
+        previous = conn.execute("SELECT id FROM textbook_ocr_jobs WHERE document_id=? AND status IN ('queued','running') ORDER BY id DESC LIMIT 1", (document_id,)).fetchone()
+        if previous:
+            return {"job_id": previous["id"], "status": "running", "message": "该教材已有 OCR 任务在运行。"}
+        job_id = conn.execute("INSERT INTO textbook_ocr_jobs(document_id,status,message) VALUES(?,?,?)", (document_id, "queued", "等待 MinerU OCR 解析")).lastrowid
+    background_tasks.add_task(_run_textbook_ocr_job, job_id, document_id)
+    return {"job_id": job_id, "status": "queued", "message": "已提交 MinerU OCR 任务，可稍后刷新教材列表。"}
+
+
+@app.get("/api/materials/textbooks/{document_id}/ocr")
+def get_textbook_ocr_status(document_id: int, request: Request):
+    actor = require_roles(request, {"admin", "teacher"})
+    scope = teacher_id_for_scope(actor)
+    with connection() as conn:
+        doc = conn.execute("SELECT id FROM textbook_documents WHERE id=?" + (" AND owner_teacher_id=?" if scope is not None else ""), (document_id, scope) if scope is not None else (document_id,)).fetchone()
+        if not doc:
+            raise HTTPException(404, "教材不存在")
+        row = conn.execute("SELECT * FROM textbook_ocr_jobs WHERE document_id=? ORDER BY id DESC LIMIT 1", (document_id,)).fetchone()
+    return dict(row) if row else {"status": "idle", "message": "尚未提交 OCR 任务"}
+
+
+@app.get("/api/materials/textbooks/{document_id}/graph")
+def textbook_knowledge_graph(document_id: int, request: Request):
+    actor = require_roles(request, {"admin", "teacher"})
+    scope = teacher_id_for_scope(actor)
+    with connection() as conn:
+        doc = conn.execute("SELECT id,title FROM textbook_documents WHERE id=?" + (" AND owner_teacher_id=?" if scope is not None else ""), (document_id, scope) if scope is not None else (document_id,)).fetchone()
+        if not doc:
+            raise HTTPException(404, "教材不存在")
+        sections = conn.execute("SELECT * FROM textbook_sections WHERE document_id=? AND status='approved' ORDER BY page_start,id", (document_id,)).fetchall()
+        nodes = [{"id": "doc", "label": doc["title"], "type": "document"}]
+        edges: list[dict[str, str]] = []
+        for section in sections:
+            sid = f"section-{section['id']}"; nodes.append({"id": sid, "label": f"{section['section_no']} {section['title']}", "type": "section"}); edges.append({"source": "doc", "target": sid})
+            points = conn.execute("SELECT * FROM textbook_section_knowledge_points WHERE section_id=? AND status='approved' ORDER BY id", (section["id"],)).fetchall()
+            for point in points:
+                pid = f"knowledge-{point['id']}"; nodes.append({"id": pid, "label": point["name"], "type": "knowledge"}); edges.append({"source": sid, "target": pid})
+            args: list[object] = [section["section_no"]]; sql = "SELECT id,content FROM questions WHERE chapter=? AND review_status='published'"
+            if scope is not None:
+                sql += " AND (owner_teacher_id IS NULL OR owner_teacher_id=?)"; args.append(scope)
+            for question in conn.execute(sql + " ORDER BY id DESC LIMIT 12", args).fetchall():
+                qid = f"question-{question['id']}"; label = re.sub(r"\s+", " ", str(question["content"] or "")).strip()[:48] or f"题目 #{question['id']}"; nodes.append({"id": qid, "label": label, "type": "question"}); edges.append({"source": sid, "target": qid})
+    return {"document_id": document_id, "nodes": nodes, "edges": edges}
+
+def _suggest_section_knowledge_points(section_no: str, title: str) -> list[str]:
+    """Conservative, review-first suggestions; teachers decide what enters the graph."""
+    corpus = f"{section_no} {title}".lower()
+    rules = [
+        ("函数", ["函数概念", "定义域与值域"]), ("极限", ["极限", "极限运算"]),
+        ("连续", ["函数连续性"]), ("导数", ["导数", "导数应用"]),
+        ("微分", ["微分"]), ("积分", ["不定积分", "定积分"]),
+        ("中值", ["中值定理"]), ("级数", ["无穷级数"]), ("微分方程", ["微分方程"]),
+        ("向量", ["向量代数"]), ("矩阵", ["矩阵"]),
+    ]
+    names: list[str] = []
+    for keyword, points in rules:
+        if keyword in corpus:
+            names.extend(points)
+    cleaned = re.sub(r"^第\s*[一二三四五六七八九十百0-9]+\s*章\s*", "", title).strip()
+    if cleaned and cleaned not in names:
+        names.append(cleaned[:80])
+    return list(dict.fromkeys(names))[:6]
+
+
+def _assert_textbook_section_scope(conn, actor: dict, document_id: int, section_id: int):
+    doc = conn.execute("SELECT owner_teacher_id FROM textbook_documents WHERE id=?", (document_id,)).fetchone()
+    if not doc or (teacher_id_for_scope(actor) is not None and doc["owner_teacher_id"] != actor["id"]):
+        raise HTTPException(404, "教材不存在")
+    section = conn.execute("SELECT * FROM textbook_sections WHERE id=? AND document_id=?", (section_id, document_id)).fetchone()
+    if not section:
+        raise HTTPException(404, "章节不存在")
+    return section
+
+
+@app.get("/api/materials/textbooks/{document_id}/sections/{section_id}/knowledge-points")
+def list_textbook_section_knowledge_points(document_id: int, section_id: int, request: Request):
+    actor = require_roles(request, {"admin", "teacher"})
+    with connection() as conn:
+        _assert_textbook_section_scope(conn, actor, document_id, section_id)
+        rows = conn.execute("SELECT * FROM textbook_section_knowledge_points WHERE section_id=? ORDER BY id", (section_id,)).fetchall()
+    return [dict(row) for row in rows]
+
+
+@app.post("/api/materials/textbooks/{document_id}/sections/{section_id}/knowledge-points", status_code=201)
+def add_textbook_section_knowledge_point(document_id: int, section_id: int, payload: dict, request: Request):
+    actor = require_roles(request, {"admin", "teacher"})
+    name = str(payload.get("name") or "").strip()[:80]
+    if not name:
+        raise HTTPException(422, "知识点名称不能为空")
+    with connection() as conn:
+        _assert_textbook_section_scope(conn, actor, document_id, section_id)
+        conn.execute("INSERT OR IGNORE INTO textbook_section_knowledge_points(section_id,name,source,status) VALUES(?,?,?,?)", (section_id, name, "teacher", "approved"))
+    return {"ok": True}
+
+
+@app.patch("/api/materials/textbooks/{document_id}/sections/{section_id}/knowledge-points/{knowledge_id}")
+def review_textbook_section_knowledge_point(document_id: int, section_id: int, knowledge_id: int, payload: dict, request: Request):
+    actor = require_roles(request, {"admin", "teacher"})
+    status = str(payload.get("status") or "").strip()
+    if status not in {"approved", "rejected", "pending"}:
+        raise HTTPException(422, "知识点状态不合法")
+    with connection() as conn:
+        _assert_textbook_section_scope(conn, actor, document_id, section_id)
+        cursor = conn.execute("UPDATE textbook_section_knowledge_points SET status=? WHERE id=? AND section_id=?", (status, knowledge_id, section_id))
+        if not cursor.rowcount:
+            raise HTTPException(404, "知识点不存在")
+    return {"ok": True}
 
 @app.get("/api/questions")
 def list_questions(request: Request, chapter: str | None = None):
@@ -1202,20 +1528,66 @@ def _require_class(conn: sqlite3.Connection, class_id: int, actor: dict | None =
     return row
 
 
-def _require_assignment(conn: sqlite3.Connection, assignment_id: int, actor: dict | None = None) -> sqlite3.Row:
+_DEMO_STUDENT_USERNAME = "demo_student"
+
+
+def _is_demo_student_observer(actor: dict | None) -> bool:
+    """A single student-facing observer account for safe end-to-end demos."""
+    return bool(actor and actor.get("role") == "student" and actor.get("username") == _DEMO_STUDENT_USERNAME)
+
+
+def _has_valid_makeup_link(conn: sqlite3.Connection, assignment_id: int,
+                           raw_token: str | None) -> bool:
+    """Validate a teacher-issued, time-limited late-submission link."""
+    token = str(raw_token or "").strip()
+    if not token or len(token) > 200:
+        return False
+    row = conn.execute(
+        """SELECT expires_at FROM assignment_makeup_links
+           WHERE assignment_id=? AND token_hash=? AND revoked_at IS NULL""",
+        (assignment_id, token_hash(token)),
+    ).fetchone()
+    if not row:
+        return False
+    try:
+        return datetime.fromisoformat(row["expires_at"]).astimezone(timezone.utc) > datetime.now(timezone.utc)
+    except (TypeError, ValueError):
+        return False
+
+
+def _require_assignment(conn: sqlite3.Connection, assignment_id: int, actor: dict | None = None,
+                        makeup_token: str | None = None) -> sqlite3.Row:
     row = conn.execute("""SELECT a.*,c.teacher_user_id FROM assignments a
                         LEFT JOIN classes c ON c.id=a.class_id WHERE a.id=?""", (assignment_id,)).fetchone()
     if not row:
         raise HTTPException(404, "作业不存在")
     if actor:
         if actor["role"] == "student":
-            enrolled = conn.execute("SELECT 1 FROM students WHERE class_id=? AND user_id=?", (row["class_id"], actor["id"])).fetchone()
-            if not enrolled:
+            # The named demo account can preview published sheets from the
+            # student side. It never receives roster identity or submission rights.
+            if _is_demo_student_observer(actor):
+                if row["status"] != "published":
+                    raise HTTPException(404, "作业不存在")
+                return row
+            student = conn.execute("SELECT id FROM students WHERE class_id=? AND user_id=?", (row["class_id"], actor["id"])).fetchone()
+            makeup_allowed = _has_valid_makeup_link(conn, assignment_id, makeup_token)
+            if not student or (row["status"] != "published" and not makeup_allowed):
+                raise HTTPException(404, "作业不存在")
+            # A teacher may publish to a selected roster.  The worksheet, PDF and
+            # details must all use the same recipient rule as the student dashboard.
+            has_recipients = conn.execute("SELECT 1 FROM assignment_recipients WHERE assignment_id=? LIMIT 1", (assignment_id,)).fetchone()
+            if has_recipients and not makeup_allowed and not conn.execute(
+                "SELECT 1 FROM assignment_recipients WHERE assignment_id=? AND student_id=?",
+                (assignment_id, student["id"]),
+            ).fetchone():
                 raise HTTPException(404, "作业不存在")
             return row
         scope = teacher_id_for_scope(actor)
         if scope is not None and row["teacher_user_id"] != scope:
             raise HTTPException(404, "作业不存在")
+    elif row["status"] != "published" and not _has_valid_makeup_link(conn, assignment_id, makeup_token):
+        # Unauthenticated students may use only the teacher-issued late link.
+        raise HTTPException(404, "作业不存在")
     return row
 
 
@@ -1313,7 +1685,7 @@ def list_classes(request: Request):
     scope = teacher_id_for_scope(actor)
     with connection() as conn:
         sql = (
-            """SELECT c.id,c.name,c.semester,c.created_at,COUNT(DISTINCT st.id) AS student_count,
+            """SELECT c.id,c.name,c.semester,c.created_at,c.textbook_id,COUNT(DISTINCT st.id) AS student_count,
                       COUNT(DISTINCT a.id) AS assignment_count
                FROM classes c
                LEFT JOIN students st ON st.class_id=c.id
@@ -1325,6 +1697,25 @@ def list_classes(request: Request):
             sql += " WHERE c.teacher_user_id=?"; args.append(scope)
         rows = conn.execute(sql + " GROUP BY c.id ORDER BY c.semester DESC,c.name", args).fetchall()
     return [dict(row) for row in rows]
+
+
+@app.put("/api/classes/{class_id}/textbook")
+async def set_class_textbook(class_id: int, payload: ClassTextbookIn, request: Request):
+    actor = require_roles(request, {"admin", "teacher"})
+    with connection() as conn:
+        class_row = _require_class(conn, class_id, actor)
+    try:
+        books = await list_evidence_textbooks()
+    except Exception as exc:
+        raise HTTPException(502, "读取教材目录失败，暂不能设置班级教材：" + str(exc)[:160]) from exc
+    book = next((item for item in books if str(item.get("id")) == payload.textbook_id), None)
+    if not book:
+        raise HTTPException(404, "教材不存在或尚未进入题库目录")
+    with connection() as conn:
+        conn.execute("UPDATE classes SET textbook_id=? WHERE id=?", (payload.textbook_id, class_id))
+    audit(actor, "class.textbook.update", "class", class_id, class_row["teacher_user_id"],
+          {"textbook_id": payload.textbook_id, "textbook_name": book.get("name")})
+    return {"ok": True, "textbook_id": payload.textbook_id, "textbook_name": book.get("name") or ""}
 
 
 @app.post("/api/classes", status_code=201)
@@ -1341,16 +1732,74 @@ def create_class(payload: ClassIn, request: Request):
     return {"id": cur.lastrowid, "name": name, "semester": semester}
 
 
+@app.delete("/api/classes/{class_id}")
+def delete_class(class_id: int, request: Request):
+    """Delete a setup mistake only when no assignment has ever used the class."""
+    actor = require_roles(request, {"admin", "teacher"})
+    with connection() as conn:
+        row = _require_class(conn, class_id, actor)
+        assignment_count = conn.execute("SELECT COUNT(*) FROM assignments WHERE class_id=?", (class_id,)).fetchone()[0]
+        if assignment_count:
+            raise HTTPException(409, "该班级已有作业记录，不能删除；请保留教学与成绩证据。")
+        conn.execute("DELETE FROM class_invites WHERE class_id=?", (class_id,))
+        conn.execute("DELETE FROM students WHERE class_id=?", (class_id,))
+        conn.execute("DELETE FROM classes WHERE id=?", (class_id,))
+    audit(actor, "class.delete", "class", class_id, row["teacher_user_id"], {"name": row["name"]})
+    return {"ok": True, "message": "班级已删除"}
+
+
 @app.get("/api/classes/{class_id}/students")
 def list_class_students(class_id: int, request: Request):
     actor = require_roles(request, {"admin", "teacher"})
     with connection() as conn:
         _require_class(conn, class_id, actor)
         rows = conn.execute(
-            "SELECT id,student_no,name,created_at FROM students WHERE class_id=? ORDER BY student_no", (class_id,)
+            "SELECT s.id,s.student_no,s.name,s.user_id,s.created_at,u.username AS login_account FROM students s LEFT JOIN users u ON u.id=s.user_id WHERE s.class_id=? ORDER BY s.student_no", (class_id,)
         ).fetchall()
     return [dict(row) for row in rows]
 
+
+@app.post("/api/classes/{class_id}/students/{student_id}/password-reset")
+def create_student_password_reset(class_id: int, student_id: int, request: Request):
+    """Teacher issues a 24-hour, one-time reset link for one activated student."""
+    actor = require_roles(request, {"admin", "teacher"})
+    raw_token = "MATH-RESET-" + __import__("secrets").token_urlsafe(24)
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+    with connection() as conn:
+        classroom = _require_class(conn, class_id, actor)
+        student = conn.execute("SELECT id,name,student_no,user_id FROM students WHERE id=? AND class_id=?", (student_id, class_id)).fetchone()
+        if not student:
+            raise HTTPException(404, "学生不在该班级名单中")
+        if not student["user_id"]:
+            raise HTTPException(409, "该学生尚未激活账号，暂时不能重置密码")
+        conn.execute("UPDATE password_reset_tokens SET used_at=? WHERE user_id=? AND used_at IS NULL", (datetime.now(timezone.utc).isoformat(), student["user_id"]))
+        reset_columns = {row[1] for row in conn.execute("PRAGMA table_info(password_reset_tokens)")}
+        fields = ["user_id", "token_hash", "expires_at", "created_by"]
+        values = [student["user_id"], token_hash(raw_token), expires_at.isoformat(), actor.get("id")]
+        # Legacy deployments required a student_id and retained code_hash.
+        # Populate both when present; the reset URL always validates token_hash.
+        if "student_id" in reset_columns:
+            fields.insert(1, "student_id"); values.insert(1, student["id"])
+        if "code_hash" in reset_columns:
+            fields.insert(fields.index("token_hash"), "code_hash"); values.insert(fields.index("token_hash"), token_hash(raw_token))
+        placeholders = ",".join("?" for _ in fields)
+        cur = conn.execute(f"INSERT INTO password_reset_tokens({','.join(fields)}) VALUES({placeholders})", values)
+    audit(actor, "student.password_reset_link.create", "student", student_id, classroom["teacher_user_id"], {"class_id": class_id, "expires_at": expires_at.isoformat()})
+    return {"id": cur.lastrowid, "student_name": student["name"], "expires_at": expires_at.isoformat(), "reset_url": f"/student-password-reset?token={quote(raw_token)}"}
+
+
+@app.post("/api/auth/student-password-reset")
+def reset_student_password(payload: StudentPasswordResetIn, request: Request):
+    """Consumes exactly one valid teacher-issued reset token without deleting the account."""
+    now = datetime.now(timezone.utc)
+    with connection() as conn:
+        row = conn.execute("SELECT * FROM password_reset_tokens WHERE token_hash=? AND used_at IS NULL", (token_hash(payload.token),)).fetchone()
+        if not row or datetime.fromisoformat(row["expires_at"]).astimezone(timezone.utc) <= now:
+            raise HTTPException(403, "重置链接无效、已过期或已使用")
+        from .auth import hash_password
+        conn.execute("UPDATE users SET password_hash=?,password_changed_at=? WHERE id=? AND role='student'", (hash_password(payload.password), now.isoformat(), row["user_id"]))
+        conn.execute("UPDATE password_reset_tokens SET used_at=? WHERE id=?", (now.isoformat(), row["id"]))
+    return {"ok": True, "message": "密码已更新，请使用原账号重新登录。"}
 
 @app.post("/api/classes/{class_id}/students/import")
 def import_roster_json(class_id: int, payload: StudentListIn, request: Request):
@@ -1427,11 +1876,14 @@ async def create_assignment(payload: AssignmentIn, request: Request):
     with connection() as conn:
         class_row = _require_class(conn, payload.class_id, actor)
         _require_roster(conn, payload.class_id)
+        textbook_id = str(class_row["textbook_id"] or "").strip()
+        if not textbook_id:
+            raise HTTPException(422, "请先在班级设置中选择教材。")
         picked, used = [], set()
         for level in levels:
-            row = conn.execute("SELECT * FROM questions WHERE chapter=? AND difficulty=? AND review_status='published' AND id NOT IN ({}) ORDER BY RANDOM() LIMIT 1".format(",".join("?" * len(used)) if used else "0"), [payload.chapter, level, *used]).fetchone()
+            row = conn.execute("SELECT * FROM questions WHERE chapter=? AND source_textbook_id=? AND difficulty=? AND review_status='published' AND id NOT IN ({}) ORDER BY RANDOM() LIMIT 1".format(",".join("?" * len(used)) if used else "0"), [payload.chapter, textbook_id, level, *used]).fetchone()
             if row is None:
-                row = conn.execute("SELECT * FROM questions WHERE chapter=? AND review_status='published' AND id NOT IN ({}) ORDER BY RANDOM() LIMIT 1".format(",".join("?" * len(used)) if used else "0"), [payload.chapter, *used]).fetchone()
+                row = conn.execute("SELECT * FROM questions WHERE chapter=? AND source_textbook_id=? AND review_status='published' AND id NOT IN ({}) ORDER BY RANDOM() LIMIT 1".format(",".join("?" * len(used)) if used else "0"), [payload.chapter, textbook_id, *used]).fetchone()
             if row: picked.append(dict(row)); used.add(row["id"])
         if not picked: raise HTTPException(404, "该章节暂无已发布题目")
         # New teacher-created assignments use 20 points for a valid submission
@@ -1441,7 +1893,7 @@ async def create_assignment(payload: AssignmentIn, request: Request):
         parent_scores = [round(quality_total / len(picked), 2) for _ in picked]
         parent_scores[-1] = round(quality_total - sum(parent_scores[:-1]), 2)
         semester = payload.semester.strip() or class_row["semester"]
-        cur = conn.execute("INSERT INTO assignments(title,chapter,class_name,class_id,due_at,total_score,semester,status,score_policy,completion_points) VALUES(?,?,?,?,?,?,?,?,?,?)", (payload.title, payload.chapter, class_row["name"], payload.class_id, payload.due_at.isoformat(), 100, semester, "draft", "completion20_quality80_v1", completion_points))
+        cur = conn.execute("INSERT INTO assignments(title,chapter,class_name,class_id,due_at,total_score,semester,status,score_policy,completion_points,textbook_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (payload.title, payload.chapter, class_row["name"], payload.class_id, payload.due_at.isoformat(), 100, semester, "draft", "completion20_quality80_v1", completion_points, textbook_id))
         assignment_id = cur.lastrowid
         conn.executemany(
             "INSERT INTO assignment_questions(assignment_id,question_id,sort_order,score,original_no) VALUES(?,?,?,?,?)",
@@ -1454,12 +1906,18 @@ async def create_assignment(payload: AssignmentIn, request: Request):
 
 
 @app.post("/api/agent/sync-section")
-async def sync_section(section_no: str, limit: int = 80):
+async def sync_section(request: Request, section_no: str, limit: int = 80,
+                       textbook_id: str | None = None):
     """Teacher-visible operation: refresh a chapter's working cache from 8014."""
+    actor = require_roles(request, {"admin", "teacher"})
+    if textbook_id:
+        books = await list_evidence_textbooks()
+        if not any(str(book.get("id")) == textbook_id for book in books):
+            raise HTTPException(404, "教材不存在")
     sections = _parse_sections(section_no)
     safe_limit = max(1, min(limit, 80))
     results = await asyncio.gather(
-        *[_sync_section_into_local_cache(s, safe_limit) for s in sections]
+        *[_sync_section_into_local_cache(s, safe_limit, textbook_id) for s in sections]
     )
     if len(results) == 1:
         return results[0]
@@ -1490,12 +1948,31 @@ def agent_tool_manifest(request: Request):
 
 
 @app.get("/api/agent/sections")
-async def evidence_sections():
-    return await list_evidence_sections()
+async def evidence_sections(request: Request, textbook_id: str | None = None):
+    require_roles(request, {"admin", "teacher"})
+    return await list_evidence_sections(textbook_id)
+
+
+@app.get("/api/agent/textbooks")
+async def evidence_textbooks(request: Request):
+    require_roles(request, {"admin", "teacher"})
+    try:
+        return await list_evidence_textbooks()
+    except Exception as exc:
+        raise HTTPException(502, "读取教材目录失败：" + str(exc)[:160]) from exc
+
+
+@app.get("/api/agent/textbooks/{textbook_id}/sections")
+async def evidence_textbook_sections(textbook_id: str, request: Request):
+    require_roles(request, {"admin", "teacher"})
+    books = await list_evidence_textbooks()
+    if not any(str(book.get("id")) == textbook_id for book in books):
+        raise HTTPException(404, "教材不存在")
+    return await list_evidence_sections(textbook_id)
 
 
 @app.post("/api/agent/assignments", status_code=201)
-async def create_evidence_backed_assignment(payload: AssignmentIn):
+async def create_evidence_backed_assignment(payload: AssignmentIn, request: Request):
     """One-call publish: extract → stratify → assemble for the chosen section(s).
 
     Delegates the ingestion pipeline to the Agent Orchestrator and then runs the
@@ -1508,12 +1985,20 @@ async def create_evidence_backed_assignment(payload: AssignmentIn):
     # waiting on the slow path.
     ASSIGNMENT_DRAFT_TIMEOUT = float(os.environ.get("ASSIGNMENT_DRAFT_TIMEOUT", "90"))
     with connection() as conn:
-        class_row = _require_class(conn, payload.class_id)
+        actor = require_roles(request, {"admin", "teacher"})
+        class_row = _require_class(conn, payload.class_id, actor)
         _require_roster(conn, payload.class_id)
+    textbook_id = str(class_row["textbook_id"] or "").strip()
+    if not textbook_id:
+        raise HTTPException(422, "请先在班级设置中选择教材。")
+    sections = _parse_sections(payload.chapter)
+    available_sections = {item["section_no"] for item in await list_evidence_sections(textbook_id)}
+    if not set(sections).issubset(available_sections):
+        raise HTTPException(422, "所选章节不属于该班指定教材，请刷新后重选。")
     try:
         pipeline = await asyncio.wait_for(
             publish_homework(
-                sections=_parse_sections(payload.chapter),
+                sections=sections,
                 title=payload.title,
                 class_id=payload.class_id,
                 class_name=class_row["name"],
@@ -1522,6 +2007,7 @@ async def create_evidence_backed_assignment(payload: AssignmentIn):
                 basic_ratio=payload.basic_ratio,
                 advanced_ratio=payload.advanced_ratio,
                 subpart_limit=payload.subpart_limit,
+                textbook_id=textbook_id,
             ),
             timeout=ASSIGNMENT_DRAFT_TIMEOUT,
         )
@@ -1561,8 +2047,15 @@ async def pipeline_publish(payload: AssignmentIn, request: Request):
     with connection() as conn:
         class_row = _require_class(conn, payload.class_id, actor)
         _require_roster(conn, payload.class_id)
+    textbook_id = str(class_row["textbook_id"] or "").strip()
+    if not textbook_id:
+        raise HTTPException(422, "请先为该班选择教材，再生成作业。")
+    sections = _parse_sections(payload.chapter)
+    available_sections = {item["section_no"] for item in await list_evidence_sections(textbook_id)}
+    if not set(sections).issubset(available_sections):
+        raise HTTPException(422, "所选章节不属于该班指定教材，请刷新后重选。")
     return await publish_homework(
-        sections=_parse_sections(payload.chapter),
+        sections=sections,
         title=payload.title,
         class_id=payload.class_id,
         class_name=class_row["name"],
@@ -1571,11 +2064,12 @@ async def pipeline_publish(payload: AssignmentIn, request: Request):
         basic_ratio=payload.basic_ratio,
         advanced_ratio=payload.advanced_ratio,
         subpart_limit=payload.subpart_limit,
+        textbook_id=textbook_id,
     )
 
 
 @app.get("/api/assignments")
-def list_assignments(request: Request, class_name: str | None = None, include_legacy: bool = False):
+def list_assignments(request: Request, class_name: str | None = None, class_id: int | None = None, include_legacy: bool = False):
     actor = current_user(request)
     sql, args = """SELECT a.*,
         (SELECT COUNT(*) FROM submissions s WHERE s.assignment_id=a.id) AS submission_count,
@@ -1585,6 +2079,11 @@ def list_assignments(request: Request, class_name: str | None = None, include_le
     if class_name:
         clauses.append("a.class_name=?")
         args.append(class_name)
+    if class_id is not None:
+        with connection() as conn:
+            _require_class(conn, class_id, actor)
+        clauses.append("a.class_id=?")
+        args.append(class_id)
     scope = teacher_id_for_scope(actor)
     if actor["role"] == "student":
         clauses.append("a.status='published'")
@@ -1663,8 +2162,11 @@ def _record_notification_event(conn: sqlite3.Connection, notification_id: int, a
 def _assignment_quality_gate(conn: sqlite3.Connection, assignment_id: int) -> dict:
     """Validate every effective question/subpart before students can see a paper."""
     parents = [dict(row) for row in conn.execute(
-        """SELECT aq.question_id,aq.original_no,q.content,q.answer,q.rubric,q.review_status
+        """SELECT aq.question_id,aq.original_no,q.content,q.answer,
+                  COALESCE(ro.rubric,q.rubric) AS rubric,q.review_status
            FROM assignment_questions aq JOIN questions q ON q.id=aq.question_id
+           LEFT JOIN assignment_question_rubric_overrides ro
+             ON ro.assignment_id=aq.assignment_id AND ro.question_id=aq.question_id
            WHERE aq.assignment_id=? ORDER BY aq.sort_order""", (assignment_id,)
     ).fetchall()]
     parts = [dict(row) for row in conn.execute(
@@ -1706,6 +2208,47 @@ def assignment_quality(assignment_id: int, request: Request):
         _require_assignment(conn, assignment_id, actor)
         return _assignment_quality_gate(conn, assignment_id)
 
+
+@app.post("/api/assignments/{assignment_id}/close")
+def close_assignment(assignment_id: int, request: Request):
+    """Close a published assignment without deleting its submissions or grades."""
+    actor = require_roles(request, {"admin", "teacher"})
+    with connection() as conn:
+        assignment = _require_assignment(conn, assignment_id, actor)
+        if assignment["status"] == "closed":
+            return {"ok": True, "message": "该作业已经结束，历史提交与成绩均已保留。"}
+        if assignment["status"] != "published":
+            raise HTTPException(409, "只能结束已发布的作业；草案无需结束。")
+        conn.execute("UPDATE assignments SET status='closed' WHERE id=?", (assignment_id,))
+    audit(actor, "assignment.close", "assignment", assignment_id, assignment["teacher_user_id"], {"preserved_submissions": True})
+    return {"ok": True, "message": "作业已结束，学生不能再提交；已有提交、批改和成绩已保留。"}
+
+
+@app.post("/api/assignments/{assignment_id}/makeup-link")
+def create_assignment_makeup_link(assignment_id: int, request: Request, expires_days: int = 7):
+    """Issue a roster-validated late-submission link for a closed assignment."""
+    actor = require_roles(request, {"admin", "teacher"})
+    expires_days = min(max(int(expires_days), 1), 30)
+    raw_token = "MATH-MAKEUP-" + __import__("secrets").token_urlsafe(24)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=expires_days)
+    with connection() as conn:
+        assignment = _require_assignment(conn, assignment_id, actor)
+        if assignment["status"] != "closed":
+            raise HTTPException(409, "请先结束作业，再生成补交链接")
+        cur = conn.execute(
+            """INSERT INTO assignment_makeup_links(assignment_id,token_hash,expires_at,created_by)
+               VALUES(?,?,?,?)""",
+            (assignment_id, token_hash(raw_token), expires_at.isoformat(), actor["id"]),
+        )
+    audit(actor, "assignment.makeup_link.create", "assignment", assignment_id,
+          assignment["teacher_user_id"], {"expires_at": expires_at.isoformat(), "link_id": cur.lastrowid})
+    return {
+        "ok": True,
+        "assignment_id": assignment_id,
+        "expires_at": expires_at.isoformat(),
+        "makeup_path": f"/submit?assignment_id={assignment_id}&makeup_token={quote(raw_token)}",
+        "message": f"补交链接已生成，有效至 {expires_at.astimezone().strftime('%Y-%m-%d %H:%M')}。",
+    }
 
 @app.post("/api/assignments/{assignment_id}/publish")
 def publish_assignment(assignment_id: int, request: Request):
@@ -1788,6 +2331,17 @@ def notification_roster_csv(assignment_id: int, request: Request):
                     headers={"Content-Disposition": f'attachment; filename="assignment_{assignment_id}_notification_roster.csv"'})
 
 
+def _normalize_assignment_label(value: object) -> str:
+    """Present textbook exercise references consistently in teacher-facing views."""
+    raw = str(value or "").strip()
+    match = re.fullmatch(r"Ex\s*(\d+\.\d+)\s*#\s*(\d+)", raw, re.IGNORECASE)
+    if match:
+        return f"Ex{match.group(1)}第{match.group(2)}题"
+    match = re.fullmatch(r"Ex\s*(\d+\.\d+)\s*第\s*(\d+)\s*题", raw, re.IGNORECASE)
+    if match:
+        return f"Ex{match.group(1)}第{match.group(2)}题"
+    return raw
+
 @app.get("/api/assignments/{assignment_id}/draft-items")
 def assignment_draft_items(assignment_id: int, request: Request):
     """Teacher-only editable copy of a draft's visible questions."""
@@ -1797,13 +2351,15 @@ def assignment_draft_items(assignment_id: int, request: Request):
         if assignment["status"] != "draft":
             raise HTTPException(409, "只能编辑尚未发布的作业草稿")
         parents = [dict(r) for r in conn.execute(
-            """SELECT aq.question_id,aq.original_no,aq.score,q.content,o.content AS override_content,o.score AS override_score
+            """SELECT aq.question_id,aq.original_no,aq.score,q.content,q.rubric,
+                      ro.rubric AS override_rubric,o.content AS override_content,o.score AS override_score
                FROM assignment_questions aq JOIN questions q ON q.id=aq.question_id
                LEFT JOIN assignment_question_overrides o ON o.assignment_id=aq.assignment_id AND o.question_id=aq.question_id
+               LEFT JOIN assignment_question_rubric_overrides ro ON ro.assignment_id=aq.assignment_id AND ro.question_id=aq.question_id
                WHERE aq.assignment_id=? ORDER BY aq.sort_order""", (assignment_id,)
         ).fetchall()]
         parts = [dict(r) for r in conn.execute(
-            """SELECT question_id,subpart_no,part_order,content,score FROM assignment_question_parts
+            """SELECT question_id,subpart_no,part_order,content,score,rubric FROM assignment_question_parts
                WHERE assignment_id=? ORDER BY question_id,part_order""", (assignment_id,)
         ).fetchall()]
     by_parent = {}
@@ -1815,12 +2371,13 @@ def assignment_draft_items(assignment_id: int, request: Request):
         if selected:
             for part in selected:
                 items.append({"question_id": parent["question_id"], "subpart_no": part["subpart_no"],
-                              "label": f"{parent['original_no']}（{part['subpart_no']}）",
-                              "content": part["content"], "score": part["score"], "is_subpart": True})
+                              "label": f"{_normalize_assignment_label(parent['original_no'])}（{part['subpart_no']}）",
+                              "content": part["content"], "score": part["score"], "rubric": part.get("rubric") or "", "is_subpart": True})
         else:
-            items.append({"question_id": parent["question_id"], "subpart_no": "", "label": parent["original_no"],
+            items.append({"question_id": parent["question_id"], "subpart_no": "", "label": _normalize_assignment_label(parent["original_no"]),
                           "content": parent["override_content"] or parent["content"],
                           "score": parent["override_score"] if parent["override_score"] is not None else parent["score"],
+                          "rubric": parent["override_rubric"] or parent["rubric"] or "",
                           "is_subpart": False})
     return {"assignment_id": assignment_id, "title": assignment["title"], "due_at": assignment["due_at"], "items": items}
 
@@ -1841,6 +2398,54 @@ def _refresh_assignment_total(conn: sqlite3.Connection, assignment_id: int) -> N
     conn.execute("UPDATE assignments SET total_score=? WHERE id=?", (visible_total, assignment_id))
 
 
+@app.get("/api/assignments/{assignment_id}/recipients")
+def assignment_recipients(assignment_id: int, request: Request):
+    actor = require_roles(request, {"admin", "teacher"})
+    with connection() as conn:
+        assignment = _require_assignment(conn, assignment_id, actor)
+        if assignment["class_id"] is None:
+            raise HTTPException(409, "历史作业不支持指定接收学生")
+        students = [dict(row) for row in conn.execute(
+            "SELECT id,student_no,name,user_id FROM students WHERE class_id=? ORDER BY student_no", (assignment["class_id"],)
+        ).fetchall()]
+        explicit = {row[0] for row in conn.execute("SELECT student_id FROM assignment_recipients WHERE assignment_id=?", (assignment_id,)).fetchall()}
+        selected = explicit or {int(st["id"]) for st in students}
+        submitted = {row[0] for row in conn.execute(
+            "SELECT st.id FROM students st JOIN submissions s ON s.student_no=st.student_no WHERE st.class_id=? AND s.assignment_id=?",
+            (assignment["class_id"], assignment_id),
+        ).fetchall()}
+    return {"assignment_id": assignment_id, "status": assignment["status"], "selection_mode": "explicit" if explicit else "all_class", "students": [
+        {**st, "selected": int(st["id"]) in selected, "submitted": int(st["id"]) in submitted,
+         "locked": assignment["status"] == "published" and int(st["id"]) in submitted}
+        for st in students
+    ]}
+
+
+@app.put("/api/assignments/{assignment_id}/recipients")
+def update_assignment_recipients(assignment_id: int, payload: AssignmentRecipientsIn, request: Request):
+    actor = require_roles(request, {"admin", "teacher"})
+    wanted = set(payload.student_ids)
+    with connection() as conn:
+        assignment = _require_assignment(conn, assignment_id, actor)
+        if assignment["class_id"] is None:
+            raise HTTPException(409, "历史作业不支持指定接收学生")
+        roster = {row[0] for row in conn.execute("SELECT id FROM students WHERE class_id=?", (assignment["class_id"],)).fetchall()}
+        invalid = wanted - roster
+        if invalid:
+            raise HTTPException(422, "接收名单包含不属于本班的学生")
+        submitted = {row[0] for row in conn.execute(
+            "SELECT st.id FROM students st JOIN submissions s ON s.student_no=st.student_no WHERE st.class_id=? AND s.assignment_id=?",
+            (assignment["class_id"], assignment_id),
+        ).fetchall()}
+        missing_locked = submitted - wanted
+        if missing_locked:
+            raise HTTPException(409, "已提交作业的学生不能从接收名单移除")
+        conn.execute("DELETE FROM assignment_recipients WHERE assignment_id=?", (assignment_id,))
+        conn.executemany("INSERT INTO assignment_recipients(assignment_id,student_id) VALUES(?,?)", [(assignment_id, student_id) for student_id in sorted(wanted)])
+    audit(actor, "assignment.recipients.update", "assignment", assignment_id, assignment["teacher_user_id"], {"recipient_count": len(wanted), "published": assignment["status"] == "published"})
+    return {"ok": True, "message": ("已更新接收学生；已提交学生已保护。" if assignment["status"] == "published" else "已保存草稿测试小组。"), "recipient_count": len(wanted)}
+
+
 @app.patch("/api/assignments/{assignment_id}/draft-items")
 def update_assignment_draft_item(assignment_id: int, payload: AssignmentDraftItemIn, request: Request):
     """Edit only this assignment's copy; shared question bank remains untouched."""
@@ -1856,9 +2461,9 @@ def update_assignment_draft_item(assignment_id: int, payload: AssignmentDraftIte
             raise HTTPException(404, "该题不属于此作业")
         if payload.subpart_no:
             changed = conn.execute(
-                """UPDATE assignment_question_parts SET content=?,score=?
+                """UPDATE assignment_question_parts SET content=?,score=?,rubric=?
                    WHERE assignment_id=? AND question_id=? AND subpart_no=?""",
-                (payload.content.strip(), payload.score, assignment_id, payload.question_id, payload.subpart_no)
+                (payload.content.strip(), payload.score, payload.rubric or "", assignment_id, payload.question_id, payload.subpart_no)
             ).rowcount
             if not changed:
                 raise HTTPException(404, "未找到该小问")
@@ -1870,10 +2475,87 @@ def update_assignment_draft_item(assignment_id: int, payload: AssignmentDraftIte
                      content=excluded.content,score=excluded.score,updated_at=CURRENT_TIMESTAMP""",
                 (assignment_id, payload.question_id, payload.content.strip(), payload.score)
             )
+            if payload.rubric is not None:
+                conn.execute(
+                    """INSERT INTO assignment_question_rubric_overrides(assignment_id,question_id,rubric,updated_at)
+                       VALUES(?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(assignment_id,question_id) DO UPDATE SET
+                       rubric=excluded.rubric,updated_at=CURRENT_TIMESTAMP""",
+                    (assignment_id, payload.question_id, payload.rubric.strip()),
+                )
         _refresh_assignment_total(conn, assignment_id)
     audit(actor, "assignment.draft_item.update", "assignment", assignment_id,
           assignment["teacher_user_id"], {"question_id": payload.question_id, "subpart_no": payload.subpart_no})
     return {"ok": True, "message": "已保存到本次作业草稿；题库原题未修改。"}
+
+
+@app.put("/api/assignments/{assignment_id}/draft")
+def save_assignment_draft(assignment_id: int, payload: AssignmentDraftSaveIn, request: Request):
+    """Save assignment metadata and all visible draft items atomically."""
+    actor = require_roles(request, {"admin", "teacher"})
+    title = payload.title.strip()
+    if not title:
+        raise HTTPException(422, "作业名称不能为空")
+    keys = [(item.question_id, item.subpart_no.strip()) for item in payload.items]
+    if len(set(keys)) != len(keys):
+        raise HTTPException(422, "保存内容中有重复题目或小问")
+
+    with connection() as conn:
+        assignment = _require_assignment(conn, assignment_id, actor)
+        if assignment["status"] != "draft":
+            raise HTTPException(409, "作业已发布，不能再修改")
+        if conn.execute("SELECT 1 FROM submissions WHERE assignment_id=? LIMIT 1", (assignment_id,)).fetchone():
+            raise HTTPException(409, "该草稿已有提交，不能修改题目")
+
+        parents = {int(row[0]) for row in conn.execute(
+            "SELECT question_id FROM assignment_questions WHERE assignment_id=?", (assignment_id,)
+        ).fetchall()}
+        parts = conn.execute(
+            "SELECT question_id,subpart_no FROM assignment_question_parts WHERE assignment_id=?",
+            (assignment_id,),
+        ).fetchall()
+        parts_by_parent = {}
+        for row in parts:
+            parts_by_parent.setdefault(int(row["question_id"]), set()).add(str(row["subpart_no"]).strip())
+        allowed = set()
+        for question_id in parents:
+            subparts = parts_by_parent.get(question_id, set())
+            if subparts:
+                allowed.update((question_id, subpart) for subpart in subparts)
+            else:
+                allowed.add((question_id, ""))
+        if set(keys) != allowed:
+            raise HTTPException(422, "保存内容与本次作业题目清单不一致，请刷新编辑页后重试")
+
+        conn.execute("UPDATE assignments SET title=?,due_at=? WHERE id=?",
+                     (title, payload.due_at.isoformat(), assignment_id))
+        for item, (_, subpart_no) in zip(payload.items, keys):
+            if subpart_no:
+                conn.execute(
+                    """UPDATE assignment_question_parts SET content=?,score=?,rubric=?
+                       WHERE assignment_id=? AND question_id=? AND subpart_no=?""",
+                    (item.content.strip(), item.score, (item.rubric or "").strip(), assignment_id, item.question_id, subpart_no),
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO assignment_question_overrides(assignment_id,question_id,content,score,updated_at)
+                       VALUES(?,?,?,?,CURRENT_TIMESTAMP)
+                       ON CONFLICT(assignment_id,question_id) DO UPDATE SET
+                         content=excluded.content,score=excluded.score,updated_at=CURRENT_TIMESTAMP""",
+                    (assignment_id, item.question_id, item.content.strip(), item.score),
+                )
+                if item.rubric is not None:
+                    conn.execute(
+                        """INSERT INTO assignment_question_rubric_overrides(assignment_id,question_id,rubric,updated_at)
+                           VALUES(?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(assignment_id,question_id) DO UPDATE SET
+                           rubric=excluded.rubric,updated_at=CURRENT_TIMESTAMP""",
+                        (assignment_id, item.question_id, item.rubric.strip()),
+                    )
+        _refresh_assignment_total(conn, assignment_id)
+
+    audit(actor, "assignment.draft.save_all", "assignment", assignment_id,
+          assignment["teacher_user_id"], {"item_count": len(payload.items)})
+    return {"ok": True, "message": f"作业信息和 {len(payload.items)} 道题已一次保存。",
+            "item_count": len(payload.items)}
 
 
 @app.patch("/api/assignments/{assignment_id}")
@@ -1974,27 +2656,80 @@ def delete_demo_submissions(payload: DemoCleanupIn, request: Request):
 
 
 @app.get("/api/assignments/{assignment_id}/print", response_class=HTMLResponse)
-def printable_assignment(assignment_id: int, request: Request):
-    actor = current_user(request)
-    assignment, rows = _load_assignment_items(assignment_id, actor)
+def printable_assignment(assignment_id: int, request: Request, makeup_token: str = ""):
+    try:
+        actor = current_user(request)
+    except HTTPException as exc:
+        if exc.status_code != 401:
+            raise
+        actor = None
+    assignment, rows = _load_assignment_items(assignment_id, actor, makeup_token)
     # Use source textbook numbers (and selected sub-part numbers), then remove
     # the repeated source number from each stem.
     # stem. Wrap raw LaTeX fragments first, then escape HTML so entities inside math
     # (e.g. >) are handled by the browser/MathJax correctly.
-    items = "".join(
-        f"<section class='subpart' if False else ''><h3>{display_problem_no(dict(r), i)} · {float(r['score']):g}分</h3><div class='problem-body'>{escape(_wrap_latex_for_html(_strip_selected_subpart_prefix(strip_source_problem_prefix(r['content']), str(r.get('original_no') or ''))))}</div><div class='space {'small' if r.get('subpart_no') else ''}'></div></section>"
-        for i, r in enumerate(rows)
-    )
-    return f"""<!doctype html><html lang='zh-CN'><meta charset='utf-8'><title>{escape(assignment['title'])}</title>
-    <style>@page{{size:A4;margin:18mm}}body{{font-family:'Microsoft YaHei',sans-serif;color:#111;line-height:1.65}}header{{border-bottom:2px solid #1e3a5f}}h1{{text-align:center}}.meta{{display:flex;justify-content:space-between}}section{{break-inside:avoid;margin-top:18px}}h3{{margin:0 0 8px;font-size:18px}}.problem-body{{font-size:17px;white-space:pre-wrap}}.space{{height:175px;border-bottom:1px dashed #cbd5e1}}.space.small{{height:105px}}</style>
+    rendered_items = []
+    for i, row in enumerate(rows):
+        row_dict = dict(row)
+        problem_no = display_problem_no(row_dict, i)
+        content = _strip_selected_subpart_prefix(
+            strip_source_problem_prefix(row["content"]), str(row.get("original_no") or "")
+        )
+        part_count = len(re.findall(r"(?:^|\n)\s*[（(]\s*\d+\s*[)）]", content))
+        if row.get("subpart_no"):
+            answer_mm = 48
+        elif "证明" in str(row.get("question_type") or "") or "证明" in content:
+            answer_mm = 82
+        elif row.get("question_type") in {"应用题", "综合题"} or part_count >= 3:
+            answer_mm = min(100, 66 + max(0, part_count - 3) * 6)
+        else:
+            answer_mm = 62
+        problem_html = escape(_wrap_latex_for_html(content))
+        rendered_items.append(
+            f"<section class='problem'><div class='problem-heading'><h2>{escape(problem_no)}</h2>"
+            f"<span>{float(row['score']):g} 分</span></div>"
+            f"<div class='problem-body'>{problem_html}</div>"
+            f"<div class='answer-area' style='min-height:{answer_mm}mm'>"
+            f"<div class='answer-label'>{escape(problem_no)} · 作答区</div></div></section>"
+        )
+    items = "".join(rendered_items)
+    pdf_url = f"/api/assignments/{assignment_id}/pdf"
+    if makeup_token:
+        pdf_url += "?makeup_token=" + quote(makeup_token, safe="")
+    return f"""<!doctype html><html lang='zh-CN'><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>{escape(assignment['title'])}</title>
+    <style>
+      @page{{size:A4;margin:15mm 16mm 17mm}}
+      *{{box-sizing:border-box}}body{{margin:0;font-family:'Microsoft YaHei',sans-serif;color:#172033;line-height:1.62}}
+      .print-controls{{position:sticky;top:0;z-index:2;display:flex;justify-content:flex-end;flex-wrap:wrap;gap:12px;padding:10px;background:#f1f5f9;border-bottom:1px solid #dbe3ed}}
+      .print-controls a,.print-controls button{{border:0;border-radius:7px;padding:9px 14px;background:#4f46e5;color:white;font:inherit;text-decoration:none;cursor:pointer}}
+      .print-controls button:disabled{{opacity:.55;cursor:wait}}
+      .print-controls a{{background:#e8eaff;color:#3730a3}}.print-sheet{{max-width:900px;margin:22px auto;padding:0 26px 30px}}
+      header{{border-bottom:2px solid #1e3a5f;padding-bottom:10px}}h1{{text-align:center;margin:0 0 14px;font-size:24px}}
+      .meta{{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}}.assignment-meta{{font-size:13px;color:#526174;margin:8px 0 0}}
+      .problem{{margin-top:14mm}}.problem-heading{{display:flex;justify-content:space-between;align-items:baseline;gap:12px;border-bottom:1px solid #d8e0e9;padding-bottom:4px;margin-bottom:5mm;break-after:avoid}}
+      .problem-heading h2{{font-size:16px;margin:0}}.problem-heading span{{font-size:12px;color:#526174;white-space:nowrap}}
+      .problem-body{{font-size:15px;white-space:pre-wrap;overflow-wrap:anywhere}}.answer-area{{position:relative;margin-top:5mm;border:1px solid #64748b;padding:10mm 7mm 5mm;background-image:repeating-linear-gradient(to bottom,transparent 0,transparent 9mm,#e2e8f0 9mm,#e2e8f0 9.2mm,transparent 9.2mm,transparent 10mm);background-position:0 12mm;break-inside:avoid;min-height:48mm}}
+      .answer-label{{position:absolute;left:7mm;top:2mm;color:#64748b;font-size:9pt;background:#fff;padding:0 2mm}}
+      .math-fallback{{display:none;margin:28px auto;max-width:720px;border:1px solid #f0c36d;background:#fff8e7;padding:18px;line-height:1.7}}
+      body.math-failed .math-fallback{{display:block}}
+      @media print{{.print-controls,.math-fallback{{display:none!important}}.print-sheet{{max-width:none;margin:0;padding:0}}.problem{{margin-top:9mm}}}}
+    </style>
     <script>
     MathJax = {{
       tex: {{ inlineMath: [['$', '$'], ['\\\\(', '\\\\)']], displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']] }},
       svg: {{ fontCache: 'global' }}
     }};
     </script>
-    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
-    <header><h1>{escape(assignment['title'])}</h1><div class='meta'><span>班级：{escape(assignment['class_name'])}</span><span>姓名：__________</span><span>学号：__________</span></div><p>章节：{escape(assignment['chapter'])}　截止：{escape(assignment['due_at'])}　总分：{assignment['total_score']}</p></header>{items}</html>"""
+    <script id='MathJax-script' async src='https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js'></script>
+    <body class='math-pending'><div class='print-controls'><button id='printButton' onclick='window.print()'>打印作业</button><a href='{escape(pdf_url + ("&" if "?" in pdf_url else "?") + "download=1", quote=True)}'>下载 A4 PDF（可转发给学生）</a></div>
+    <div class='math-fallback'>公式排版暂未加载；作业题目仍可查看和打印。需要排版后的公式时，可下载 A4 PDF。<br><a href='{escape(pdf_url, quote=True)}'>打开服务器生成的 A4 PDF</a></div>
+    <main class='print-sheet'><header><h1>{escape(assignment['title'])}</h1><div class='meta'><span>班级：{escape(assignment['class_name'])}</span><span>姓名：__________</span><span>学号：__________</span></div><p class='assignment-meta'>章节：{escape(assignment['chapter'])}　截止：{escape(assignment['due_at'])}　总分：{assignment['total_score']}</p></header>{items}</main>
+    <script>
+      let mathReady=false;
+      function showMathFailure(){{if(mathReady)return;document.body.classList.remove('math-pending');document.body.classList.add('math-failed')}}
+      window.setTimeout(showMathFailure,9000);
+      window.addEventListener('load',()=>{{if(!window.MathJax||!MathJax.startup)return showMathFailure();MathJax.startup.promise.then(()=>{{mathReady=true;document.body.classList.remove('math-pending','math-failed');document.getElementById('printButton').disabled=false;document.getElementById('printButton').textContent='打印 / 保存 PDF'}}).catch(showMathFailure)}});
+    </script></body></html>"""
 
 
 @app.get("/api/assignments/{assignment_id}/submissions")
@@ -2009,6 +2744,7 @@ def assignment_submissions(assignment_id: int, request: Request):
         assignment = _require_assignment(conn, assignment_id, actor)
         rows = conn.execute(
             """SELECT s.id,s.student_no,s.student_name,s.status,s.score,s.needs_review,s.submitted_at,
+                      s.released_at,s.return_reason,s.returned_at,s.resubmission_of,
                       j.status AS grading_status,j.result_json
                FROM submissions s LEFT JOIN grading_jobs j ON j.submission_id=s.id
                WHERE s.assignment_id=? ORDER BY s.submitted_at DESC, s.id DESC""",
@@ -2029,10 +2765,58 @@ def assignment_submissions(assignment_id: int, request: Request):
     return {"assignment_id": assignment_id, "title": assignment["title"], "submissions": items}
 
 
-def _load_assignment_items(assignment_id: int, actor: dict | None = None) -> tuple[dict, list[dict]]:
+@app.post("/api/submissions/{submission_id}/return-for-resubmission")
+def return_submission_for_resubmission(
+    submission_id: int, payload: ReturnSubmissionIn, request: Request
+):
+    """Return an incomplete upload while preserving its file and grading evidence."""
+    actor = require_roles(request, {"admin", "teacher"})
+    reason = payload.reason.strip()
+    if len(reason) < 2:
+        raise HTTPException(422, "请填写具体退回原因")
+    with connection() as conn:
+        row = conn.execute(
+            """SELECT s.id,s.assignment_id,s.student_no,s.status,s.released_at,
+                      c.teacher_user_id,j.status AS grading_status
+               FROM submissions s JOIN assignments a ON a.id=s.assignment_id
+               JOIN classes c ON c.id=a.class_id
+               LEFT JOIN grading_jobs j ON j.submission_id=s.id
+               WHERE s.id=?""", (submission_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "提交不存在")
+        scope = teacher_id_for_scope(actor)
+        if scope is not None and row["teacher_user_id"] != scope:
+            raise HTTPException(404, "提交不存在")
+        if row["released_at"]:
+            raise HTTPException(409, "成绩已经发布，不能直接退回；请先按成绩更正流程处理")
+        if row["grading_status"] in {"queued", "running"}:
+            raise HTTPException(409, "该提交仍在初评，请等待完成后再退回补交")
+        newer = conn.execute(
+            """SELECT id FROM submissions WHERE assignment_id=? AND student_no=? AND id>?
+               ORDER BY id DESC LIMIT 1""",
+            (row["assignment_id"], row["student_no"], submission_id),
+        ).fetchone()
+        if newer:
+            raise HTTPException(409, "学生已经上传了更新版本，请查看最新提交")
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            """UPDATE submissions SET status='returned',return_reason=?,returned_at=?,returned_by=?,
+                                      needs_review=0
+               WHERE id=?""",
+            (reason, now, actor["id"], submission_id),
+        )
+    audit(actor, "submission.return_for_resubmission", "submission", submission_id,
+          row["teacher_user_id"], {"reason": reason})
+    return {"ok": True, "submission_id": submission_id, "status": "returned",
+            "message": "已退回学生补交；原文件和初评证据均已保留。"}
+
+
+def _load_assignment_items(assignment_id: int, actor: dict | None = None,
+                           makeup_token: str | None = None) -> tuple[dict, list[dict]]:
     """Return printable rows, expanding safely selected sub-questions."""
     with connection() as conn:
-        assignment = _require_assignment(conn, assignment_id, actor)
+        assignment = _require_assignment(conn, assignment_id, actor, makeup_token)
         parents = [dict(r) for r in conn.execute(
             """SELECT q.content, q.chapter, q.question_type, q.source_problem_no, aq.question_id,
                       aq.sort_order, aq.score, aq.original_no, o.content AS override_content, o.score AS override_score
@@ -2075,9 +2859,22 @@ def _load_assignment_items(assignment_id: int, actor: dict | None = None) -> tup
 
 
 @app.get("/api/assignments/{assignment_id}/pdf")
-def download_assignment_pdf(assignment_id: int, request: Request):
-    """Render the real printable A4 homework PDF (original numbers + answer blanks)."""
-    assignment, items = _load_assignment_items(assignment_id, current_user(request))
+def download_assignment_pdf(assignment_id: int, request: Request, download: bool = False,
+                            makeup_token: str = ""):
+    """Render the printable A4 homework PDF for viewing/printing or download.
+
+    Mobile in-app browsers (notably WeChat) often ignore an HTML ``download``
+    attribute and discard an attachment response without showing a save dialog.
+    The default is therefore an inline PDF viewer; callers that really need a
+    file can opt into an attachment with ``?download=1``.
+    """
+    try:
+        actor = current_user(request)
+    except HTTPException as exc:
+        if exc.status_code != 401:
+            raise
+        actor = None
+    assignment, items = _load_assignment_items(assignment_id, actor, makeup_token)
     out_dir = Path(settings.upload_dir) / "assignments"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"assignment_{assignment_id}.pdf"
@@ -2085,7 +2882,17 @@ def download_assignment_pdf(assignment_id: int, request: Request):
         path, _ = build_assignment_pdf(assignment, items, out_path)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(500, f"PDF 生成失败：{str(exc)[:220]}")
-    return FileResponse(path, filename=f"作业_{assignment_id}.pdf", media_type="application/pdf")
+    disposition = "attachment" if download else "inline"
+    return FileResponse(
+        path,
+        media_type="application/pdf",
+        headers={
+            # Use an ASCII fallback so older mobile WebViews do not reject the
+            # response header before handing it to their built-in PDF viewer.
+            "Content-Disposition": f'{disposition}; filename="assignment_{assignment_id}.pdf"',
+            "Cache-Control": "private, no-store",
+        },
+    )
 
 
 @app.get("/api/assignments/{assignment_id}/latex")
@@ -2148,10 +2955,15 @@ def student_home_page(request: Request):
 
 
 @app.get("/api/student/assignments/{assignment_id}/detail")
-def student_assignment_detail(assignment_id: int, request: Request):
+def student_assignment_detail(assignment_id: int, request: Request, makeup_token: str = ""):
     """Student-safe assignment sheet: questions and scores, never answers/rubrics."""
-    actor = require_roles(request, {"student"})
-    assignment, rows = _load_assignment_items(assignment_id, actor)
+    try:
+        actor = require_roles(request, {"student"})
+    except HTTPException as exc:
+        if exc.status_code != 401:
+            raise
+        actor = None
+    assignment, rows = _load_assignment_items(assignment_id, actor, makeup_token)
     return {
         "id": assignment_id,
         "title": assignment["title"],
@@ -2170,27 +2982,48 @@ def student_assignment_detail(assignment_id: int, request: Request):
 def student_assignments(request: Request):
     """Student dashboard: one latest submission per assigned homework."""
     actor = require_roles(request, {"student"})
+    demo_observer = _is_demo_student_observer(actor)
     with connection() as conn:
-        rows = conn.execute(
-            """SELECT a.id,a.title,a.chapter,a.due_at,a.total_score,a.status AS assignment_status,
-                      a.score_policy,a.completion_points,c.name AS class_name,
-                      st.student_no,st.name AS roster_name,
-                      s.id AS submission_id,s.status AS submission_status,s.score,
-                      s.completion_score,s.quality_score,s.quality_max_score,
-                      s.submitted_at,s.released_at,s.feedback,j.status AS grading_status,j.result_json
-               FROM assignments a
-               JOIN students st ON st.class_id=a.class_id AND st.user_id=?
-               JOIN classes c ON c.id=a.class_id
-               LEFT JOIN submissions s ON s.id=(
-                    SELECT s2.id FROM submissions s2
-                    WHERE s2.assignment_id=a.id AND s2.student_no=st.student_no
-                    ORDER BY s2.id DESC LIMIT 1
-               )
-               LEFT JOIN grading_jobs j ON j.submission_id=s.id
-               WHERE a.status='published'
-               ORDER BY datetime(a.due_at) ASC, a.id DESC""",
-            (actor["id"],),
-        ).fetchall()
+        if demo_observer:
+            # Student-side demonstration only: published questions are visible,
+            # while roster identity, submissions, grades and feedback stay absent.
+            rows = conn.execute(
+                """SELECT a.id,a.title,a.chapter,a.due_at,a.total_score,a.status AS assignment_status,
+                          a.score_policy,a.completion_points,c.name AS class_name,
+                          '' AS student_no,'演示观察账号' AS roster_name,
+                          NULL AS submission_id,NULL AS submission_status,NULL AS score,
+                          NULL AS completion_score,NULL AS quality_score,NULL AS quality_max_score,
+                          NULL AS submitted_at,NULL AS released_at,'' AS feedback,
+                          NULL AS return_reason,NULL AS returned_at,NULL AS resubmission_of,
+                          NULL AS grading_status,'{}' AS result_json
+                   FROM assignments a JOIN classes c ON c.id=a.class_id
+                   WHERE a.status='published' AND a.class_id IS NOT NULL
+                   ORDER BY datetime(a.due_at) ASC, a.id DESC"""
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT a.id,a.title,a.chapter,a.due_at,a.total_score,a.status AS assignment_status,
+                          a.score_policy,a.completion_points,c.name AS class_name,
+                          st.student_no,st.name AS roster_name,
+                          s.id AS submission_id,s.status AS submission_status,s.score,
+                          s.completion_score,s.quality_score,s.quality_max_score,
+                          s.submitted_at,s.released_at,s.feedback,s.return_reason,s.returned_at,s.resubmission_of,
+                          j.status AS grading_status,j.result_json
+                   FROM assignments a
+                   JOIN students st ON st.class_id=a.class_id AND st.user_id=?
+                   JOIN classes c ON c.id=a.class_id
+                   LEFT JOIN submissions s ON s.id=(
+                        SELECT s2.id FROM submissions s2
+                        WHERE s2.assignment_id=a.id AND s2.student_no=st.student_no
+                        ORDER BY s2.id DESC LIMIT 1
+                   )
+                   LEFT JOIN grading_jobs j ON j.submission_id=s.id
+                   WHERE a.status='published'
+                     AND (NOT EXISTS(SELECT 1 FROM assignment_recipients ar WHERE ar.assignment_id=a.id)
+                          OR EXISTS(SELECT 1 FROM assignment_recipients ar WHERE ar.assignment_id=a.id AND ar.student_id=st.id))
+                   ORDER BY datetime(a.due_at) ASC, a.id DESC""",
+                (actor["id"],),
+            ).fetchall()
     now = datetime.now(timezone.utc)
     items = []
     for row in rows:
@@ -2202,8 +3035,12 @@ def student_assignments(request: Request):
             due_at = due_at if due_at.tzinfo else due_at.replace(tzinfo=timezone.utc)
         except ValueError:
             due_at = now
-        if item["submission_id"] is None:
+        if demo_observer:
+            state = "preview"
+        elif item["submission_id"] is None:
             state = "pending" if due_at >= now else "overdue"
+        elif item["submission_status"] == "returned":
+            state = "returned"
         elif item["released_at"]:
             state = "released"
         elif item["grading_status"] in {"queued", "running"}:
@@ -2213,25 +3050,40 @@ def student_assignments(request: Request):
         else:
             state = "submitted"
         item["state"] = state
+        item["demo_view_only"] = demo_observer
         item["grading"] = grading
+        if isinstance(grading.get("teacher_review"), dict):
+            teacher_feedback = str(grading["teacher_review"].get("overall_feedback") or "").strip()
+            if teacher_feedback in {"AI 初评完成；请查看评分证据。", "AI初评完成；请查看评分证据。"}:
+                teacher_feedback = ""
+            item["feedback"] = teacher_feedback
+        if str(item.get("feedback") or "").strip() in {"AI 初评完成；请查看评分证据。", "AI初评完成；请查看评分证据。"}:
+            item["feedback"] = ""
         items.append(item)
     return {"assignments": items}
 
 
 @app.get("/submit", response_class=HTMLResponse)
-def student_submit_page(request: Request, assignment_id: int | None = None):
-    """Student-only homework page; never leave an unauthenticated visitor on empty /submit."""
+def student_submit_page(request: Request, assignment_id: int | None = None, makeup_token: str = ""):
+    """Roster-verified submission page; a teacher's shared link also supports first-time students."""
+    if assignment_id is None:
+        return RedirectResponse("/student", status_code=303)
     try:
         actor = current_user(request)
     except HTTPException as exc:
-        if exc.status_code == 401:
-            next_path = "/submit" if assignment_id is None else f"/submit?assignment_id={assignment_id}"
-            return RedirectResponse(f"/login?next={next_path}", status_code=303)
-        raise
-    if actor["role"] != "student":
+        if exc.status_code != 401:
+            raise
+        actor = None
+    if actor and actor["role"] != "student":
         return RedirectResponse("/", status_code=303)
-    if assignment_id is None:
-        return RedirectResponse("/student", status_code=303)
+    # The submission POST validates roster name + student number.  Allowing this
+    # page without a pre-existing account is intentional: first-time students can
+    # use the teacher's link instead of being trapped at login.
+    with connection() as conn:
+        assignment = conn.execute("SELECT status FROM assignments WHERE id=?", (assignment_id,)).fetchone()
+        makeup_allowed = bool(assignment and _has_valid_makeup_link(conn, assignment_id, makeup_token))
+    if not assignment or (assignment["status"] != "published" and not makeup_allowed):
+        raise HTTPException(404, "作业不存在或尚未发布")
     return FileResponse(Path(__file__).with_name("student_submit.html"), headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 
@@ -2251,15 +3103,174 @@ def login_page(request: Request):
 def student_activate_page():
     return FileResponse(Path(__file__).with_name("student_activate.html"))
 
+@app.get("/student-password-reset", response_class=HTMLResponse)
+def student_password_reset_page():
+    return FileResponse(Path(__file__).with_name("student_password_reset.html"), headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
+
 
 # 学生提交加固常量
 _ALLOWED_EXT = {".pdf", ".jpg", ".jpeg", ".png", ".doc", ".docx"}
 _MAX_UPLOAD_BYTES = 30 * 1024 * 1024  # 30MB 上限
 _STUDENT_NO_RE = re.compile(r"[A-Za-z0-9_]{1,32}")
+_PDF_CHUNK_BYTES = 2 * 1024 * 1024
+_PDF_UPLOAD_ID_RE = re.compile(r"[0-9a-f]{32}")
+
+
+class PdfUploadStartIn(BaseModel):
+    student_no: str
+    student_name: str = ""
+    filename: str
+    size: int
+    makeup_token: str = ""
+
+
+def _pdf_upload_paths(upload_id: str) -> tuple[Path, Path]:
+    if not _PDF_UPLOAD_ID_RE.fullmatch(upload_id):
+        raise HTTPException(404, "上传任务不存在")
+    folder = Path(settings.upload_dir) / "_partial_pdf_uploads"
+    return folder / f"{upload_id}.json", folder / f"{upload_id}.part"
+
+
+def _pdf_upload_state(assignment_id: int, upload_id: str) -> tuple[dict[str, Any], Path, Path]:
+    meta_path, part_path = _pdf_upload_paths(upload_id)
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise HTTPException(404, "上传任务不存在，请重新选择 PDF") from exc
+    if int(meta.get("assignment_id") or 0) != assignment_id:
+        raise HTTPException(404, "上传任务与作业不匹配")
+    return meta, meta_path, part_path
+
+
+@app.post("/api/assignments/{assignment_id}/pdf-upload", status_code=201)
+def start_pdf_upload(assignment_id: int, payload: PdfUploadStartIn, request: Request):
+    """Start a bounded, roster-checked upload that survives an iPad connection drop."""
+    student_no = payload.student_no.strip()
+    student_name = payload.student_name.strip()
+    filename = Path(payload.filename).name
+    if not _STUDENT_NO_RE.fullmatch(student_no):
+        raise HTTPException(422, "学号格式不合法")
+    if not filename.lower().endswith(".pdf"):
+        raise HTTPException(415, "请选择 PDF 文件")
+    if payload.size <= 0 or payload.size > _MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "PDF 必须小于 30MB")
+    try:
+        actor = current_user(request)
+    except HTTPException as exc:
+        if exc.status_code != 401:
+            raise
+        actor = None
+    with connection() as conn:
+        makeup_allowed = _has_valid_makeup_link(conn, assignment_id, payload.makeup_token)
+        assignment = _require_assignment(conn, assignment_id, actor, payload.makeup_token)
+        if assignment["status"] != "published" and not makeup_allowed:
+            raise HTTPException(409, "作业尚未发布")
+        enrolled = conn.execute(
+            "SELECT id,name,user_id FROM students WHERE class_id=? AND student_no=?",
+            (assignment["class_id"], student_no),
+        ).fetchone()
+        if not enrolled or (student_name and student_name != enrolled["name"]):
+            raise HTTPException(403, "姓名或学号与本次作业名单不符")
+        if actor and actor["role"] == "student" and enrolled["user_id"] not in (None, actor["id"]):
+            raise HTTPException(403, "当前账号与提交学号不一致")
+        targeted = conn.execute("SELECT 1 FROM assignment_recipients WHERE assignment_id=? LIMIT 1", (assignment_id,)).fetchone()
+        if targeted and not makeup_allowed and not conn.execute(
+            "SELECT 1 FROM assignment_recipients WHERE assignment_id=? AND student_id=?",
+            (assignment_id, enrolled["id"]),
+        ).fetchone():
+            raise HTTPException(403, "这份作业未分配给当前学生")
+    upload_id = uuid.uuid4().hex
+    meta_path, part_path = _pdf_upload_paths(upload_id)
+    meta_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    part_path.touch(exist_ok=False, mode=0o600)
+    meta = {"assignment_id": assignment_id, "student_no": student_no,
+            "student_name": student_name, "filename": filename, "size": payload.size,
+            "makeup_token": payload.makeup_token,
+            "created_at": datetime.now(timezone.utc).isoformat()}
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+    meta_path.chmod(0o600)
+    return {"upload_id": upload_id, "offset": 0, "chunk_bytes": _PDF_CHUNK_BYTES}
+
+
+@app.get("/api/assignments/{assignment_id}/pdf-upload/{upload_id}")
+def pdf_upload_status(assignment_id: int, upload_id: str):
+    meta, _, part_path = _pdf_upload_state(assignment_id, upload_id)
+    return {"offset": part_path.stat().st_size if part_path.exists() else meta["size"],
+            "size": meta["size"], "completed": bool(meta.get("result")),
+            "result": meta.get("result")}
+
+
+@app.put("/api/assignments/{assignment_id}/pdf-upload/{upload_id}")
+async def append_pdf_upload(assignment_id: int, upload_id: str, request: Request):
+    meta, _, part_path = _pdf_upload_state(assignment_id, upload_id)
+    if meta.get("result"):
+        return {"offset": meta["size"], "completed": True}
+    try:
+        offset = int(request.headers.get("X-Upload-Offset", "-1"))
+    except ValueError as exc:
+        raise HTTPException(422, "上传偏移量不合法") from exc
+    current = part_path.stat().st_size
+    if offset != current:
+        raise HTTPException(409, f"上传位置已变化，请从 {current} 字节继续")
+    chunk = await request.body()
+    if not chunk or len(chunk) > _PDF_CHUNK_BYTES or current + len(chunk) > meta["size"]:
+        raise HTTPException(413, "PDF 分块大小不合法")
+    with part_path.open("ab") as output:
+        output.write(chunk)
+    return {"offset": current + len(chunk), "size": meta["size"]}
+
+
+@app.post("/api/assignments/{assignment_id}/pdf-upload/{upload_id}/complete", status_code=201)
+async def complete_pdf_upload(assignment_id: int, upload_id: str, request: Request,
+                              background_tasks: BackgroundTasks):
+    meta, meta_path, part_path = _pdf_upload_state(assignment_id, upload_id)
+    if meta.get("result"):
+        return meta["result"]
+    if not part_path.exists() or part_path.stat().st_size != meta["size"]:
+        raise HTTPException(409, "PDF 尚未上传完整，可继续上传后再提交")
+    with part_path.open("rb") as source:
+        if source.read(5) != b"%PDF-":
+            raise HTTPException(422, "文件不是有效的 PDF，请重新选择")
+        source.seek(0)
+        uploaded = UploadFile(filename=meta["filename"], file=source)
+        result = await submit_homework(
+            assignment_id, background_tasks, request,
+            student_no=meta["student_no"], student_name=meta["student_name"],
+            file=uploaded, files=[], makeup_token=str(meta.get("makeup_token") or ""),
+        )
+    meta["result"] = result
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+    part_path.unlink(missing_ok=True)
+    return result
+
+def _inspect_upload_image(raw: bytes, suffix: str) -> dict[str, Any]:
+    """Conservative server-side quality gate for student work photos."""
+    try:
+        with Image.open(BytesIO(raw)) as source:
+            image = ImageOps.exif_transpose(source).convert("L")
+    except Exception as exc:
+        raise HTTPException(422, "图片无法读取，请重新选择原图") from exc
+    width, height = image.size
+    short_edge = min(width, height)
+    preview = image.copy(); preview.thumbnail((720, 720))
+    edge_mean = float(ImageStat.Stat(preview.filter(ImageFilter.FIND_EDGES)).mean[0])
+    ink = preview.point(lambda pixel: 255 if pixel < 235 else 0)
+    bbox = ink.getbbox()
+    coverage = 0.0 if bbox is None else ((bbox[2]-bbox[0]) * (bbox[3]-bbox[1]) / max(1, preview.width * preview.height))
+    warnings: list[str] = []; blocking: list[str] = []
+    if short_edge < 520: blocking.append("图片分辨率过低")
+    if edge_mean < 2.0: blocking.append("图片过于模糊或几乎为空白")
+    if coverage < 0.008: blocking.append("未检测到足够的书写内容")
+    if short_edge < 900: warnings.append("图片较小，放大后公式可能不清楚")
+    if width > height * 1.8: warnings.append("图片横向较宽，请确认题号和全部作答均在画面内")
+    if coverage < 0.04: warnings.append("书写区域较少，请确认没有漏拍页面或题号")
+    return {"format": suffix.lstrip("."), "width": width, "height": height, "short_edge": short_edge,
+            "sharpness": round(edge_mean, 2), "content_coverage": round(coverage, 4),
+            "warnings": warnings, "blocking": blocking, "acceptable": not blocking}
 
 
 @app.post("/api/assignments/{assignment_id}/submissions", status_code=201)
-async def submit_homework(assignment_id: int, background_tasks: BackgroundTasks, request: Request, student_no: str = Form(...), student_name: str = Form(""), file: UploadFile | None = File(None), files: list[UploadFile] = File(default=[])):
+async def submit_homework(assignment_id: int, background_tasks: BackgroundTasks, request: Request, student_no: str = Form(...), student_name: str = Form(""), file: UploadFile | None = File(None), files: list[UploadFile] = File(default=[]), makeup_token: str = Form("")):
     # A shared assignment URL accepts a roster-verified student submission without a login.
     # Signed-in students remain bound to their own roster identity below.
     try:
@@ -2296,8 +3307,9 @@ async def submit_homework(assignment_id: int, background_tasks: BackgroundTasks,
 
     # 3) 防重复提交：同一作业+学号若已有正在批改（queued/running）的任务则拒绝
     with connection() as conn:
-        assignment = _require_assignment(conn, assignment_id, actor)
-        if assignment["status"] != "published":
+        makeup_allowed = _has_valid_makeup_link(conn, assignment_id, makeup_token)
+        assignment = _require_assignment(conn, assignment_id, actor, makeup_token)
+        if assignment["status"] != "published" and not makeup_allowed:
             raise HTTPException(409, "该作业仍是教师草案，发布后学生才能提交")
         if assignment["class_id"] is None:
             raise HTTPException(409, "这是历史演示作业，不能再接收提交；请从已建班级重新发布作业")
@@ -2308,8 +3320,20 @@ async def submit_homework(assignment_id: int, background_tasks: BackgroundTasks,
             raise HTTPException(403, "该学号不在本班名单中，请联系教师核对班级名单")
         if student_name and student_name != enrolled["name"]:
             raise HTTPException(403, "姓名与该班导入名单不一致，请联系教师核对")
-        if actor and actor["role"] == "student" and enrolled["user_id"] != actor["id"]:
-            raise HTTPException(403, "当前学生账号与提交学号不一致")
+        if actor and actor["role"] == "student":
+            # A roster can be imported before a student activates an account.
+            # Bind only the previously-unbound record after both name and number
+            # have already matched; never replace another student's binding.
+            if enrolled["user_id"] is None:
+                other = conn.execute("SELECT student_no,name FROM students WHERE user_id=? LIMIT 1", (actor["id"],)).fetchone()
+                if other and other["student_no"] != student_no:
+                    raise HTTPException(403, "当前账号已绑定其他学生信息，请退出后使用正确账号，或联系教师处理名单")
+                conn.execute("UPDATE students SET user_id=? WHERE class_id=? AND student_no=? AND user_id IS NULL", (actor["id"], assignment["class_id"], student_no))
+            elif enrolled["user_id"] != actor["id"]:
+                raise HTTPException(403, "当前学生账号与提交学号不一致，请退出后使用正确账号或联系教师")
+        targeted = conn.execute("SELECT 1 FROM assignment_recipients WHERE assignment_id=? LIMIT 1", (assignment_id,)).fetchone()
+        if targeted and not makeup_allowed and not conn.execute("SELECT 1 FROM assignment_recipients ar JOIN students rs ON rs.id=ar.student_id WHERE ar.assignment_id=? AND rs.student_no=?", (assignment_id, student_no)).fetchone():
+            raise HTTPException(403, "这份作业未分配给当前学生，请联系教师确认接收名单")
         if not student_name:
             student_name = enrolled["name"]
         if conn.execute(
@@ -2342,6 +3366,10 @@ async def submit_homework(assignment_id: int, background_tasks: BackgroundTasks,
                 if not raw:
                     raise HTTPException(422, "存在空文件，请重新选择")
                 raw_pages.append((raw, suffix))
+            upload_quality = [_inspect_upload_image(raw, suffix) for raw, suffix in raw_pages if suffix in {".jpg", ".jpeg", ".png"}]
+            blocking_quality = [issue for report in upload_quality for issue in report["blocking"]]
+            if blocking_quality:
+                raise HTTPException(422, "作业图片质量不足：" + "；".join(dict.fromkeys(blocking_quality)) + "。请重拍后提交。")
             if len(raw_pages) == 1:
                 filename = upload_meta[0][1]
                 path = folder / f"{timestamp}_{Path(filename).name}"
@@ -2368,9 +3396,16 @@ async def submit_homework(assignment_id: int, background_tasks: BackgroundTasks,
         abs_path = path.resolve()
         completion_points = float(assignment["completion_points"] or 0) if "completion_points" in assignment.keys() else 0.0
         policy = str(assignment["score_policy"] or "legacy") if "score_policy" in assignment.keys() else "legacy"
+        prior_return = conn.execute(
+            """SELECT id FROM submissions WHERE assignment_id=? AND student_no=? AND status='returned'
+               ORDER BY id DESC LIMIT 1""", (assignment_id, student_no),
+        ).fetchone()
         cur = conn.execute(
-            "INSERT INTO submissions(assignment_id,student_no,student_name,file_path,status,completion_score,score_policy_version) VALUES(?,?,?,?,?,?,?)",
-            (assignment_id, student_no, student_name, str(abs_path), "submitted", completion_points, policy),
+            """INSERT INTO submissions(assignment_id,student_no,student_name,file_path,status,
+                                        completion_score,score_policy_version,resubmission_of)
+               VALUES(?,?,?,?,?,?,?,?)""",
+            (assignment_id, student_no, student_name, str(abs_path), "submitted", completion_points,
+             policy, prior_return["id"] if prior_return else None),
         )
         submission_id = cur.lastrowid
         job_id = conn.execute("INSERT INTO grading_jobs(submission_id) VALUES(?)", (submission_id,)).lastrowid
@@ -2384,7 +3419,7 @@ async def submit_homework(assignment_id: int, background_tasks: BackgroundTasks,
           assignment["teacher_user_id"], {"assignment_id": assignment_id})
     return {"id": submission_id, "grading_job_id": job_id, "page_count": page_count,
             "completion_score": completion_points, "score_policy": policy,
-            "queue": queue_info,
+            "queue": queue_info, "upload_quality": upload_quality,
             "message": "提交成功，系统已按页归档并进入批改队列。"}
 
 
@@ -2443,7 +3478,9 @@ def list_reviews(
                FROM submissions s JOIN assignments a ON a.id=s.assignment_id
                JOIN classes c ON c.id=a.class_id
                LEFT JOIN grading_jobs j ON j.submission_id=s.id
-               WHERE a.class_id IS NOT NULL AND (s.needs_review=1 OR j.status IN ('queued','running','failed'))
+               WHERE a.class_id IS NOT NULL AND COALESCE(a.is_demo,0)=0
+                 AND NOT EXISTS(SELECT 1 FROM grading_experiences ge WHERE ge.submission_id=s.id)
+                 AND (s.needs_review=1 OR j.status IN ('queued','running','failed'))
             """
         )
         args: list[object] = []
@@ -2708,18 +3745,34 @@ async def retry_grading(submission_id: int, background_tasks: BackgroundTasks, r
         scope = teacher_id_for_scope(actor)
         if scope is not None and submission["teacher_user_id"] != scope:
             raise HTTPException(404, "提交不存在")
-        job = conn.execute("SELECT id,status FROM grading_jobs WHERE submission_id=?", (submission_id,)).fetchone()
+        job = conn.execute(
+            "SELECT id,status,created_at,started_at FROM grading_jobs WHERE submission_id=?", (submission_id,)
+        ).fetchone()
         if not job:
             raise HTTPException(409, "该提交没有可重试的初评任务")
         if job["status"] in {"queued", "running"}:
-            raise HTTPException(409, "该提交正在进行 AI 初评，请稍候")
-        conn.execute("UPDATE grading_jobs SET status='queued', result_json=NULL WHERE id=?", (job["id"],))
+            timestamp = job["started_at"] or job["created_at"]
+            stale = False
+            try:
+                stale = datetime.now(timezone.utc) - datetime.fromisoformat(timestamp).astimezone(timezone.utc) > timedelta(minutes=30)
+            except (TypeError, ValueError):
+                stale = job["status"] == "running"
+            if not (job["status"] == "running" and stale):
+                raise HTTPException(409, "该提交正在进行 AI 初评，请稍候")
+            # A worker can be restarted after reserving a job.  Do not leave a
+            # teacher permanently blocked by that orphaned 'running' state.
+            conn.execute(
+                "UPDATE grading_jobs SET status='failed',last_error=? WHERE id=?",
+                ("已恢复超时的初评任务，现由教师重新发起。", job["id"]),
+            )
+        # Keep the last candidate evidence while the replacement run is queued.
+        # The grading pipeline can reuse its non-final AI crop proposals; a
+        # successful run still atomically replaces this JSON with new evidence.
+        conn.execute("UPDATE grading_jobs SET status='queued',rq_job_id=NULL,last_error=NULL WHERE id=?", (job["id"],))
         conn.execute(
             "UPDATE submissions SET status='submitted', score=NULL, feedback='正在重新调用 AI 初评。', needs_review=1, handwriting_score=NULL WHERE id=?",
             (submission_id,),
         )
-    with connection() as conn:
-        conn.execute("UPDATE grading_jobs SET rq_job_id=NULL,last_error=NULL WHERE id=?", (job["id"],))
     try:
         queue_info = dispatch_grading_job(job["id"], background_tasks)
     except QueueUnavailable as exc:
@@ -2816,11 +3869,11 @@ def submission_question_regions(submission_id: int, request: Request):
     _teacher_submission_row(submission_id, actor)
     with connection() as conn:
         rows = conn.execute(
-            """SELECT question_id,subpart_no,sort_order,page_no,x,y,width,height,confirmed_at
+            """SELECT question_id,subpart_no,sort_order,page_no,x,y,width,height,confirmed_at,regions_json
                FROM submission_question_regions WHERE submission_id=? ORDER BY sort_order,subpart_no""",
             (submission_id,),
         ).fetchall()
-    return {"submission_id": submission_id, "mappings": [dict(row) for row in rows]}
+    return {"submission_id": submission_id, "mappings": [public_mapping(row) for row in rows]}
 
 
 @app.post("/api/submissions/{submission_id}/question-regions")
@@ -2831,27 +3884,73 @@ def save_submission_question_regions(submission_id: int, payload: SubmissionRegi
     pages = _submission_page_paths(row["file_path"])
     result = json.loads(row["result_json"] or "{}")
     result_items = result.get("results") or []
-    known = {(int(item.get("question_id") or 0), str(item.get("subpart_no") or ""), int(item.get("sort_order") or 0)) for item in result_items}
+    known = {
+        (int(item.get("question_id") or 0), str(item.get("subpart_no") or ""), int(item.get("sort_order") or 0))
+        for item in result_items
+    }
+    # A regrade can replace question database IDs while retaining the same
+    # assignment order/subpart. Resolve that safe, unambiguous case instead of
+    # rejecting every region selected in an already-open teacher page.
+    known_by_slot: dict[tuple[str, int], list[tuple[int, str, int]]] = {}
+    for key in known:
+        known_by_slot.setdefault((key[1], key[2]), []).append(key)
     seen = set()
-    mappings = []
+    mappings: list[dict] = []
+    skipped: list[str] = []
     for item in payload.mappings:
-        key = (item.question_id, item.subpart_no or "", item.sort_order)
+        raw_key = (item.question_id, item.subpart_no or "", item.sort_order)
+        key = raw_key
+        if key not in known:
+            candidates = known_by_slot.get((raw_key[1], raw_key[2]), [])
+            if len(candidates) == 1:
+                key = candidates[0]
+            else:
+                skipped.append(f"第 {raw_key[2]} 题{raw_key[1] or ''}")
+                continue
         if key in seen:
             raise HTTPException(422, "同一题目/小问重复提交映射")
         seen.add(key)
-        if key not in known:
-            raise HTTPException(422, "映射包含当前作业不存在的题目或小问")
         if item.page_no > len(pages) or item.x + item.width > 1.000001 or item.y + item.height > 1.000001:
             raise HTTPException(422, "页码或裁切区域超出作业页面范围")
-        mappings.append(item.model_dump())
+        mapping = item.model_dump()
+        try:
+            mapping['regions'] = validate_regions(expand_regions(mapping), len(pages))
+        except (ValueError, KeyError, TypeError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+        mapping.update(mapping['regions'][0])
+        mapping["question_id"], mapping["subpart_no"], mapping["sort_order"] = key
+        mappings.append(mapping)
+    rectangles = [{**mapping, **region} for mapping in mappings for region in mapping['regions']]
+    for index, first in enumerate(rectangles):
+        for second in rectangles[index + 1:]:
+            if first["page_no"] != second["page_no"] or first["question_id"] == second["question_id"]:
+                continue
+            overlap_w = max(0.0, min(first["x"] + first["width"], second["x"] + second["width"]) - max(first["x"], second["x"]))
+            overlap_h = max(0.0, min(first["y"] + first["height"], second["y"] + second["height"]) - max(first["y"], second["y"]))
+            overlap_area = overlap_w * overlap_h
+            first_area = first["width"] * first["height"]
+            second_area = second["width"] * second["height"]
+            smaller_area = min(first_area, second_area)
+            larger_area = max(first_area, second_area)
+            # Adjacent handwritten answers often share a few ruled lines or a
+            # heading margin.  That is useful review context, not a reason to
+            # reject the whole batch.  Only block near-duplicate rectangles
+            # which would make two questions effectively the same crop.
+            smaller_covered = overlap_area / smaller_area if smaller_area else 0.0
+            larger_covered = overlap_area / larger_area if larger_area else 0.0
+            if smaller_covered > .85 and larger_covered > .60:
+                raise HTTPException(422, f"第 {first['sort_order']} 与第 {second['sort_order']} 题的框选区域几乎完全重复；请保留其中一个题区或调整后再保存")
+    if not mappings:
+        detail = "；".join(skipped[:4]) or "当前页面数据已过期"
+        raise HTTPException(422, f"没有可保存的有效映射（{detail}）。请刷新本页后重新框选。")
     with connection() as conn:
         conn.execute("DELETE FROM submission_question_regions WHERE submission_id=?", (submission_id,))
         now = datetime.now(timezone.utc).isoformat()
         conn.executemany(
-            """INSERT INTO submission_question_regions(submission_id,question_id,subpart_no,sort_order,page_no,x,y,width,height,confirmed_by,confirmed_at)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            """INSERT INTO submission_question_regions(submission_id,question_id,subpart_no,sort_order,page_no,x,y,width,height,confirmed_by,confirmed_at,regions_json)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
             [(submission_id, item["question_id"], item["subpart_no"] or "", item["sort_order"], item["page_no"],
-              item["x"], item["y"], item["width"], item["height"], actor["id"], now) for item in mappings],
+              item["x"], item["y"], item["width"], item["height"], actor["id"], now, json.dumps(item['regions'])) for item in mappings],
         )
         by_key = {(item["question_id"], item["subpart_no"] or "", item["sort_order"]): item for item in mappings}
         for item in result_items:
@@ -2861,9 +3960,10 @@ def save_submission_question_regions(submission_id: int, payload: SubmissionRegi
         result["teacher_page_mapping_confirmed_at"] = now
         conn.execute("UPDATE grading_jobs SET result_json=? WHERE submission_id=?", (json.dumps(result, ensure_ascii=False), submission_id))
     audit(actor, "submission.question_regions", "submission", submission_id, row["teacher_user_id"],
-          {"mapping_count": len(mappings)})
-    return {"ok": True, "mapping_count": len(mappings), "message": "题号/小问与页图区域的教师确认已保存。后续重跑初评仍会保留这些映射。"}
-
+          {"mapping_count": len(mappings), "skipped_count": len(skipped)})
+    suffix = (f"；已跳过 {len(skipped)} 项过期映射，请刷新后再处理" if skipped else "")
+    return {"ok": True, "mapping_count": len(mappings), "skipped_count": len(skipped),
+            "message": "题号/小问与页图区域的教师确认已保存。后续重跑初评仍会保留这些映射。" + suffix}
 
 @app.post("/api/submissions/{submission_id}/review")
 def confirm_review(submission_id: int, decision: ReviewDecisionIn, request: Request):
@@ -3003,53 +4103,98 @@ REVIEW_QUOTA_PER_CLASS = 2  # 设计文档要求：每班不少于 2 次人工�
 
 @app.get("/api/reports/grading-deviations")
 def grading_deviations(request: Request):
-    """Compare AI candidate scores with structured teacher decisions."""
+    """Surface calibration evidence from teacher score and feedback corrections.
+
+    This is deliberately a reporting loop, not automated model training: a
+    teacher's ruling remains authoritative while the system highlights where
+    question templates, OCR/cropping, or prompts need improvement.
+    """
     actor = require_roles(request, {"admin", "teacher"})
     scope = teacher_id_for_scope(actor)
     with connection() as conn:
-        sql = """SELECT ge.submission_id,ge.evidence_json,ge.decision_json,a.title
+        sql = """SELECT ge.submission_id,ge.evidence_json,ge.decision_json,ge.teacher_feedback,a.title
                  FROM grading_experiences ge JOIN submissions s ON s.id=ge.submission_id
                  JOIN assignments a ON a.id=s.assignment_id JOIN classes c ON c.id=a.class_id"""
         params: list[object] = []
         if scope is not None:
             sql += " WHERE c.teacher_user_id=?"; params.append(scope)
         rows = conn.execute(sql, params).fetchall()
-        types = {row["id"]: row["question_type"] for row in conn.execute("SELECT id,question_type FROM questions")}
-    changes = []
+        question_meta = {
+            row["id"]: {"question_type": row["question_type"] or "未分类", "chapter": row["chapter"] or "未标注章节"}
+            for row in conn.execute("SELECT id,question_type,chapter FROM questions")
+        }
+    changes: list[dict[str, Any]] = []
     for row in rows:
-        decision = json.loads(row["decision_json"] or "{}")
+        try:
+            decision = json.loads(row["decision_json"] or "{}")
+        except (TypeError, ValueError):
+            decision = {}
+        try:
+            evidence = json.loads(row["evidence_json"] or "{}")
+        except (TypeError, ValueError):
+            evidence = {}
+        evidence_by_key: dict[tuple[object, str, object], dict[str, Any]] = {}
+        for evidence_item in evidence.get("results") or []:
+            if not isinstance(evidence_item, dict):
+                continue
+            key = (evidence_item.get("question_id"), str(evidence_item.get("subpart_no") or ""), evidence_item.get("sort_order"))
+            evidence_by_key[key] = evidence_item
+        has_overall_feedback = bool(str(row["teacher_feedback"] or "").strip())
         for item in decision.get("question_decisions") or []:
+            if not isinstance(item, dict):
+                continue
             candidate = float(item.get("candidate_score") or 0)
             confirmed = float(item.get("confirmed_score") or 0)
-            delta = round(confirmed - candidate, 2)
+            question_id = item.get("question_id")
+            evidence_item = evidence_by_key.get((question_id, str(item.get("subpart_no") or ""), item.get("sort_order")), {})
+            mode = str((evidence_item.get("qwen_input") or {}).get("mode") or "unknown")
+            meta = question_meta.get(question_id, {"question_type": "未分类", "chapter": "未标注章节"})
             changes.append({
                 "submission_id": row["submission_id"], "title": row["title"], "sort_order": item.get("sort_order"),
-                "question_id": item.get("question_id"), "question_type": types.get(item.get("question_id"), "未分类"),
-                "candidate_score": candidate, "confirmed_score": confirmed, "delta": delta,
+                "question_id": question_id, "question_type": meta["question_type"], "chapter": meta["chapter"],
+                "recognition_context": mode, "candidate_score": candidate, "confirmed_score": confirmed,
+                "delta": round(confirmed - candidate, 2),
+                "feedback_recorded": has_overall_feedback or bool(str(item.get("feedback") or "").strip()),
             })
     changed = [item for item in changes if abs(item["delta"]) > 1e-9]
-    by_type = {}
-    for kind in sorted({item["question_type"] for item in changes}):
-        rows_for_type = [item for item in changes if item["question_type"] == kind]
-        by_type[kind] = {
-            "item_count": len(rows_for_type),
-            "changed_count": sum(1 for item in rows_for_type if abs(item["delta"]) > 1e-9),
-            "change_rate": round(sum(1 for item in rows_for_type if abs(item["delta"]) > 1e-9) / len(rows_for_type) * 100, 1) if rows_for_type else 0.0,
-            "average_delta": round(sum(item["delta"] for item in rows_for_type) / len(rows_for_type), 2) if rows_for_type else 0.0,
-        }
+    def aggregate(field: str) -> dict[str, dict[str, Any]]:
+        output: dict[str, dict[str, Any]] = {}
+        for key in sorted({str(item.get(field) or "未标注") for item in changes}):
+            bucket = [item for item in changes if str(item.get(field) or "未标注") == key]
+            changed_bucket = [item for item in bucket if abs(item["delta"]) > 1e-9]
+            output[key] = {
+                "item_count": len(bucket), "changed_count": len(changed_bucket),
+                "feedback_count": sum(1 for item in bucket if item["feedback_recorded"]),
+                "change_rate": round(len(changed_bucket) / len(bucket) * 100, 1) if bucket else 0.0,
+                "average_delta": round(sum(item["delta"] for item in bucket) / len(bucket), 2) if bucket else 0.0,
+                "average_absolute_delta": round(sum(abs(item["delta"]) for item in bucket) / len(bucket), 2) if bucket else 0.0,
+            }
+        return output
+    by_type = aggregate("question_type")
+    by_chapter = aggregate("chapter")
+    by_context = aggregate("recognition_context")
+    priorities = []
+    for dimension, groups in (("题型", by_type), ("章节", by_chapter), ("识别场景", by_context)):
+        for name, value in groups.items():
+            if value["changed_count"]:
+                priorities.append({"dimension": dimension, "name": name, **value})
+    priorities.sort(key=lambda item: (item["change_rate"], item["average_absolute_delta"], item["changed_count"]), reverse=True)
     return {
         "reviewed_submission_count": len(rows), "reviewed_item_count": len(changes),
         "changed_item_count": len(changed),
         "change_rate": round(len(changed) / len(changes) * 100, 1) if changes else 0.0,
         "average_absolute_delta": round(sum(abs(item["delta"]) for item in changes) / len(changes), 2) if changes else 0.0,
-        "by_question_type": by_type,
+        "by_question_type": by_type, "by_chapter": by_chapter, "by_recognition_context": by_context,
+        "calibration_priorities": priorities[:10],
         "largest_changes": sorted(changed, key=lambda item: abs(item["delta"]), reverse=True)[:10],
     }
+
+REVIEW_QUOTA_PER_CLASS = 2  # 每班每学期至少 2 次教师复核
 
 
 @app.get("/api/reports/review-quota")
 def review_quota(request: Request):
-    """人工复核配额：每个班级（按学期）已完成的教师复核次数；少于配额则提示。"""
+    """Report whether each non-demo class has enough completed teacher reviews."""
     actor = require_roles(request, {"admin", "teacher"})
     scope = teacher_id_for_scope(actor)
     with connection() as conn:
@@ -3059,23 +4204,19 @@ def review_quota(request: Request):
                JOIN submissions s ON s.id=ge.submission_id
                JOIN assignments a ON a.id=ge.assignment_id
                JOIN classes c ON c.id=a.class_id
-               WHERE COALESCE(a.is_demo,0)=0
-            """
+               WHERE COALESCE(a.is_demo,0)=0"""
         )
         args: list[object] = []
-        if scope is not None: sql += " AND c.teacher_user_id=?"; args.append(scope)
+        if scope is not None:
+            sql += " AND c.teacher_user_id=?"; args.append(scope)
         rows = conn.execute(sql + " GROUP BY a.class_name, a.semester", args).fetchall()
-    items = []
-    for r in rows:
-        reviewed = r["reviewed"]
-        items.append({
-            "class_name": r["class_name"], "semester": r["semester"],
-            "teacher_reviews": reviewed, "quota": REVIEW_QUOTA_PER_CLASS,
-            "meets_quota": reviewed >= REVIEW_QUOTA_PER_CLASS,
-        })
+    items = [{
+        "class_name": row["class_name"], "semester": row["semester"],
+        "teacher_reviews": row["reviewed"], "quota": REVIEW_QUOTA_PER_CLASS,
+        "meets_quota": row["reviewed"] >= REVIEW_QUOTA_PER_CLASS,
+    } for row in rows]
     return {"quota_per_class": REVIEW_QUOTA_PER_CLASS, "classes": items,
-            "classes_below_quota": [i for i in items if not i["meets_quota"]]}
-
+            "classes_below_quota": [item for item in items if not item["meets_quota"]]}
 
 @app.get("/api/reviews/batch-release-candidates")
 def batch_release_candidates(request: Request):
@@ -3089,6 +4230,8 @@ def batch_release_candidates(request: Request):
               WHERE s.status='graded' AND s.released_at IS NULL"""
         args=[]
         if scope is not None: sql+=" AND c.teacher_user_id=?";args.append(scope)
+
+
         rows=conn.execute(sql+" ORDER BY a.id DESC,s.id DESC",args).fetchall()
     return {"items":[dict(x) for x in rows]}
 
@@ -3157,73 +4300,223 @@ def student_submission_file(submission_id: int, request: Request):
 def student_released_submissions(request: Request):
     actor = require_roles(request, {"student"})
     with connection() as conn:
-        rows = conn.execute("SELECT s.id,s.assignment_id,s.score,s.completion_score,s.quality_score,s.quality_max_score,s.feedback,s.released_at,a.title,a.due_at,a.total_score,j.result_json FROM submissions s JOIN assignments a ON a.id=s.assignment_id JOIN students st ON st.class_id=a.class_id AND st.user_id=? LEFT JOIN grading_jobs j ON j.submission_id=s.id WHERE s.status IN ('graded','review_required') AND s.released_at IS NOT NULL ORDER BY s.released_at DESC", (actor["id"],)).fetchall()
-    return [{"id": r["id"], "assignment_id": r["assignment_id"], "title": r["title"], "score": r["score"], "completion_score": r["completion_score"], "quality_score": r["quality_score"], "quality_max_score": r["quality_max_score"], "max_score": r["total_score"], "feedback": r["feedback"], "released_at": r["released_at"], "grading": json.loads(r["result_json"] or "{}")} for r in rows]
+        rows = conn.execute("""SELECT s.id,s.assignment_id,s.student_no,s.score,s.completion_score,s.quality_score,
+                          s.quality_max_score,s.feedback,s.released_at,a.title,a.due_at,a.total_score,j.result_json
+                   FROM submissions s JOIN assignments a ON a.id=s.assignment_id
+                   JOIN students st ON st.class_id=a.class_id AND st.user_id=?
+                   LEFT JOIN grading_jobs j ON j.submission_id=s.id
+                   WHERE s.student_no=st.student_no AND s.status IN ('graded','review_required')
+                     AND s.released_at IS NOT NULL
+                     AND s.id=(SELECT MAX(s2.id) FROM submissions s2
+                               WHERE s2.assignment_id=s.assignment_id AND s2.student_no=s.student_no
+                                 AND s2.status IN ('graded','review_required') AND s2.released_at IS NOT NULL)
+                   ORDER BY s.released_at DESC""", (actor["id"],)).fetchall()
+    released = []
+    for r in rows:
+        grading = json.loads(r["result_json"] or "{}")
+        teacher_review = grading.get("teacher_review") or {}
+        feedback = str(teacher_review.get("overall_feedback") or r["feedback"] or "").strip()
+        if feedback in {"AI 初评完成；请查看评分证据。", "AI初评完成；请查看评分证据。"}:
+            feedback = ""
+        released.append({"id": r["id"], "assignment_id": r["assignment_id"], "title": r["title"],
+                         "score": r["score"], "completion_score": r["completion_score"],
+                         "quality_score": r["quality_score"], "quality_max_score": r["quality_max_score"],
+                         "max_score": r["total_score"], "feedback": feedback,
+                         "released_at": r["released_at"], "grading": grading})
+    return released
 
 
 
 def _feedback_asserts_correct(feedback: str) -> bool:
     """A positive marking comment must never be presented to a student as a mistake."""
     return bool(re.search(
-        r"(?:答案|解答|作答).{0,12}(?:正确|符合标准答案)|完全符合标准答案|已经正确地|结果正确",
+        r"(?:答案|解答|作答).{0,12}(?:正确|符合标准答案)|完全符合标准答案|已经正确地|结果正确|"
+        r"正确地(?:指出|说明|判断|回答)|正确指出|结论正确|判断正确|解答正确",
         str(feedback or ""),
     ))
 
 
 @app.get("/api/student/released-submissions/{submission_id}/mistakes")
 def student_released_mistakes(submission_id: int, request: Request):
+    """Return per-question feedback only for the student's formally released submission."""
     actor = require_roles(request, {"student"})
     with connection() as conn:
         row = conn.execute(
-            "SELECT s.assignment_id,j.result_json FROM submissions s JOIN assignments a ON a.id=s.assignment_id JOIN students st ON st.class_id=a.class_id AND st.user_id=? LEFT JOIN grading_jobs j ON j.submission_id=s.id WHERE s.id=? AND s.status IN ('graded','review_required') AND s.released_at IS NOT NULL",
-            (actor["id"], submission_id),
+            """SELECT s.assignment_id,j.result_json,c.teacher_user_id FROM submissions s
+               JOIN assignments a ON a.id=s.assignment_id
+               JOIN classes c ON c.id=a.class_id
+               JOIN students st ON st.class_id=a.class_id AND st.user_id=?
+               LEFT JOIN grading_jobs j ON j.submission_id=s.id
+               WHERE s.id=? AND s.student_no=st.student_no
+                 AND s.status IN ('graded','review_required') AND s.released_at IS NOT NULL""", (actor["id"], submission_id),
         ).fetchone()
         if not row:
             raise HTTPException(404, "未找到已发布的作业结果")
-        results = json.loads(row["result_json"] or "{}").get("results") or []
-        ids = sorted({int(item["question_id"]) for item in results if item.get("question_id") is not None})
-        qrows = conn.execute("SELECT id,source_problem_id,content FROM questions WHERE id IN (" + ",".join("?" for _ in ids) + ")", ids).fetchall() if ids else []
-        part_rows = conn.execute(
-            "SELECT question_id,subpart_no,content FROM assignment_question_parts WHERE assignment_id=?",
-            (row["assignment_id"],),
-        ).fetchall()
-    questions = {item["id"]: dict(item) for item in qrows}
-    parts = {(item["question_id"], str(item["subpart_no"] or "")): dict(item) for item in part_rows}
-    mistakes: list[dict[str, Any]] = []
-    pending_confirmation: list[dict[str, Any]] = []
-    for item in results:
-        if item.get("correct") is True and float(item.get("score") or 0) >= float(item.get("max_score") or 0):
-            continue
-        question_id = int(item.get("question_id") or 0)
-        subpart_no = str(item.get("subpart_no") or "")
-        question = questions.get(question_id, {})
-        part = parts.get((question_id, subpart_no), {})
-        evidence = item.get("evidence") or {}
-        qwen = item.get("qwen") or {}
-        source_problem_id = question.get("source_problem_id") or evidence.get("source_problem_id")
-        content = part.get("content") or question.get("content") or qwen.get("located_problem_text") or item.get("problem_no") or ""
-        has_snapshot = bool(evidence.get("standard_answer") or evidence.get("rubric") or item.get("feedback"))
+        grading = json.loads(row["result_json"] or "{}")
+        results = grading.get("results") or []
+        decisions = (grading.get("teacher_review") or {}).get("question_decisions") or []
+        ids = sorted({int(x["question_id"]) for x in results if x.get("question_id") is not None})
+        qs = conn.execute("SELECT id,source_problem_id,content,chapter,knowledge_points FROM questions WHERE id IN (" + ",".join("?" for _ in ids) + ")", ids).fetchall() if ids else []
+        ps = conn.execute("SELECT question_id,subpart_no,content FROM assignment_question_parts WHERE assignment_id=?", (row["assignment_id"],)).fetchall()
+        textbook_rows = []
+        if row["teacher_user_id"] is not None:
+            textbook_rows = conn.execute(
+                """SELECT d.id AS document_id,d.title AS document_title,
+                          sec.id AS section_id,sec.section_no,sec.title AS section_title,
+                          sec.page_start,sec.page_end,kp.name AS knowledge_point
+                   FROM textbook_documents d
+                   JOIN textbook_sections sec ON sec.document_id=d.id AND sec.status='approved'
+                   LEFT JOIN textbook_section_knowledge_points kp
+                     ON kp.section_id=sec.id AND kp.status='approved'
+                   WHERE d.owner_teacher_id=?
+                   ORDER BY d.id DESC,sec.page_start,sec.id,kp.id""",
+                (row["teacher_user_id"],),
+            ).fetchall()
+    textbook_sections = {}
+    for x in textbook_rows:
+        key = (x["document_id"], x["section_id"])
+        sec = textbook_sections.setdefault(key, {
+            "document_id": x["document_id"], "document_title": x["document_title"],
+            "section_id": x["section_id"], "section_no": x["section_no"],
+            "section_title": x["section_title"], "page_start": x["page_start"],
+            "page_end": x["page_end"], "knowledge_points": [],
+        })
+        if x["knowledge_point"] and x["knowledge_point"] not in sec["knowledge_points"]:
+            sec["knowledge_points"].append(x["knowledge_point"])
+    questions = {x["id"]: dict(x) for x in qs}
+    parts = {(x["question_id"], str(x["subpart_no"] or "")): dict(x) for x in ps}
+    all_feedback, mistakes, pending = [], [], []
+    for x in results:
+        qid, sub = int(x.get("question_id") or 0), str(x.get("subpart_no") or "")
+        order = int(x.get("sort_order") or 0)
+        q, part = questions.get(qid, {}), parts.get((qid, sub), {})
+        decision = next((d for d in decisions if int(d.get("question_id") or 0)==qid and str(d.get("subpart_no") or "")==sub and int(d.get("sort_order") or 0)==order), {})
+        teacher_feedback = str(decision.get("teacher_feedback") or decision.get("feedback") or "").strip()
+        ev, qwen = x.get("evidence") or {}, x.get("qwen") or {}
+        score = decision.get("confirmed_score", decision.get("score", x.get("score")))
+        maximum = x.get("max_score")
+        try: score_n, max_n = float(score or 0), float(maximum or 0)
+        except (TypeError, ValueError): score_n, max_n = 0.0, 0.0
+        complete = max_n > 0 and score_n >= max_n - 1e-6
+        needs_review = bool(x.get("needs_review") or decision.get("needs_review"))
+        raw_feedback = str(x.get("feedback") or "").strip()
+        feedback = teacher_feedback or raw_feedback
+        conflict = _feedback_asserts_correct(raw_feedback) and not complete
+        content = part.get("content") or q.get("content") or qwen.get("located_problem_text") or x.get("problem_no") or ""
+        question_points = [p.strip() for p in re.split(r"[,，、;；\n]+", str(q.get("knowledge_points") or "")) if p.strip()]
+        chapter = str(q.get("chapter") or "").strip()
+        matched_resources, approved_points = [], []
+        norm = lambda value: re.sub(r"\s+", "", str(value or "")).casefold()
+        for sec in textbook_sections.values():
+            section_points = sec["knowledge_points"]
+            point_matches = [point for point in section_points if any(norm(point)==norm(tag) for tag in question_points)]
+            chapter_match = bool(chapter and norm(chapter) in {norm(sec["section_no"]), norm(sec["section_title"])})
+            if point_matches or chapter_match:
+                if sec["page_start"]:
+                    matched_resources.append({
+                        "title": sec["document_title"],
+                        "section": f"{sec['section_no']} {sec['section_title']}".strip(),
+                        "pages": f"{sec['page_start']}-{sec['page_end']}" if sec["page_end"] else str(sec["page_start"]),
+                        "url": f"/api/student/textbook-sections/{sec['document_id']}/{sec['section_id']}",
+                    })
+                approved_points.extend(point_matches or (section_points if chapter_match else []))
+        approved_points = list(dict.fromkeys(approved_points))[:3]
+        matched_resources = list({x["url"]: x for x in matched_resources}.values())[:3]
+        pts = approved_points or question_points or ([chapter] if chapter else [])
+        pts = pts[:3]
         payload = {
-            "question_id": question_id,
-            "subpart_no": subpart_no,
-            "problem_no": item.get("problem_no") or "",
-            "source_problem_id": source_problem_id,
-            "content": content,
-            "recognized_work": item.get("recognized_work"),
-            "feedback": item.get("feedback"),
-            "score": item.get("score"),
-            "max_score": item.get("max_score"),
-            "needs_review": item.get("needs_review"),
-            "sort_order": item.get("sort_order"),
-            "review_available": bool(source_problem_id or has_snapshot),
+            "question_id": qid, "subpart_no": sub, "problem_no": x.get("problem_no") or "",
+            "source_problem_id": q.get("source_problem_id") or ev.get("source_problem_id"),
+            "content": content, "recognized_work": x.get("recognized_work"),
+            "feedback": feedback, "teacher_feedback": teacher_feedback, "score": score,
+            "max_score": maximum, "needs_review": needs_review, "sort_order": order,
+            "review_available": bool(q.get("source_problem_id") or ev.get("standard_answer") or ev.get("rubric") or raw_feedback),
+            "learning_resources": matched_resources,
+            "is_mistake": not complete,
         }
-        # A score/boolean that conflicts with a positive marking comment is not
-        # a student mistake. Keep it visible only as a teacher-confirmation item.
-        if _feedback_asserts_correct(str(item.get("feedback") or "")):
-            pending_confirmation.append(payload)
-        else:
-            mistakes.append(payload)
-    return {"submission_id": submission_id, "mistakes": mistakes, "pending_confirmation": pending_confirmation}
+        if needs_review or conflict:
+            payload.update(feedback_status="pending_confirmation", feedback_card=None,
+                           pending_reason="此题仍待教师确认，暂不提供确定的对错结论和学习建议。")
+            pending.append(payload); all_feedback.append(payload); continue
+        rate = score_n / max_n if max_n else None
+        if rate is None: tier, key, strength = "教师已发布", "released", "本题成绩已发布。"
+        elif rate >= .90:
+            tier, key = "太棒啦", "excellent"
+            strength = "本题得分达到满分。" if complete else "本题得分率很高，已获得大部分分数。"
+        elif rate >= .70: tier, key, strength = "挺不错", "good", "本题已获得部分分数，说明已有步骤得到认可。"
+        else: tier, key, strength = "继续加油", "keep_practicing", "本题还有关键评分点需要巩固。"
+        if complete: next_step = "把本题的关键思路整理下来，之后尝试独立复述解题过程。"
+        elif pts: next_step = f"围绕“{pts[0]}”回看课堂讲义或教材例题，再按教师批注重做本题。"
+        else: next_step = "对照教师批注和本题评分要求，重做失分步骤；看不清失分原因时请向老师确认。"
+        payload["feedback_status"] = "released"
+        payload["feedback_card"] = {
+            "tier": tier, "tier_key": key, "score_rate": round(rate, 4) if rate is not None else None,
+            "strength": strength,
+            "evaluation": feedback or ("本题已获得满分。" if complete else "暂无逐题文字批注，请结合得分和评分要求复盘。"),
+            "next_step": next_step, "knowledge_points": pts,
+            "knowledge_point_source": "教师审核教材知识点" if approved_points else ("已发布题目标签/章节" if pts else None),
+        }
+        all_feedback.append(payload)
+        if not complete: mistakes.append(payload)
+    return {"submission_id": submission_id, "question_feedback": all_feedback,
+            "mistakes": mistakes, "pending_confirmation": pending}
+
+
+@app.get("/api/student/textbook-sections/{document_id}/{section_id}")
+def student_textbook_section(document_id: int, section_id: int, request: Request):
+    """Serve only the approved textbook pages assigned to this student's teacher."""
+    actor = require_roles(request, {"student"})
+    with connection() as conn:
+        row = conn.execute(
+            """SELECT d.file_path,s.page_start,s.page_end
+               FROM textbook_documents d JOIN textbook_sections s ON s.document_id=d.id
+               WHERE d.id=? AND s.id=? AND s.status='approved'
+                 AND EXISTS (
+                   SELECT 1 FROM students st JOIN classes c ON c.id=st.class_id
+                   WHERE st.user_id=? AND c.teacher_user_id=d.owner_teacher_id
+                 )""",
+            (document_id, section_id, actor["id"]),
+        ).fetchone()
+    if not row:
+        raise HTTPException(404, "教材章节不存在")
+    path = Path(row["file_path"]).resolve()
+    textbook_root = (Path(settings.upload_dir).resolve() / "textbooks").resolve()
+    if not path.is_file() or textbook_root not in path.parents:
+        raise HTTPException(404, "教材章节文件暂不可用")
+    try:
+        from pypdf import PdfReader, PdfWriter
+        reader = PdfReader(str(path))
+        start = int(row["page_start"] or 1)
+        end = int(row["page_end"] or start)
+        if start < 1 or end < start or end > len(reader.pages):
+            raise HTTPException(404, "教材章节页码暂不可用")
+        writer, output = PdfWriter(), BytesIO()
+        for index in range(start - 1, end):
+            writer.add_page(reader.pages[index])
+        writer.write(output)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(409, "教材章节暂时无法打开") from exc
+    return Response(
+        content=output.getvalue(),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="textbook-section-{section_id}.pdf"',
+                 "X-Content-Type-Options": "nosniff"},
+    )
+
+
+@app.get("/api/reports/next-lesson")
+def next_lesson_report(request: Request, class_id: int):
+    """Return a review-only next-lesson draft from released teacher decisions."""
+    actor = require_roles(request, {"admin", "teacher"})
+    scope = teacher_id_for_scope(actor)
+    with connection() as conn:
+        klass = conn.execute("SELECT teacher_user_id FROM classes WHERE id=?", (class_id,)).fetchone()
+        if not klass or (scope is not None and klass["teacher_user_id"] != scope):
+            raise HTTPException(404, "班级不存在")
+        from .next_lesson import build_next_lesson
+        return build_next_lesson(conn, class_id)
 
 
 @app.get("/api/reports/weak-points")
@@ -3279,7 +4572,8 @@ def semester_summary(request: Request, class_name: str | None = None, semester: 
     actor = require_roles(request, {"admin", "teacher"})
     scope = teacher_id_for_scope(actor)
     with connection() as conn:
-        clauses = ["s.status='graded'", "a.class_id IS NOT NULL", "COALESCE(a.is_demo,0)=0"]
+        clauses = ["s.status='graded' AND s.released_at IS NOT NULL", "a.class_id IS NOT NULL", "COALESCE(a.is_demo,0)=0"]
+        clauses.append("s.id=(SELECT MAX(s2.id) FROM submissions s2 WHERE s2.assignment_id=s.assignment_id AND s2.student_no=s.student_no AND s2.status='graded' AND s2.released_at IS NOT NULL)")
         params = []
         if class_name:
             clauses.append("a.class_name=?"); params.append(class_name)
@@ -3322,16 +4616,231 @@ def semester_summary(request: Request, class_name: str | None = None, semester: 
         st["handwriting_avg"] = round(sum(st["hw_scores"]) / len(st["hw_scores"]), 1) if st["hw_scores"] else None
         st.pop("hw_scores", None)
         st["records"].sort(key=lambda x: x["assignment_id"], reverse=True)
-    ranked = sorted(students.values(), key=lambda x: x["average"], reverse=True)
-    for i, st in enumerate(ranked, 1):
-        st["rank"] = i
+    # Standard competition ranking: tied averages share a rank; the next rank
+    # advances by the number of students before it.  Student number makes ties
+    # deterministic without affecting the rank itself.
+    ranked = sorted(students.values(), key=lambda x: (-x["average"], str(x["student_no"] or "")))
+    previous_average = None
+    current_rank = 0
+    for position, st in enumerate(ranked, 1):
+        if previous_average is None or st["average"] != previous_average:
+            current_rank = position
+            previous_average = st["average"]
+        st["rank"] = current_rank
     avg_class = round(sum(s["average"] for s in ranked) / len(ranked), 1) if ranked else 0
     dist = {"优秀": 0, "良好": 0, "及格": 0, "不及格": 0}
     for s in ranked:
         a = s["average"]
         dist["优秀" if a >= 90 else "良好" if a >= 75 else "及格" if a >= 60 else "不及格"] += 1
-    return {"student_count": len(ranked), "class_average": avg_class,
-            "distribution": dist, "students": ranked}
+    return {
+        "student_count": len(ranked),
+        "class_average": avg_class,
+        "distribution": dist,
+        "students": ranked,
+        "summary_notes": {
+            "average": "平时成绩平均分：仅统计教师已确认并正式发布的作业；每份作业先折算为百分制，同一作业只取最近一次正式发布成绩。",
+            "handwriting": "书写整洁度：AI 对清晰度、公式规整度和页面组织的辅助观察值（约 0–100），不参与分数和排名；用于发现会做但表达混乱、可能需要规范书写训练的学生。",
+            "ranking": "学期平均分按从高到低排名；相同分数并列，同分学生按学号升序稳定展示，下一名次按实际位置计算。",
+        },
+    }
+
+
+@app.get("/api/reports/semester-summary.xlsx")
+def export_semester_summary_xlsx(request: Request, class_name: str, semester: str | None = None):
+    """Export a teacher-scoped, print-ready workbook of released class grades."""
+    actor = require_roles(request, {"admin", "teacher"})
+    class_name = (class_name or "").strip()
+    semester = (semester or "").strip() or None
+    if not class_name:
+        raise HTTPException(422, "请先填写具体班级")
+    scope = teacher_id_for_scope(actor)
+    with connection() as conn:
+        class_sql = "SELECT id,name,semester FROM classes WHERE name=?"
+        class_params: list[Any] = [class_name]
+        if semester:
+            class_sql += " AND semester=?"
+            class_params.append(semester)
+        if scope is not None:
+            class_sql += " AND teacher_user_id=?"
+            class_params.append(scope)
+        class_rows = conn.execute(class_sql + " ORDER BY semester", class_params).fetchall()
+        if not class_rows:
+            raise HTTPException(404, "未找到你有权限导出的班级；请检查班级名称和学期")
+        if len(class_rows) > 1:
+            raise HTTPException(422, "该班级名称对应多个学期，请填写学期后再导出")
+        class_row = dict(class_rows[0])
+        class_id = int(class_row["id"])
+        assignments = [dict(r) for r in conn.execute(
+            """SELECT id,title,total_score FROM assignments
+               WHERE class_id=? AND COALESCE(is_demo,0)=0 AND status IN ('published','closed')
+               ORDER BY id""", (class_id,)).fetchall()]
+        students = [dict(r) for r in conn.execute(
+            "SELECT student_no,name FROM students WHERE class_id=? ORDER BY student_no", (class_id,)).fetchall()]
+        submissions: list[dict] = []
+        if assignments:
+            ids = [int(a["id"]) for a in assignments]
+            marks = ",".join("?" for _ in ids)
+            submissions = [dict(r) for r in conn.execute(
+                f"""SELECT id,assignment_id,student_no,status,score,released_at
+                    FROM submissions WHERE assignment_id IN ({marks}) ORDER BY id""", ids).fetchall()]
+    assignment_ids = {int(a["id"]) for a in assignments}
+    released: dict[tuple[str, int], dict] = {}
+    latest: dict[tuple[str, int], dict] = {}
+    for sub in submissions:
+        aid = int(sub["assignment_id"])
+        if aid not in assignment_ids:
+            continue
+        key = (str(sub["student_no"] or ""), aid)
+        if key not in latest or int(sub["id"]) > int(latest[key]["id"]):
+            latest[key] = sub
+        if sub.get("status") == "graded" and sub.get("released_at") and (
+            key not in released or int(sub["id"]) > int(released[key]["id"])
+        ):
+            released[key] = sub
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+    from openpyxl.worksheet.page import PageMargins
+
+    wb = Workbook()
+    wb.calculation.fullCalcOnLoad = True
+    wb.calculation.forceFullCalc = True
+    wb.calculation.calcMode = "auto"
+    navy = "17365D"
+    blue = "D9EAF7"
+    pale = "F3F6FA"
+    gray = "65758B"
+    border = Border(bottom=Side(style="thin", color="D8E0EA"))
+    def safe_text(value: Any) -> str:
+        text = str(value or "")
+        return "'" + text if text[:1] in ("=", "+", "-", "@") else text
+    def prep_sheet(ws, area: str, title_rows: str, freeze: str, orientation: str = "landscape"):
+        ws.sheet_view.showGridLines = False
+        ws.freeze_panes = freeze
+        ws.sheet_properties.pageSetUpPr.fitToPage = True
+        ws.page_setup.orientation = orientation
+        ws.page_setup.paperSize = ws.PAPERSIZE_A4
+        ws.page_setup.fitToWidth = 1
+        ws.page_setup.fitToHeight = 0
+        ws.page_margins = PageMargins(left=0.32, right=0.32, top=0.45, bottom=0.45, header=0.2, footer=0.2)
+        ws.print_title_rows = title_rows
+        ws.print_area = area
+        ws.sheet_properties.pageSetUpPr.autoPageBreaks = False
+        ws.oddFooter.center.text = "第 &[Page] 页 / 共 &[Pages] 页"
+        ws.oddFooter.right.text = "mathbench.cn"
+        ws.oddFooter.center.size = 8
+        ws.oddFooter.right.size = 8
+    def title_block(ws, end_col: int, title: str, note: str):
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=end_col)
+        c=ws.cell(1,1,title); c.font=Font(name="Microsoft YaHei", size=16, bold=True, color="FFFFFF")
+        c.fill=PatternFill("solid", fgColor=navy); c.alignment=Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[1].height=28
+        ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=end_col)
+        c=ws.cell(2,1,f"班级：{class_row['name']}    学期：{class_row.get('semester') or '未设置'}    导出时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        c.font=Font(name="Microsoft YaHei", size=10, color=gray); c.alignment=Alignment(vertical="center")
+        ws.row_dimensions[2].height=21
+        ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=end_col)
+        c=ws.cell(3,1,note); c.font=Font(name="Microsoft YaHei", size=9, color=gray); c.alignment=Alignment(wrap_text=True, vertical="center")
+        ws.row_dimensions[3].height=28
+    def style_header(ws, row: int, start: int, end: int):
+        for col in range(start,end+1):
+            c=ws.cell(row,col); c.fill=PatternFill("solid", fgColor=blue); c.font=Font(name="Microsoft YaHei", size=9, bold=True, color=navy)
+            c.alignment=Alignment(horizontal="center", vertical="center", wrap_text=True); c.border=border
+        ws.row_dimensions[row].height=30
+    def status_for(student_no: str, assignment: dict) -> tuple[Any, str]:
+        aid=int(assignment["id"]); key=(student_no,aid); grade=released.get(key); last=latest.get(key)
+        if grade:
+            if last and int(last["id"]) > int(grade["id"]):
+                labels={"queued":"新提交待批改","submitted":"新提交待批改","grading":"新提交批改中","review_required":"新提交待教师复核","graded":"新成绩待发布"}
+                suffix=labels.get(str(last.get("status") or ""),"有新提交待处理")
+                return grade.get("score"), f"已有发布成绩；{suffix}"
+            return grade.get("score"), "已发布"
+        if not last: return None, "未提交"
+        labels={"queued":"待批改","submitted":"待批改","grading":"批改中","review_required":"待教师复核","graded":"待教师发布","returned":"退回待补交"}
+        return None, labels.get(str(last.get("status") or ""),"未发布")
+
+    summary=wb.active; summary.title="成绩汇总"
+    title_block(summary,6,"平时成绩汇总", "平均分仅统计教师已确认并正式发布的作业；各次作业先折算为百分制，未发布、待批改、待复核和未交均不计入平均分。")
+    summary["G2"]="班级平均分"; summary["G2"].font=Font(name="Microsoft YaHei",size=9,bold=True,color=navy)
+    headers=["排名","学号","姓名","计入作业数","平时成绩平均分（百分制）","备注",""]
+    for col,val in enumerate(headers,1): summary.cell(4,col,val)
+    style_header(summary,4,1,7)
+    data=wb.create_sheet("_成绩数据")
+    data.append(["学号","作业ID","作业名称","原始得分","作业满分","百分制得分"])
+    for st in students:
+        no=str(st.get("student_no") or "")
+        for a in assignments:
+            rec=released.get((no,int(a["id"])))
+            if not rec: continue
+            max_score=float(a.get("total_score") or 0)
+            if max_score <= 0 or rec.get("score") is None: continue
+            raw=float(rec["score"])
+            data.append([safe_text(no),int(a["id"]),safe_text(a.get("title")),raw,max_score,round(raw/max_score*100,4)])
+    last_data=max(2,data.max_row)
+    data.sheet_state="hidden"
+    summary_rows=[]
+    for idx,st in enumerate(students,5):
+        no=safe_text(st.get("student_no")); name=safe_text(st.get("name"))
+        summary.cell(idx,2,no); summary.cell(idx,3,name)
+        summary.cell(idx,4,f'=COUNTIF(\'_成绩数据\'!$A$2:$A${last_data},B{idx})')
+        summary.cell(idx,5,f'=IFERROR(AVERAGEIF(\'_成绩数据\'!$A$2:$A${last_data},B{idx},\'_成绩数据\'!$F$2:$F${last_data}),"")')
+        summary.cell(idx,1,f'=IF(E{idx}="","",RANK.EQ(E{idx},$E$5:$E${max(5,4+len(students))},0))')
+        summary.cell(idx,6,"")
+        for col in range(1,8):
+            cell=summary.cell(idx,col); cell.font=Font(name="Microsoft YaHei",size=10); cell.border=border
+            cell.alignment=Alignment(horizontal="center" if col in (1,4,5) else "left",vertical="center")
+        summary_rows.append(idx)
+    last_summary=max(5,4+len(students))
+    summary["H2"]=f'=IFERROR(AVERAGE(E5:E{last_summary}),"")'
+    summary["H2"].number_format="0.0"
+    summary["H2"].font=Font(name="Microsoft YaHei",size=10,bold=True,color=navy)
+    for idx in summary_rows:
+        summary.cell(idx,5).number_format="0.0"
+        summary.cell(idx,4).number_format="0"
+    for col,width in {"A":8,"B":17,"C":18,"D":13,"E":22,"F":5,"G":17,"H":13}.items(): summary.column_dimensions[col].width=width
+    prep_sheet(summary,f"A1:H{last_summary}","1:4","A5")
+    summary.auto_filter.ref=f"A4:E{last_summary}"
+
+    per_sheet=4
+    chunks=[assignments[i:i+per_sheet] for i in range(0,len(assignments),per_sheet)] or [[]]
+    for page_no,chunk in enumerate(chunks,1):
+        ws=wb.create_sheet(f"作业明细{page_no}")
+        end_col=2+2*len(chunk)
+        title_block(ws,end_col,f"作业成绩明细（{page_no}/{len(chunks)}）", "得分列为最近一次正式发布成绩；状态列标出未交、待批改、待复核或待发布情况。明细按最多 4 份作业分组，便于 A4 横向打印。")
+        ws.cell(4,1,"学号"); ws.cell(4,2,"姓名")
+        for i,a in enumerate(chunk):
+            col=3+2*i
+            ws.merge_cells(start_row=4,start_column=col,end_row=4,end_column=col+1)
+            ws.cell(4,col,safe_text(a.get("title")) + f"（满分 {float(a.get('total_score') or 0):g}）")
+            ws.cell(5,col,"得分"); ws.cell(5,col+1,"状态")
+        for col in range(1,end_col+1):
+            c=ws.cell(4,col); c.fill=PatternFill("solid",fgColor=blue); c.font=Font(name="Microsoft YaHei",size=9,bold=True,color=navy); c.alignment=Alignment(horizontal="center",vertical="center",wrap_text=True); c.border=border
+            if col>=3: ws.cell(5,col).fill=PatternFill("solid",fgColor=pale); ws.cell(5,col).font=Font(name="Microsoft YaHei",size=9,bold=True,color=navy); ws.cell(5,col).alignment=Alignment(horizontal="center",vertical="center"); ws.cell(5,col).border=border
+        ws.row_dimensions[4].height=34; ws.row_dimensions[5].height=22
+        for rno,st in enumerate(students,6):
+            no=str(st.get("student_no") or "")
+            ws.cell(rno,1,safe_text(no)); ws.cell(rno,2,safe_text(st.get("name")))
+            for i,a in enumerate(chunk):
+                col=3+2*i; score,status=status_for(no,a)
+                if score is not None: ws.cell(rno,col,float(score)).number_format="0.##"
+                ws.cell(rno,col+1,status)
+            for col in range(1,end_col+1):
+                c=ws.cell(rno,col); c.font=Font(name="Microsoft YaHei",size=9); c.border=border; c.alignment=Alignment(horizontal="center",vertical="center",wrap_text=True)
+        ws.column_dimensions["A"].width=15; ws.column_dimensions["B"].width=16
+        for i in range(len(chunk)):
+            ws.column_dimensions[get_column_letter(3+2*i)].width=12
+            ws.column_dimensions[get_column_letter(4+2*i)].width=18
+        last_row=max(6,5+len(students))
+        prep_sheet(ws,f"A1:{get_column_letter(end_col)}{last_row}","1:5","C6")
+        ws.auto_filter.ref=f"A5:{get_column_letter(end_col)}{last_row}"
+    data.sheet_view.showGridLines=False
+    output=BytesIO(); wb.save(output)
+    safe_class=re.sub(r"[^\w\-\u4e00-\u9fff]+","_",class_row["name"]).strip("_") or "班级"
+    safe_sem=re.sub(r"[^\w\-\u4e00-\u9fff]+","_",class_row.get("semester") or "").strip("_")
+    filename=f"{safe_class}_{safe_sem + '_' if safe_sem else ''}平时成绩.xlsx"
+    return Response(output.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f"attachment; filename=grade_summary.xlsx; filename*=UTF-8''{quote(filename)}"})
 
 
 @app.get("/api/reports/summary")
@@ -4089,8 +5598,40 @@ def teacher_evaluation_cases_page(request: Request):
     return FileResponse(Path(__file__).with_name("teacher_evaluation_cases.html"),headers={"Cache-Control":"no-store, max-age=0"})
 
 
+@app.get("/api/dashboard")
+def dashboard_snapshot(request: Request, class_id: int | None = None):
+    """Read-only teacher dashboard; derives every displayed metric from live records."""
+    actor = require_roles(request, {"admin", "teacher"})
+    scope = teacher_id_for_scope(actor)
+    now = datetime.now(timezone.utc)
+    with connection() as conn:
+        where = "WHERE a.class_id IS NOT NULL AND COALESCE(a.is_demo,0)=0"
+        params = []
+        if scope is not None:
+            where += " AND c.teacher_user_id=?"; params.append(scope)
+        if class_id is not None:
+            _require_class(conn, class_id, actor)
+            where += " AND a.class_id=?"; params.append(class_id)
+        rows = conn.execute("""SELECT a.id,a.title,a.chapter,a.due_at,a.status,a.total_score,c.name AS class_name,
+          (CASE WHEN EXISTS(SELECT 1 FROM assignment_recipients ar WHERE ar.assignment_id=a.id) THEN (SELECT COUNT(*) FROM assignment_recipients ar WHERE ar.assignment_id=a.id) ELSE (SELECT COUNT(*) FROM students st WHERE st.class_id=a.class_id) END) roster_count,
+          (SELECT COUNT(*) FROM submissions s WHERE s.assignment_id=a.id) submitted_count,
+          (SELECT COUNT(*) FROM submissions s JOIN grading_jobs j ON j.submission_id=s.id WHERE s.assignment_id=a.id AND j.status IN ('queued','running')) grading_count,
+          (SELECT COUNT(*) FROM submissions s WHERE s.assignment_id=a.id AND s.needs_review=1
+             AND NOT EXISTS(SELECT 1 FROM grading_experiences ge WHERE ge.submission_id=s.id)) review_count,
+          (SELECT COUNT(*) FROM submissions s WHERE s.assignment_id=a.id AND s.released_at IS NOT NULL) released_count
+          FROM assignments a JOIN classes c ON c.id=a.class_id """ + where + " ORDER BY a.due_at DESC", params).fetchall()
+        reviews = conn.execute("""SELECT COUNT(*) FROM submissions s JOIN assignments a ON a.id=s.assignment_id JOIN classes c ON c.id=a.class_id
+          LEFT JOIN grading_jobs j ON j.submission_id=s.id """ + where.replace("WHERE", "WHERE") + " AND NOT EXISTS(SELECT 1 FROM grading_experiences ge WHERE ge.submission_id=s.id) AND (s.needs_review=1 OR j.status IN ('queued','running','failed'))", params).fetchone()[0]
+    active=[]
+    for row in rows:
+        item=dict(row)
+        try: due=datetime.fromisoformat(str(item['due_at']).replace('Z','+00:00'))
+        except ValueError: continue
+        if item['status']=='published' and due>=now: active.append(item)
+    expected=sum(int(x['roster_count'] or 0) for x in active); submitted=sum(min(int(x['submitted_count'] or 0),int(x['roster_count'] or 0)) for x in active)
+    return {"submission_rate": round(submitted/expected*100,1) if expected else None, "submitted_count":submitted, "expected_submission_count":expected, "unsubmitted_count":max(expected-submitted,0), "pending_review_count":reviews, "active_assignments":active}
 @app.get("/api/reports/teaching-actions")
-def teaching_actions(request: Request):
+def teaching_actions(request: Request, class_id: int | None = None):
     """Teacher-home action counts.  Excludes demo/legacy assignments from live teaching reminders."""
     actor=require_roles(request,{"admin","teacher"});scope=teacher_id_for_scope(actor)
     now=datetime.now(timezone.utc)
@@ -4102,10 +5643,13 @@ def teaching_actions(request: Request):
                 WHERE a.class_id IS NOT NULL AND COALESCE(a.is_demo,0)=0"""
         args=[]
         if scope is not None: sql+=" AND c.teacher_user_id=?";args.append(scope)
+
+
         assignments=conn.execute(sql,args).fetchall()
         pending_sql="""SELECT COUNT(*) FROM submissions s JOIN assignments a ON a.id=s.assignment_id
           JOIN classes c ON c.id=a.class_id LEFT JOIN grading_jobs j ON j.submission_id=s.id
           WHERE a.class_id IS NOT NULL AND COALESCE(a.is_demo,0)=0
+          AND NOT EXISTS(SELECT 1 FROM grading_experiences ge WHERE ge.submission_id=s.id)
           AND (s.needs_review=1 OR j.status IN ('queued','running','failed'))"""
         release_sql="""SELECT COUNT(*) FROM submissions s JOIN assignments a ON a.id=s.assignment_id
           JOIN classes c ON c.id=a.class_id JOIN grading_experiences ge ON ge.submission_id=s.id
@@ -4159,8 +5703,28 @@ def agent_evaluation(request: Request):
             params.append(scope)
         rows = conn.execute("SELECT t.qwen_called,t.qwen_success,t.qwen_adopted,t.teacher_review_needed,t.handwriting_ocr_failed,t.latency_ms,t.question_type,t.learning_outcome,t.execution_trace_json FROM agent_learning_traces t" + where, params).fetchall()
     total = len(rows)
-    def rate(key: str) -> float:
-        return round((sum(int(r[key] or 0) for r in rows) / total * 100), 1) if total else 0.0
+
+    def rate(key: str) -> float | None:
+        """Return None rather than a fabricated 0% for an empty sample."""
+        return round((sum(int(r[key] or 0) for r in rows) / total * 100), 1) if total else None
+
+    def percentile(values: list[float], percent: float) -> float | None:
+        if not values:
+            return None
+        ordered = sorted(values)
+        index = (len(ordered) - 1) * percent
+        lower, upper = int(index), min(int(index) + 1, len(ordered) - 1)
+        return round(ordered[lower] + (ordered[upper] - ordered[lower]) * (index - lower), 1)
+
+    latencies = [float(r["latency_ms"]) for r in rows if r["latency_ms"] is not None]
+    failed_trace_count = 0
+    for row in rows:
+        try:
+            events = json.loads(row["execution_trace_json"] or "[]")
+        except (TypeError, ValueError):
+            events = []
+        if any(event.get("error_code") for event in events):
+            failed_trace_count += 1
     with connection() as conn:
         attempt_where = ""
         attempt_params: list[object] = []
@@ -4197,31 +5761,34 @@ def agent_evaluation(request: Request):
         mode_attempts = [r for r in attempts if r["mode"] == mode]
         effectiveness[mode] = {
             "attempt_count": len(mode_attempts),
-            "verified_correct_rate": round(sum(int(r["correct"] or 0) for r in mode_attempts) / len(mode_attempts) * 100, 1) if mode_attempts else 0.0,
+            "verified_correct_rate": round(sum(int(r["correct"] or 0) for r in mode_attempts) / len(mode_attempts) * 100, 1) if mode_attempts else None,
         }
     reattempt_by_input = {}
     for input_kind in ("text", "image"):
         input_attempts = [r for r in attempts if (r["input_kind"] or "text") == input_kind]
         reattempt_by_input[input_kind] = {
             "attempt_count": len(input_attempts),
-            "verified_correct_rate": round(sum(int(r["correct"] or 0) for r in input_attempts) / len(input_attempts) * 100, 1) if input_attempts else 0.0,
+            "verified_correct_rate": round(sum(int(r["correct"] or 0) for r in input_attempts) / len(input_attempts) * 100, 1) if input_attempts else None,
         }
     return {
         "sample_size": total,
-        "sympy_direct_rate": round(100 - rate("qwen_called"), 1) if total else 0.0,
+        "sympy_direct_rate": round(100 - rate("qwen_called"), 1) if total else None,
         "qwen_fallback_rate": rate("qwen_called"),
         "qwen_success_rate": rate("qwen_success"),
         "qwen_adopted_rate": rate("qwen_adopted"),
         "teacher_review_rate": rate("teacher_review_needed"),
         "handwriting_ocr_failure_rate": rate("handwriting_ocr_failed"),
-        "average_response_ms": round(sum(float(r["latency_ms"] or 0) for r in rows) / total, 1) if total else 0.0,
+        "average_response_ms": round(sum(latencies) / len(latencies), 1) if latencies else None,
+        "p50_latency_ms": percentile(latencies, 0.5),
+        "p95_latency_ms": percentile(latencies, 0.95),
+        "failure_rate": round(failed_trace_count / total * 100, 1) if total else None,
         "review_rate_by_type": {kind: round(sum(int(r["teacher_review_needed"] or 0) for r in rows if r["question_type"] == kind) / sum(1 for r in rows if r["question_type"] == kind) * 100, 1) for kind in sorted({r["question_type"] for r in rows})},
         "learning_outcomes": {kind: sum(1 for r in rows if r["learning_outcome"] == kind) for kind in ("reworked", "corrected", "requested_solution", "not_resolved")},
         "verified_reattempt_count": len(attempted_traces),
         "verified_corrected_count": len(corrected_traces),
         "image_reattempt_count": sum(1 for r in attempts if r["input_kind"] == "image"),
-        "verified_reattempt_rate": round(len(attempted_traces) / total * 100, 1) if total else 0.0,
-        "verified_corrected_rate": round(len(corrected_traces) / len(attempted_traces) * 100, 1) if attempted_traces else 0.0,
+        "verified_reattempt_rate": round(len(attempted_traces) / total * 100, 1) if total else None,
+        "verified_corrected_rate": round(len(corrected_traces) / len(attempted_traces) * 100, 1) if attempted_traces else None,
         "hint_effectiveness": effectiveness,
         "reattempt_by_input": reattempt_by_input,
         "average_minutes_to_first_reattempt": round(sum(reattempt_minutes) / len(reattempt_minutes), 1) if reattempt_minutes else None,
@@ -4690,7 +6257,6 @@ def student_mistakes_page(request: Request, review: int = 0):
     })
 
 
-@app.get("/healthz")
 def healthz():
     """Unauthenticated liveness/readiness probe; intentionally exposes no student data."""
     try:
@@ -4703,6 +6269,15 @@ def healthz():
         return {"status": "ok", "service": "math-agent", "version": app.version, "queue": queue}
     except Exception as exc:
         raise HTTPException(503, "服务暂未就绪") from exc
+
+@app.get("/healthz")
+def healthz_probe():
+    return healthz()
+
+@app.get("/health")
+def health_probe():
+    """Compatibility endpoint for infrastructure health checks."""
+    return healthz()
 
 
 @app.get("/", response_class=HTMLResponse)

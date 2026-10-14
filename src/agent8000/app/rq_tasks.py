@@ -12,8 +12,16 @@ from .grading_pipeline import run_grading_job
 def grade_submission_task(job_id: int) -> None:
     init_db()
     with connection() as conn:
-        row = conn.execute("SELECT status,queue_attempts FROM grading_jobs WHERE id=?", (job_id,)).fetchone()
+        row = conn.execute("""SELECT j.status,j.queue_attempts,
+                  EXISTS(SELECT 1 FROM grading_experiences ge WHERE ge.submission_id=j.submission_id) AS teacher_confirmed
+                  FROM grading_jobs j WHERE j.id=?""", (job_id,)).fetchone()
         if not row:
+            return
+        # A teacher decision is final evidence.  An older queued RQ task must
+        # never overwrite it or put the same student back into review.
+        if row["teacher_confirmed"]:
+            conn.execute("UPDATE grading_jobs SET status='completed',finished_at=COALESCE(finished_at,?) WHERE id=?",
+                         (datetime.now(timezone.utc).isoformat(), job_id))
             return
         if row["status"] == "completed":
             return

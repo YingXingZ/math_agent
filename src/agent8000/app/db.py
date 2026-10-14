@@ -86,16 +86,21 @@ CREATE TABLE IF NOT EXISTS questions (
   id INTEGER PRIMARY KEY AUTOINCREMENT, content TEXT NOT NULL, chapter TEXT NOT NULL,
   difficulty TEXT NOT NULL CHECK(difficulty IN ('基础','提高','综合')),
   question_type TEXT NOT NULL DEFAULT '计算题', answer TEXT, rubric TEXT,
+  source_textbook_id TEXT,
+  solution_status TEXT NOT NULL DEFAULT 'confirmed', solution_source TEXT NOT NULL DEFAULT 'manual',
+  solution_generated_at TEXT, solution_confirmed_at TEXT, solution_error TEXT,
   source_page INTEGER, review_status TEXT NOT NULL DEFAULT 'published', created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS assignments (
   id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, chapter TEXT NOT NULL,
   class_name TEXT NOT NULL, due_at TEXT NOT NULL, total_score INTEGER NOT NULL,
-  status TEXT NOT NULL DEFAULT 'published', created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  textbook_id TEXT,
+  status TEXT NOT NULL DEFAULT 'published', created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  selection_seed TEXT
 );
 CREATE TABLE IF NOT EXISTS classes (
   id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, semester TEXT NOT NULL DEFAULT '',
-  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP, textbook_id TEXT,
   UNIQUE(name, semester)
 );
 CREATE TABLE IF NOT EXISTS students (
@@ -107,49 +112,42 @@ CREATE TABLE IF NOT EXISTS assignment_questions (
   assignment_id INTEGER NOT NULL, question_id INTEGER NOT NULL, sort_order INTEGER NOT NULL,
   score INTEGER NOT NULL, PRIMARY KEY(assignment_id, question_id)
 );
-CREATE TABLE IF NOT EXISTS assignment_question_parts (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  assignment_id INTEGER NOT NULL, question_id INTEGER NOT NULL,
-  subpart_no TEXT NOT NULL, part_order INTEGER NOT NULL,
-  content TEXT NOT NULL, answer TEXT NOT NULL, rubric TEXT NOT NULL DEFAULT '',
-  score REAL NOT NULL,
-  UNIQUE(assignment_id, question_id, subpart_no)
-);
-CREATE INDEX IF NOT EXISTS idx_assignment_question_parts_assignment
-  ON assignment_question_parts(assignment_id, question_id, part_order);
 CREATE TABLE IF NOT EXISTS assignment_question_overrides (
-  assignment_id INTEGER NOT NULL, question_id INTEGER NOT NULL, content TEXT NOT NULL,
-  score REAL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY(assignment_id, question_id)
+  assignment_id INTEGER NOT NULL, question_id INTEGER NOT NULL,
+  content TEXT, score REAL, updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(assignment_id,question_id)
 );
-CREATE TABLE IF NOT EXISTS assignment_notifications (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  assignment_id INTEGER NOT NULL UNIQUE, class_id INTEGER,
-  title_snapshot TEXT NOT NULL, due_at_snapshot TEXT NOT NULL,
-  submit_path TEXT NOT NULL, created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+CREATE TABLE IF NOT EXISTS assignment_question_parts (
+  assignment_id INTEGER NOT NULL, question_id INTEGER NOT NULL, subpart_no TEXT NOT NULL,
+  part_order INTEGER NOT NULL DEFAULT 1, content TEXT NOT NULL, answer TEXT DEFAULT '',
+  rubric TEXT DEFAULT '', score REAL NOT NULL,
+  PRIMARY KEY(assignment_id,question_id,subpart_no)
 );
-CREATE TABLE IF NOT EXISTS assignment_notification_events (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  notification_id INTEGER NOT NULL, actor_user_id INTEGER,
-  action TEXT NOT NULL, payload_json TEXT NOT NULL DEFAULT '{}',
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_notification_events_notification
-  ON assignment_notification_events(notification_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS submissions (
   id INTEGER PRIMARY KEY AUTOINCREMENT, assignment_id INTEGER NOT NULL, student_no TEXT NOT NULL,
   student_name TEXT, file_path TEXT NOT NULL, submitted_at TEXT DEFAULT CURRENT_TIMESTAMP,
-  status TEXT NOT NULL DEFAULT 'submitted', score REAL, feedback TEXT, needs_review INTEGER DEFAULT 1
+  status TEXT NOT NULL DEFAULT 'submitted', score REAL, feedback TEXT, needs_review INTEGER DEFAULT 1,
+  return_reason TEXT, returned_at TEXT, returned_by INTEGER, resubmission_of INTEGER
 );
 CREATE TABLE IF NOT EXISTS grading_jobs (
   id INTEGER PRIMARY KEY AUTOINCREMENT, submission_id INTEGER NOT NULL UNIQUE,
-  status TEXT NOT NULL DEFAULT 'queued', result_json TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  status TEXT NOT NULL DEFAULT 'queued', result_json TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  idempotency_key TEXT UNIQUE, attempt_count INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL DEFAULT 3, last_error TEXT, next_attempt_at TEXT,
+  started_at TEXT, finished_at TEXT, queue_backend TEXT NOT NULL DEFAULT 'sqlite',
+  external_job_id TEXT
 );
+CREATE TABLE IF NOT EXISTS operational_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, event_name TEXT NOT NULL, value_ms REAL,
+  outcome TEXT NOT NULL DEFAULT 'ok', metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_operational_events_name_time
+  ON operational_events(event_name, created_at);
 CREATE TABLE IF NOT EXISTS grading_experiences (
   id INTEGER PRIMARY KEY AUTOINCREMENT, submission_id INTEGER NOT NULL,
   assignment_id INTEGER NOT NULL, confirmed_score REAL,
   teacher_feedback TEXT, evidence_json TEXT NOT NULL,
-  decision_json TEXT NOT NULL DEFAULT '{}',
   confirmed_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_questions_chapter_difficulty ON questions(chapter, difficulty);
@@ -157,16 +155,6 @@ CREATE INDEX IF NOT EXISTS idx_assignments_class_due ON assignments(class_name, 
 CREATE INDEX IF NOT EXISTS idx_students_class_no ON students(class_id, student_no);
 CREATE INDEX IF NOT EXISTS idx_submissions_assignment_student ON submissions(assignment_id, student_no);
 CREATE INDEX IF NOT EXISTS idx_grading_experiences_assignment ON grading_experiences(assignment_id);
-CREATE TABLE IF NOT EXISTS submission_question_regions (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  submission_id INTEGER NOT NULL, question_id INTEGER NOT NULL,
-  subpart_no TEXT NOT NULL DEFAULT '', sort_order INTEGER NOT NULL,
-  page_no INTEGER NOT NULL, x REAL NOT NULL DEFAULT 0, y REAL NOT NULL DEFAULT 0,
-  width REAL NOT NULL DEFAULT 1, height REAL NOT NULL DEFAULT 1,
-  confirmed_by INTEGER, confirmed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE(submission_id, question_id, subpart_no, sort_order)
-);
-CREATE INDEX IF NOT EXISTS idx_submission_regions_submission ON submission_question_regions(submission_id, sort_order);
 CREATE TABLE IF NOT EXISTS mineru_review_sessions (
   id INTEGER PRIMARY KEY AUTOINCREMENT, document_name TEXT NOT NULL,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP, status TEXT NOT NULL DEFAULT 'pending'
@@ -248,6 +236,59 @@ CREATE TABLE IF NOT EXISTS class_invites (
   created_by INTEGER NOT NULL, revoked_at TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_class_invites_class ON class_invites(class_id, expires_at);
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, token_hash TEXT NOT NULL UNIQUE,
+  expires_at TEXT NOT NULL, used_at TEXT, created_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id, expires_at);
+CREATE TABLE IF NOT EXISTS assignment_makeup_links (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  assignment_id INTEGER NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at TEXT NOT NULL,
+  created_by INTEGER NOT NULL,
+  revoked_at TEXT,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_assignment_makeup_links_assignment
+  ON assignment_makeup_links(assignment_id, expires_at);
+CREATE TABLE IF NOT EXISTS textbook_documents (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, file_path TEXT NOT NULL, original_filename TEXT NOT NULL,
+  page_count INTEGER NOT NULL DEFAULT 0, parse_status TEXT NOT NULL DEFAULT 'processing', parse_message TEXT DEFAULT '',
+  owner_teacher_id INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  volume TEXT DEFAULT '', edition TEXT DEFAULT '', evidence_textbook_id TEXT
+);
+CREATE TABLE IF NOT EXISTS assignment_question_rubric_overrides (
+  assignment_id INTEGER NOT NULL, question_id INTEGER NOT NULL, rubric TEXT NOT NULL DEFAULT '',
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(assignment_id,question_id)
+);
+CREATE TABLE IF NOT EXISTS textbook_sections (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, document_id INTEGER NOT NULL, section_no TEXT NOT NULL, title TEXT NOT NULL,
+  page_start INTEGER, page_end INTEGER, status TEXT NOT NULL DEFAULT 'pending', created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(document_id, section_no)
+);
+CREATE INDEX IF NOT EXISTS idx_textbook_sections_document ON textbook_sections(document_id, status);
+CREATE TABLE IF NOT EXISTS textbook_section_knowledge_points (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    section_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'auto',
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(section_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_textbook_section_knowledge_section ON textbook_section_knowledge_points(section_id, status);
+CREATE TABLE IF NOT EXISTS textbook_ocr_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    message TEXT NOT NULL DEFAULT '',
+    output_path TEXT DEFAULT '',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    started_at TEXT,
+    completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_textbook_ocr_jobs_document ON textbook_ocr_jobs(document_id, id DESC);
 CREATE TABLE IF NOT EXISTS audit_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT, actor_user_id INTEGER,
   tenant_teacher_id INTEGER, action TEXT NOT NULL, resource_type TEXT NOT NULL,
@@ -260,8 +301,14 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_tenant_created ON audit_logs(tenant_te
 
 @contextmanager
 def connection():
-    conn = sqlite3.connect(settings.database_path)
+    # The teacher portal, upload handlers and four grading workers can all
+    # write short audit/status records at once.  SQLite's default immediate
+    # failure turns a harmless brief collision into a browser-visible 5xx.
+    # Wait for the writer, and use WAL so readers do not block grading writes.
+    conn = sqlite3.connect(settings.database_path, timeout=30.0)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA foreign_keys=ON")
     try:
         yield conn
         conn.commit()
@@ -271,11 +318,11 @@ def connection():
 
 def init_db() -> None:
     with connection() as conn:
+        from .region_sets import ensure_region_schema
+        ensure_region_schema(conn)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
         conn.executescript(SCHEMA)
-        experience_cols = {row[1] for row in conn.execute("PRAGMA table_info(grading_experiences)")}
-        if "decision_json" not in experience_cols:
-            conn.execute("ALTER TABLE grading_experiences ADD COLUMN decision_json TEXT NOT NULL DEFAULT '{}'")
-
         # The local question table is a working cache, while 8014 remains the
         # authoritative evidence library.  These columns make every imported
         # question traceable back to its source record and image/PDF evidence.
@@ -286,6 +333,8 @@ def init_db() -> None:
             conn.execute("ALTER TABLE questions ADD COLUMN source_evidence_json TEXT")
         if "source_problem_no" not in columns:
             conn.execute("ALTER TABLE questions ADD COLUMN source_problem_no TEXT")
+        if "source_textbook_id" not in columns:
+            conn.execute("ALTER TABLE questions ADD COLUMN source_textbook_id TEXT")
         conn.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_questions_source_problem_id
                         ON questions(source_problem_id)
                         WHERE source_problem_id IS NOT NULL""")
@@ -298,12 +347,7 @@ def init_db() -> None:
         # --- Route 2 / 设计文档增强 字段 ---
         # semester: 学期维度（学期末分数汇总）；handwriting_score: 书写整洁度；
         # knowledge_points: 知识点标签（薄弱知识点建议）。
-        notification_cols = {row[1] for row in conn.execute("PRAGMA table_info(assignment_notifications)")}
-        if "activation_path" not in notification_cols:
-            conn.execute("ALTER TABLE assignment_notifications ADD COLUMN activation_path TEXT NOT NULL DEFAULT ''")
         assign_cols = {row[1] for row in conn.execute("PRAGMA table_info(assignments)")}
-        if "status" not in assign_cols:
-            conn.execute("ALTER TABLE assignments ADD COLUMN status TEXT NOT NULL DEFAULT 'published'")
         if "semester" not in assign_cols:
             conn.execute("ALTER TABLE assignments ADD COLUMN semester TEXT NOT NULL DEFAULT ''")
         # A class id is deliberately nullable for legacy/demo assignments.  New
@@ -313,17 +357,31 @@ def init_db() -> None:
             conn.execute("ALTER TABLE assignments ADD COLUMN class_id INTEGER")
         if "is_demo" not in assign_cols:
             conn.execute("ALTER TABLE assignments ADD COLUMN is_demo INTEGER NOT NULL DEFAULT 0")
-        # New assignments use a transparent 100-point policy: 20 points for a
-        # valid submission and 80 points for answer quality.  Legacy records
-        # retain their original score policy and totals.
-        if "score_policy" not in assign_cols:
-            conn.execute("ALTER TABLE assignments ADD COLUMN score_policy TEXT NOT NULL DEFAULT 'legacy'")
-        if "completion_points" not in assign_cols:
-            conn.execute("ALTER TABLE assignments ADD COLUMN completion_points REAL NOT NULL DEFAULT 0")
+        # Persist the deterministic selection seed for reproduction and audit.
+        if "selection_seed" not in assign_cols:
+            conn.execute("ALTER TABLE assignments ADD COLUMN selection_seed TEXT")
+        if "textbook_id" not in assign_cols:
+            conn.execute("ALTER TABLE assignments ADD COLUMN textbook_id TEXT")
+        job_cols = {row[1] for row in conn.execute("PRAGMA table_info(grading_jobs)")}
+        for column, ddl in {
+            "idempotency_key": "TEXT", "attempt_count": "INTEGER NOT NULL DEFAULT 0",
+            "max_attempts": "INTEGER NOT NULL DEFAULT 3", "last_error": "TEXT",
+            "next_attempt_at": "TEXT", "started_at": "TEXT", "finished_at": "TEXT",
+            "queue_backend": "TEXT NOT NULL DEFAULT 'sqlite'", "external_job_id": "TEXT",
+        }.items():
+            if column not in job_cols:
+                conn.execute(f"ALTER TABLE grading_jobs ADD COLUMN {column} {ddl}")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_grading_jobs_idempotency ON grading_jobs(idempotency_key) WHERE idempotency_key IS NOT NULL")
         class_cols = {row[1] for row in conn.execute("PRAGMA table_info(classes)")}
         if "teacher_user_id" not in class_cols:
             conn.execute("ALTER TABLE classes ADD COLUMN teacher_user_id INTEGER")
+        if "textbook_id" not in class_cols:
+            conn.execute("ALTER TABLE classes ADD COLUMN textbook_id TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_classes_teacher ON classes(teacher_user_id)")
+        textbook_doc_cols = {row[1] for row in conn.execute("PRAGMA table_info(textbook_documents)")}
+        for column in ("volume", "edition", "evidence_textbook_id"):
+            if column not in textbook_doc_cols:
+                conn.execute(f"ALTER TABLE textbook_documents ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
         student_cols = {row[1] for row in conn.execute("PRAGMA table_info(students)")}
         if "user_id" not in student_cols:
             conn.execute("ALTER TABLE students ADD COLUMN user_id INTEGER")
@@ -335,106 +393,33 @@ def init_db() -> None:
         sub_cols = {row[1] for row in conn.execute("PRAGMA table_info(submissions)")}
         if "handwriting_score" not in sub_cols:
             conn.execute("ALTER TABLE submissions ADD COLUMN handwriting_score REAL")
-        if "released_at" not in sub_cols:
-            conn.execute("ALTER TABLE submissions ADD COLUMN released_at TEXT")
-        if "completion_score" not in sub_cols:
-            conn.execute("ALTER TABLE submissions ADD COLUMN completion_score REAL NOT NULL DEFAULT 0")
-        if "quality_score" not in sub_cols:
-            conn.execute("ALTER TABLE submissions ADD COLUMN quality_score REAL")
-        if "quality_max_score" not in sub_cols:
-            conn.execute("ALTER TABLE submissions ADD COLUMN quality_max_score REAL")
-        if "score_policy_version" not in sub_cols:
-            conn.execute("ALTER TABLE submissions ADD COLUMN score_policy_version TEXT NOT NULL DEFAULT 'legacy'")
-        # Queue metadata is separate from grading evidence.  It lets an
-        # operator tell whether a job is merely queued, running, retried, or
-        # permanently failed without inspecting Redis manually.
-        job_cols = {row[1] for row in conn.execute("PRAGMA table_info(grading_jobs)")}
         for column, ddl in {
-            "rq_job_id": "TEXT",
-            "queue_attempts": "INTEGER NOT NULL DEFAULT 0",
-            "last_enqueued_at": "TEXT",
-            "last_started_at": "TEXT",
-            "last_error": "TEXT",
+            "return_reason": "TEXT", "returned_at": "TEXT", "returned_by": "INTEGER",
+            "resubmission_of": "INTEGER",
         }.items():
-            if column not in job_cols:
-                conn.execute(f"ALTER TABLE grading_jobs ADD COLUMN {column} {ddl}")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_grading_jobs_status ON grading_jobs(status, rq_job_id)")
+            if column not in sub_cols:
+                conn.execute(f"ALTER TABLE submissions ADD COLUMN {column} {ddl}")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_submissions_resubmission ON submissions(resubmission_of)")
+        # Password-reset tokens existed in an earlier form with ``code_hash``
+        # and a required ``student_id``.  Keep those rows intact while adding
+        # the canonical hash column used by the one-time reset URL flow.
+        reset_cols = {row[1] for row in conn.execute("PRAGMA table_info(password_reset_tokens)")}
+        if "token_hash" not in reset_cols:
+            conn.execute("ALTER TABLE password_reset_tokens ADD COLUMN token_hash TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id, expires_at)")
         q_cols = {row[1] for row in conn.execute("PRAGMA table_info(questions)")}
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS agent_learning_traces (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              student_user_id INTEGER NOT NULL,
-              submission_id INTEGER NOT NULL,
-              question_id INTEGER NOT NULL,
-              source_problem_id TEXT,
-              mode TEXT NOT NULL,
-              qwen_used INTEGER NOT NULL DEFAULT 0,
-              teacher_review_needed INTEGER NOT NULL DEFAULT 0,
-              handwriting_ocr_failed INTEGER NOT NULL DEFAULT 0,
-              latency_ms REAL,
-              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE INDEX IF NOT EXISTS idx_agent_trace_student_created ON agent_learning_traces(student_user_id, created_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_agent_trace_submission ON agent_learning_traces(submission_id, question_id);
-        """)
-        trace_cols = {row[1] for row in conn.execute("PRAGMA table_info(agent_learning_traces)")}
-        if "agent_trace_id" not in trace_cols:
-            conn.execute("ALTER TABLE agent_learning_traces ADD COLUMN agent_trace_id TEXT")
-        if "execution_trace_json" not in trace_cols:
-            conn.execute("ALTER TABLE agent_learning_traces ADD COLUMN execution_trace_json TEXT NOT NULL DEFAULT '[]'")
-        for column, ddl in {
-            "qwen_called": "INTEGER NOT NULL DEFAULT 0",
-            "qwen_success": "INTEGER NOT NULL DEFAULT 0",
-            "qwen_adopted": "INTEGER NOT NULL DEFAULT 0",
-            "question_type": "TEXT NOT NULL DEFAULT 'unknown'",
-            "learning_outcome": "TEXT",
-        }.items():
-            if column not in trace_cols:
-                conn.execute(f"ALTER TABLE agent_learning_traces ADD COLUMN {column} {ddl}")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_trace_trace_id ON agent_learning_traces(agent_trace_id)")
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS teacher_evaluation_cases (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              source_submission_id INTEGER NOT NULL,
-              question_id INTEGER NOT NULL,
-              case_type TEXT NOT NULL,
-              question_type TEXT NOT NULL DEFAULT 'calc',
-              problem_text TEXT NOT NULL DEFAULT '',
-              student_answer TEXT NOT NULL DEFAULT '',
-              standard_answer TEXT NOT NULL DEFAULT '',
-              ai_initial_correct INTEGER,
-              teacher_correct INTEGER NOT NULL,
-              expected_route TEXT NOT NULL,
-              expected_diagnosis TEXT,
-              requires_teacher_review INTEGER NOT NULL DEFAULT 0,
-              disagreement_reason TEXT NOT NULL DEFAULT '',
-              teacher_note TEXT NOT NULL DEFAULT '',
-              label_version TEXT NOT NULL DEFAULT 'teacher-label-v1',
-              created_by INTEGER NOT NULL,
-              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-              UNIQUE(source_submission_id, question_id)
-            );
-            CREATE INDEX IF NOT EXISTS idx_teacher_eval_cases_created ON teacher_evaluation_cases(created_at DESC);
-            CREATE TABLE IF NOT EXISTS agent_learning_attempts (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              prior_trace_id TEXT NOT NULL,
-              student_user_id INTEGER NOT NULL,
-              submission_id INTEGER NOT NULL,
-              question_id INTEGER NOT NULL,
-              answer_text TEXT NOT NULL,
-              verification_json TEXT NOT NULL DEFAULT '{}',
-              correct INTEGER,
-              input_kind TEXT NOT NULL DEFAULT 'text',
-              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE INDEX IF NOT EXISTS idx_learning_attempt_prior ON agent_learning_attempts(prior_trace_id, created_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_learning_attempt_student ON agent_learning_attempts(student_user_id, created_at DESC);
-        """)
-        attempt_cols = {row[1] for row in conn.execute("PRAGMA table_info(agent_learning_attempts)")}
-        if "input_kind" not in attempt_cols:
-            conn.execute("ALTER TABLE agent_learning_attempts ADD COLUMN input_kind TEXT NOT NULL DEFAULT 'text'")
         if "knowledge_points" not in q_cols:
             conn.execute("ALTER TABLE questions ADD COLUMN knowledge_points TEXT NOT NULL DEFAULT ''")
+        for column, ddl in {
+            "solution_status": "TEXT NOT NULL DEFAULT 'confirmed'",
+            "solution_source": "TEXT NOT NULL DEFAULT 'manual'",
+            "solution_generated_at": "TEXT",
+            "solution_confirmed_at": "TEXT",
+            "solution_error": "TEXT",
+        }.items():
+            if column not in q_cols:
+                conn.execute(f"ALTER TABLE questions ADD COLUMN {column} {ddl}")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_questions_solution_status ON questions(solution_status)")
 
         count = conn.execute("SELECT COUNT(*) FROM questions").fetchone()[0]
         if count == 0:

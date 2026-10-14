@@ -39,6 +39,13 @@ def _source_locator(row: dict[str, Any], fallback: int) -> str:
     return f"{chapter} 第{no}题".strip() if chapter else f"第{no}题"
 
 
+def _problem_number(row: dict[str, Any]) -> str | None:
+    """Return the parent textbook number used by the teacher picker."""
+    raw = str(row.get("source_problem_no") or "").strip()
+    match = re.search(r"第\s*(\d+)\s*题", raw) or re.match(r"(\d+)", raw)
+    return match.group(1) if match else None
+
+
 def _subpart_count(content: str) -> int:
     """Estimate visible sub-questions without splitting their answer/rubric.
 
@@ -68,13 +75,46 @@ def _split_numbered_parts(text: str) -> tuple[str, list[tuple[str, str]]] | None
     return preface, parts
 
 
-def _partial_variant(row: dict[str, Any], subpart_limit: int = 3) -> dict[str, Any] | None:
-    """Create a safely aligned odd-numbered sub-question variant.
+_SELECTED_PART_RE = re.compile(r"^(?P<problem>[1-9]\d*)(?:[（(]\s*(?P<part>[1-9]\d*)\s*[)）])?$")
 
-    Partial selection is permitted only when stem, standard answer and rubric
-    all expose exactly the same numbered sub-parts.  Otherwise the parent
-    question remains intact, so no answer key is ever mismatched to a stem.
-    """
+
+def _selected_subpart_variant(row: dict[str, Any], wanted: list[str]) -> dict[str, Any] | None:
+    """Return exactly the teacher-selected, evidence-aligned sub-parts."""
+    stem = _split_numbered_parts(str(row.get("content") or ""))
+    answer = _split_numbered_parts(str(row.get("answer") or ""))
+    rubric = _split_numbered_parts(str(row.get("rubric") or ""))
+    if not stem or not answer or not rubric:
+        return None
+    numbers = [n for n, _ in stem[1]]
+    if numbers != [n for n, _ in answer[1]] or numbers != [n for n, _ in rubric[1]]:
+        return None
+    if not wanted or len(set(wanted)) != len(wanted) or any(no not in numbers for no in wanted):
+        return None
+
+    def pick(parts: list[tuple[str, str]], preface: str) -> str:
+        by_no = dict(parts)
+        return "\n".join(([preface] if preface else []) + [by_no[no] for no in wanted]).strip()
+
+    stem_by_no, answer_by_no, rubric_by_no = dict(stem[1]), dict(answer[1]), dict(rubric[1])
+    return {
+        "selected_subparts": wanted,
+        "content": pick(stem[1], stem[0]),
+        "answer": pick(answer[1], answer[0]),
+        "rubric": pick(rubric[1], rubric[0]),
+        "parts": [
+            {
+                "subpart_no": no,
+                "content": ((re.sub(r"^\s*\d+\s*[.．、]\s*", "", stem[0]).strip() + "\n") if no == wanted[0] and stem[0].strip() else "") + stem_by_no[no],
+                "answer": answer_by_no[no],
+                "rubric": rubric_by_no[no],
+            }
+            for no in wanted
+        ],
+    }
+
+
+def _partial_variant(row: dict[str, Any], subpart_limit: int = 3) -> dict[str, Any] | None:
+    """Create a safely aligned odd-numbered sub-question variant."""
     stem = _split_numbered_parts(str(row.get("content") or ""))
     answer = _split_numbered_parts(str(row.get("answer") or ""))
     rubric = _split_numbered_parts(str(row.get("rubric") or ""))
@@ -86,31 +126,9 @@ def _partial_variant(row: dict[str, Any], subpart_limit: int = 3) -> dict[str, A
     take = min(max(3, int(subpart_limit or 3)), 6, len(numbers))
     if take >= len(numbers):
         return None
-    # Sample across a long question rather than always taking only the first
-    # parts: 8 parts with a limit of 3 becomes 1, 5, 8.
     indices = [round(index * (len(numbers) - 1) / (take - 1)) for index in range(take)]
     wanted = [numbers[index] for index in dict.fromkeys(indices)]
-    def pick(parts: list[tuple[str, str]], preface: str) -> str:
-        chosen = [value for no, value in parts if no in wanted]
-        return "\n".join(([preface] if preface else []) + chosen).strip()
-    return {
-        "selected_subparts": wanted,
-        "content": pick(stem[1], stem[0]),
-        "answer": pick(answer[1], answer[0]),
-        "rubric": pick(rubric[1], rubric[0]),
-        "parts": [
-            {
-                "subpart_no": no,
-                # Show the parent instruction once, before the first selected
-                # sub-question (for example: “求下列函数的导数：”).
-                "content": ((re.sub(r"^\s*\d+\s*[.．、]\s*", "", stem[0]).strip() + "\n") if no == wanted[0] and stem[0].strip() else "")
-                           + next(value for key, value in stem[1] if key == no),
-                "answer": next(value for key, value in answer[1] if key == no),
-                "rubric": next(value for key, value in rubric[1] if key == no),
-            }
-            for no in wanted
-        ],
-    }
+    return _selected_subpart_variant(row, wanted)
 
 
 def _assignment_quality_reason(row: dict[str, Any]) -> str | None:
@@ -174,7 +192,9 @@ def _select_by_tier(rows: list[dict], question_count: int,
 
 def assemble(sections: list[str], *, title: str, class_id: int, class_name: str, due_at: datetime,
              question_count: int = 6, basic_ratio: float = 0.5, advanced_ratio: float = 0.35,
-             subpart_limit: int = 3, build_pdf: bool = True, out_dir: str | None = None) -> dict[str, Any]:
+             subpart_limit: int = 3, selected_problem_nos: list[str] | None = None,
+             build_pdf: bool = True, out_dir: str | None = None,
+             textbook_id: str | None = None) -> dict[str, Any]:
     """Build a homework assignment from cached, stratified problems.
 
     Returns a structured result: assignment id, selected problems, the achieved
@@ -191,8 +211,8 @@ def assemble(sections: list[str], *, title: str, class_id: int, class_name: str,
             dict(r)
             for r in conn.execute(
                 f"SELECT * FROM questions WHERE chapter IN ({placeholders}) "
-                f"AND review_status='published'",
-                sections,
+                f"AND review_status='published'" + (" AND source_textbook_id=?" if textbook_id else ""),
+                [*sections, textbook_id] if textbook_id else sections,
             ).fetchall()
         ]
     if not rows:
@@ -203,17 +223,63 @@ def assemble(sections: list[str], *, title: str, class_id: int, class_name: str,
     eligible_rows = [row for row in rows if _assignment_quality_reason(row) is None]
     if not eligible_rows:
         raise ValueError("所选章节没有通过题干质量检查的可发布题目")
-    selected = _select_by_tier(eligible_rows, question_count, basic_ratio, advanced_ratio)
-    if len(selected) < question_count:
-        raise ValueError(
-            f"请求生成 {question_count} 道题，但章节中只有 {len(selected)} 道通过质量校验的已验证题目。"
-            "系统没有生成不完整草稿；请补充该章节题库或减少题目数后再试。"
-        )
+    requested_tokens = [str(value).strip() for value in (selected_problem_nos or []) if str(value).strip()]
+    explicit_variants: list[dict[str, Any] | None] = []
+    if requested_tokens:
+        # `8` means the whole eighth problem; `8(1)` / `8（1）` means only
+        # sub-question 1.  Preserve the teacher's parent-question order.
+        requested_by_problem: dict[str, list[str] | None] = {}
+        invalid = []
+        for token in requested_tokens:
+            match = _SELECTED_PART_RE.fullmatch(token)
+            if not match:
+                invalid.append(token)
+                continue
+            problem_no, part_no = match.group("problem"), match.group("part")
+            if problem_no not in requested_by_problem:
+                requested_by_problem[problem_no] = [] if part_no else None
+            elif requested_by_problem[problem_no] is None or part_no is None:
+                invalid.append(token)
+                continue
+            if part_no is not None:
+                if part_no in requested_by_problem[problem_no]:
+                    invalid.append(token)
+                    continue
+                requested_by_problem[problem_no].append(part_no)
+        if invalid:
+            raise ValueError("指定格式无效或重复：" + "、".join(invalid) + "；整题填 8，小问填 8(1)")
+        selected, missing = [], []
+        for problem_no, requested_parts in requested_by_problem.items():
+            candidate = next((row for row in eligible_rows if _problem_number(row) == problem_no), None)
+            if candidate is None:
+                missing.append(problem_no)
+                continue
+            selected.append(candidate)
+            if requested_parts is None:
+                explicit_variants.append(None)
+            else:
+                variant = _selected_subpart_variant(candidate, requested_parts)
+                if variant is None:
+                    requested_text = "、".join(f"第{part}小问" for part in requested_parts)
+                    raise ValueError(f"第{problem_no}题的{requested_text}不能安全拆分：题干、标准答案和评分点必须具备一致的小问编号")
+                explicit_variants.append(variant)
+        if missing:
+            raise ValueError(
+                "指定题号不存在，或尚未通过题干/答案/评分点质量检查："
+                + "、".join(f"第{number}题" for number in missing)
+            )
+    else:
+        selected = _select_by_tier(eligible_rows, question_count, basic_ratio, advanced_ratio)
+        if len(selected) < question_count:
+            raise ValueError(
+                f"请求生成 {question_count} 道题，但章节中只有 {len(selected)} 道通过质量校验的已验证题目。"
+                "系统没有生成不完整草稿；请补充该章节题库或减少题目数后再试。"
+            )
 
     # Each selected parent stays in assignment_questions.  When all three
     # evidence fields are aligned, its selected sub-parts are also persisted
     # individually for rendering and grading.
-    variants = [_partial_variant(row, subpart_limit) for row in selected]
+    variants = explicit_variants if requested_tokens else [_partial_variant(row, subpart_limit) for row in selected]
     selection_notes = []
     for row, variant in zip(selected, variants):
         if _subpart_count(str(row.get("content") or "")) >= subpart_limit and not variant:
@@ -233,10 +299,10 @@ def assemble(sections: list[str], *, title: str, class_id: int, class_name: str,
         parent_scores.append(parent_score)
     with connection() as conn:
         cursor = conn.execute(
-            "INSERT INTO assignments(title,chapter,class_name,class_id,due_at,total_score,status,score_policy,completion_points) "
-            "VALUES(?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO assignments(title,chapter,class_name,class_id,due_at,total_score,status,score_policy,completion_points,textbook_id) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?)",
             (title, "、".join(sections), class_name, class_id, due_at.isoformat(), total_points, "draft",
-             "completion20_quality80_v1", completion_points),
+             "completion20_quality80_v1", completion_points, textbook_id),
         )
         assignment_id = cursor.lastrowid
         conn.executemany(
