@@ -108,7 +108,7 @@ from .auth import audit, current_user, ensure_bootstrap_admin, login, require_ro
 from .dify import run_workflow
 from .teacher_chat import router as teacher_chat_router
 from .segmentation_compare import router as segmentation_compare_router
-from .knowledge_bridge import (build_image_solve_candidate, create_evidence_sections,
+from .knowledge_bridge import (build_image_solve_candidate, create_evidence_problem, create_evidence_sections,
                                create_evidence_textbook, evidence_status, list_evidence_sections,
                                list_evidence_textbooks, rescue_formula_from_crop, retrieve_section_problems)
 from .grading_pipeline import run_grading_job
@@ -899,7 +899,15 @@ def _run_textbook_ocr_job(job_id: int, document_id: int) -> None:
         if not markdowns:
             raise RuntimeError("MinerU 已完成，但未生成可用 Markdown")
         markdown_path = markdowns[0]
-        sections = _textbook_sections_from_markdown(markdown_path.read_text(encoding="utf-8", errors="replace"))
+        markdown = markdown_path.read_text(encoding="utf-8", errors="replace")
+        sections = _textbook_sections_from_markdown(markdown)
+        # Split numbered exercise sections into reviewable candidates. This is
+        # deliberately a staging artifact: nothing enters 8014 until a teacher
+        # approves each question.
+        staged_questions = stage_markdown(markdown, "textbook", doc["title"])
+        staged_questions["document"]["textbook_document_id"] = document_id
+        staged_path = markdown_path.with_name("textbook_question_candidates.json")
+        staged_path.write_text(json.dumps(staged_questions, ensure_ascii=False, indent=2), encoding="utf-8")
         with connection() as conn:
             for section_no, title, page_start in sections:
                 conn.execute("INSERT OR IGNORE INTO textbook_sections(document_id,section_no,title,page_start,page_end) VALUES(?,?,?,?,?)", (document_id, section_no, title, page_start, None))
@@ -916,12 +924,76 @@ def _run_textbook_ocr_job(job_id: int, document_id: int) -> None:
             conn.execute("UPDATE textbook_documents SET parse_status='needs_ocr',parse_message=? WHERE id=?", (message, document_id))
 
 
+@app.get("/api/materials/textbooks/{document_id}/question-candidates")
+def list_textbook_question_candidates(document_id: int, request: Request):
+    actor = require_roles(request, {"admin", "teacher"})
+    scope = teacher_id_for_scope(actor)
+    with connection() as conn:
+        doc = conn.execute(
+            "SELECT owner_teacher_id FROM textbook_documents WHERE id=?" + (" AND owner_teacher_id=?" if scope is not None else ""),
+            (document_id, scope) if scope is not None else (document_id,),
+        ).fetchone()
+        if not doc:
+            raise HTTPException(404, "教材不存在")
+        job = conn.execute("SELECT output_path FROM textbook_ocr_jobs WHERE document_id=? AND status='completed' ORDER BY id DESC LIMIT 1", (document_id,)).fetchone()
+    if not job or not job["output_path"]:
+        raise HTTPException(409, "请先完成教材 OCR")
+    staged_path = Path(job["output_path"]).with_name("textbook_question_candidates.json")
+    if not staged_path.is_file():
+        return {"items": [], "message": "本次 OCR 没有生成可拆分的编号习题候选。"}
+    staged = json.loads(staged_path.read_text(encoding="utf-8"))
+    items = [item for section in staged.get("sections", []) for item in section.get("items", [])]
+    return {"items": items, "quality_report": staged.get("quality_report", {}), "message": "识别结果仅为候选，需教师逐题确认后才写入题库。"}
+
+
+@app.post("/api/materials/textbooks/{document_id}/question-candidates/{candidate_id}/approve")
+async def approve_textbook_question_candidate(document_id: int, candidate_id: str, payload: dict, request: Request):
+    candidate_id = candidate_id.replace("~", "/")
+    actor = require_roles(request, {"admin", "teacher"})
+    scope = teacher_id_for_scope(actor)
+    with connection() as conn:
+        doc = conn.execute("SELECT owner_teacher_id,evidence_textbook_id FROM textbook_documents WHERE id=?" + (" AND owner_teacher_id=?" if scope is not None else ""), (document_id, scope) if scope is not None else (document_id,)).fetchone()
+        job = conn.execute("SELECT output_path FROM textbook_ocr_jobs WHERE document_id=? AND status='completed' ORDER BY id DESC LIMIT 1", (document_id,)).fetchone()
+    if not doc or not job:
+        raise HTTPException(404, "教材或 OCR 结果不存在")
+    staged_path = Path(job["output_path"]).with_name("textbook_question_candidates.json")
+    if not staged_path.is_file():
+        raise HTTPException(404, "习题候选不存在")
+    staged = json.loads(staged_path.read_text(encoding="utf-8"))
+    selected = next((item for section in staged.get("sections", []) for item in section.get("items", []) if item.get("item_id") == candidate_id), None)
+    if not selected:
+        raise HTTPException(404, "题目候选不存在")
+    if selected.get("review_status") == "approved":
+        return {"ok": True, "message": "该题已入库", "source_problem_id": selected.get("source_problem_id")}
+    content = str(payload.get("content_text") or selected.get("text") or "").strip()
+    if len(content) < 6 or "�" in content:
+        raise HTTPException(422, "题干过短或含乱码，请先修改识别文本")
+    textbook_id = str(doc["evidence_textbook_id"] or "")
+    if not textbook_id:
+        raise HTTPException(409, "该教材尚未关联 8014 题库")
+    try:
+        await create_evidence_sections(textbook_id, [{"section_no": selected["section_no"], "title": selected["section_no"]}])
+        result = await create_evidence_problem(textbook_id, {
+            "section_no": selected["section_no"], "problem_no": selected["question_no"],
+            "sub_no": selected.get("subquestion_no"), "content_text": content,
+            "ptype": "calc", "difficulty": 3,
+        })
+    except Exception as exc:
+        raise HTTPException(502, "题目未写入 8014：" + str(exc)[:180]) from exc
+    selected["text"] = content
+    selected["review_status"] = "approved"
+    selected["source_problem_id"] = result.get("id")
+    staged_path.write_text(json.dumps(staged, ensure_ascii=False, indent=2), encoding="utf-8")
+    audit(actor, "textbook.question_approve", "textbook", document_id, actor.get("id"), {"candidate_id": candidate_id, "source_problem_id": result.get("id")})
+    return {"ok": True, "source_problem_id": result.get("id"), "message": "题目已写入 8014；请在答案导入审核中处理对应答案 PDF。"}
+
+
 @app.post("/api/materials/textbooks/{document_id}/ocr", status_code=202)
 def start_textbook_ocr(document_id: int, background_tasks: BackgroundTasks, request: Request):
     actor = require_roles(request, {"admin", "teacher"})
     with connection() as conn:
         scope = teacher_id_for_scope(actor)
-        doc = conn.execute("SELECT id FROM textbook_documents WHERE id=?" + (" AND owner_teacher_id=?" if scope is not None else ""), (document_id, scope) if scope is not None else (document_id,)).fetchone()
+        doc = conn.execute("SELECT id,evidence_textbook_id FROM textbook_documents WHERE id=?" + (" AND owner_teacher_id=?" if scope is not None else ""), (document_id, scope) if scope is not None else (document_id,)).fetchone()
         if not doc:
             raise HTTPException(404, "教材不存在")
         previous = conn.execute("SELECT id FROM textbook_ocr_jobs WHERE document_id=? AND status IN ('queued','running') ORDER BY id DESC LIMIT 1", (document_id,)).fetchone()
@@ -942,6 +1014,89 @@ def get_textbook_ocr_status(document_id: int, request: Request):
             raise HTTPException(404, "教材不存在")
         row = conn.execute("SELECT * FROM textbook_ocr_jobs WHERE document_id=? ORDER BY id DESC LIMIT 1", (document_id,)).fetchone()
     return dict(row) if row else {"status": "idle", "message": "尚未提交 OCR 任务"}
+
+
+def _run_textbook_answer_ocr_job(upload_id: int, document_id: int) -> None:
+    with connection() as conn:
+        upload = conn.execute("SELECT * FROM textbook_answer_uploads WHERE id=? AND document_id=?", (upload_id, document_id)).fetchone()
+        doc = conn.execute("SELECT * FROM textbook_documents WHERE id=?", (document_id,)).fetchone()
+        if not upload or not doc:
+            return
+        conn.execute("UPDATE textbook_answer_uploads SET status='running',message='MinerU 正在识别答案 PDF…' WHERE id=?", (upload_id,))
+    mineru_bin = settings.mineru_bin.strip() or "/opt/mineru-env/bin/mineru"
+    output_root = Path(settings.mineru_output_dir.strip()) if settings.mineru_output_dir.strip() else Path(settings.upload_dir) / "textbook-ocr"
+    output_dir = output_root / f"answer-document-{document_id}-upload-{upload_id}"
+    try:
+        pdf = Path(upload["file_path"])
+        if not pdf.is_file():
+            raise RuntimeError("上传的答案 PDF 不存在")
+        if not (Path(mineru_bin).is_file() or shutil.which(mineru_bin)):
+            raise RuntimeError("MinerU OCR 环境未配置")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        run = subprocess.run([mineru_bin, "--path", str(pdf), "--output", str(output_dir), "--backend", "pipeline", "--method", "ocr", "--lang", "ch"], text=True, capture_output=True, timeout=60 * 30, check=False)
+        if run.returncode:
+            raise RuntimeError((run.stderr or run.stdout or f"MinerU 退出码 {run.returncode}")[-1200:])
+        markdowns = sorted(output_dir.rglob("*.md"), key=lambda item: item.stat().st_size, reverse=True)
+        if not markdowns:
+            raise RuntimeError("MinerU 未生成答案 Markdown")
+        markdown_path = markdowns[0]
+        staged = stage_markdown(markdown_path.read_text(encoding="utf-8", errors="replace"), "answer_book", upload["original_filename"])
+        staged["document"]["textbook_id"] = doc["evidence_textbook_id"]
+        staged_path = markdown_path.with_name("answer_book_staged.json")
+        staged_path.write_text(json.dumps(staged, ensure_ascii=False, indent=2), encoding="utf-8")
+        session = asyncio.run(create_mineru_session(staged))
+        message = f"答案 PDF 已拆分 {staged.get('quality_report', {}).get('item_count', 0)} 条候选；精确匹配本教材题目 {session.get('matched_count', 0)} 条，等待逐题审核。"
+        with connection() as conn:
+            conn.execute("UPDATE textbook_answer_uploads SET status='review',message=?,output_path=?,review_session_id=?,completed_at=CURRENT_TIMESTAMP WHERE id=?", (message, str(staged_path), session["session_id"], upload_id))
+    except Exception as exc:
+        message = f"答案 PDF 解析失败：{str(exc)[:1000]}"
+        with connection() as conn:
+            conn.execute("UPDATE textbook_answer_uploads SET status='failed',message=?,completed_at=CURRENT_TIMESTAMP WHERE id=?", (message, upload_id))
+
+
+@app.post("/api/materials/textbooks/{document_id}/answer-pdf", status_code=202)
+async def upload_textbook_answer_pdf(document_id: int, background_tasks: BackgroundTasks, request: Request, file: UploadFile = File(...)):
+    actor = require_roles(request, {"admin", "teacher"})
+    scope = teacher_id_for_scope(actor)
+    with connection() as conn:
+        doc = conn.execute("SELECT id,evidence_textbook_id FROM textbook_documents WHERE id=?" + (" AND owner_teacher_id=?" if scope is not None else ""), (document_id, scope) if scope is not None else (document_id,)).fetchone()
+    if not doc:
+        raise HTTPException(404, "教材不存在")
+    try:
+        books = await list_evidence_textbooks()
+        evidence_book = next((book for book in books if str(book.get("id")) == str(doc["evidence_textbook_id"])), None)
+    except Exception as exc:
+        raise HTTPException(502, "读取 8014 教材题库失败：" + str(exc)[:160]) from exc
+    if not evidence_book or int(evidence_book.get("problem_count") or 0) < 1:
+        raise HTTPException(409, "请先完成教材 OCR，并至少确认一道题干候选入库，再上传对应答案 PDF。")
+    filename = (file.filename or "答案.pdf").strip()
+    if Path(filename).suffix.lower() != ".pdf":
+        raise HTTPException(415, "答案文件必须是 PDF")
+    raw = await file.read()
+    if not raw or len(raw) > 80 * 1024 * 1024:
+        raise HTTPException(413, "答案 PDF 必须介于 1 字节与 80 MB 之间")
+    target_dir = Path(settings.upload_dir) / "textbooks" / "answers"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", filename)[:100] or "answer.pdf"
+    target = target_dir / f"{uuid.uuid4().hex}_{safe_name}"
+    target.write_bytes(raw)
+    with connection() as conn:
+        upload_id = conn.execute("INSERT INTO textbook_answer_uploads(document_id,file_path,original_filename,status,message) VALUES(?,?,?,?,?)", (document_id, str(target), filename, "queued", "等待 MinerU 解析答案 PDF")).lastrowid
+    audit(actor, "textbook.answer_upload", "textbook", document_id, actor.get("id"), {"filename": filename, "upload_id": upload_id})
+    background_tasks.add_task(_run_textbook_answer_ocr_job, upload_id, document_id)
+    return {"upload_id": upload_id, "status": "queued", "message": "答案 PDF 已上传，开始识别并按本教材题号匹配。"}
+
+
+@app.get("/api/materials/textbooks/{document_id}/answer-pdf")
+def textbook_answer_pdf_status(document_id: int, request: Request):
+    actor = require_roles(request, {"admin", "teacher"})
+    scope = teacher_id_for_scope(actor)
+    with connection() as conn:
+        doc = conn.execute("SELECT id FROM textbook_documents WHERE id=?" + (" AND owner_teacher_id=?" if scope is not None else ""), (document_id, scope) if scope is not None else (document_id,)).fetchone()
+        if not doc:
+            raise HTTPException(404, "教材不存在")
+        row = conn.execute("SELECT id,original_filename,status,message,review_session_id,created_at,completed_at FROM textbook_answer_uploads WHERE document_id=? ORDER BY id DESC LIMIT 1", (document_id,)).fetchone()
+    return dict(row) if row else {"status": "idle", "message": "尚未上传对应答案 PDF"}
 
 
 @app.get("/api/materials/textbooks/{document_id}/graph")

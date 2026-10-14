@@ -1,6 +1,7 @@
 """Temporary MinerU staging adapter; it never writes the teaching database."""
 from pathlib import Path
 import sys
+import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
 TOOLS_ROOT = ROOT / "tools"
@@ -25,7 +26,7 @@ def stage_markdown(markdown: str, role: str, name: str) -> dict:
     temp_dir = ROOT / "tmp" / "api-mineru-staging"
     temp_dir.mkdir(parents=True, exist_ok=True)
     safe_name = "".join(char for char in name if char.isalnum() or char in "-_") or "document"
-    source = temp_dir / f"{safe_name}.md"
+    source = temp_dir / f"{safe_name}-{uuid.uuid4().hex}.md"
     source.write_text(markdown, encoding="utf-8")
     build_document, _ = _pipeline()
     return build_document(source, role, name)

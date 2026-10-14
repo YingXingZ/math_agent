@@ -142,6 +142,18 @@ async def create_evidence_sections(textbook_id: str, sections: list[dict[str, An
             response.raise_for_status()
 
 
+async def create_evidence_problem(textbook_id: str, problem: dict[str, Any]) -> dict[str, Any]:
+    """Create a teacher-approved OCR question in its exact source textbook."""
+    base = evidence_url("").rstrip("/")
+    async with evidence_client(timeout=25) as client:
+        response = await client.post(
+            base + f"/textbooks/{quote(textbook_id, safe='')}/problems",
+            json=problem,
+        )
+        response.raise_for_status()
+        return response.json()
+
+
 async def retrieve_problem(problem_id: str) -> dict[str, Any]:
     """Fetch a single problem's latest state from 8014 after it has been updated."""
     base = evidence_url("").rstrip("/")

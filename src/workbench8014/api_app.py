@@ -466,6 +466,17 @@ class ProblemManualReq(BaseModel):
     content_text: str = ""
 
 
+class TextbookProblemImportReq(BaseModel):
+    section_no: str
+    problem_no: str
+    sub_no: Optional[str] = None
+    ptype: str = "calc"
+    difficulty: int = 3
+    content_text: str
+    std_answer: Optional[str] = None
+    full_solution: Optional[str] = None
+
+
 class GradeReq(BaseModel):
     score: float = 0.0
 
@@ -905,6 +916,36 @@ def add_problem_manual(req: ProblemManualReq):
     conn.commit()
     conn.close()
     return {"id": pid}
+
+
+@app.post("/textbooks/{tid}/problems", status_code=201)
+def add_textbook_problem(tid: str, req: TextbookProblemImportReq):
+    """Insert one teacher-approved OCR question, scoped to its exact textbook."""
+    section_no = req.section_no.strip()
+    problem_no = req.problem_no.strip()
+    content = req.content_text.strip()
+    if not section_no or not problem_no or len(content) < 6:
+        raise HTTPException(422, "章节、题号和有效题干不能为空")
+    conn = get_db()
+    sec = conn.execute("SELECT id FROM sections WHERE textbook_id=? AND section_no=? ORDER BY id LIMIT 1", (tid, section_no)).fetchone()
+    if not sec:
+        conn.close()
+        raise HTTPException(404, "指定教材中不存在该章节")
+    existing = conn.execute(
+        "SELECT id FROM problems WHERE section_id=? AND problem_no=? AND COALESCE(sub_no,'')=COALESCE(?, '') ORDER BY id LIMIT 1",
+        (sec["id"], problem_no, req.sub_no),
+    ).fetchone()
+    if existing:
+        conn.close()
+        return {"id": existing["id"], "existing": True}
+    pid = str(uuid.uuid4())
+    conn.execute(
+        "INSERT INTO problems(id,section_id,exercise_set,problem_no,sub_no,ptype,crop_image_path,content_text,difficulty,extract_status,std_answer,full_solution,answer_status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (pid, sec["id"], section_no, problem_no, req.sub_no, req.ptype, None, content, req.difficulty, "manual", req.std_answer, req.full_solution, "unverified"),
+    )
+    conn.commit()
+    conn.close()
+    return {"id": pid, "existing": False}
 
 
 # ----- 裁切图静态服务 -----

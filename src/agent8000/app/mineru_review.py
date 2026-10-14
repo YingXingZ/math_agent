@@ -169,11 +169,12 @@ async def create_session(answer_book: dict) -> dict:
     if answer_book.get("document", {}).get("role") != "answer_book":
         raise ValueError("只接受答案书暂存 JSON")
     document_name = str(answer_book.get("document", {}).get("name") or "MinerU 答案书")
+    textbook_id = str(answer_book.get("document", {}).get("textbook_id") or "").strip() or None
     candidates = [item for section in answer_book.get("sections", []) for item in section.get("items", [])]
     section_cache: dict[str, list[dict]] = {}
     for section in {str(item.get("section_no") or "") for item in candidates}:
         if section:
-            section_cache[section] = (await retrieve_section_problems(section, limit=100)).get("items", [])
+            section_cache[section] = (await retrieve_section_problems(section, limit=100, textbook_id=textbook_id)).get("items", [])
     with connection() as conn:
         session_id = conn.execute(
             "INSERT INTO mineru_review_sessions(document_name, status) VALUES(?,?)",
