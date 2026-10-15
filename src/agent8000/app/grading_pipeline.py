@@ -471,32 +471,67 @@ def _region_boxes_conflict(candidate_box: tuple[float, float, float, float],
 
 
 async def _florence_page_regions(images: list[str]) -> dict[int, list[dict[str, Any]]]:
-    """Request Florence answer-box proposals; never let service failure block grading."""
+    """Request Florence answer-box proposals in bounded batches.
+
+    Florence supplies box geometry while the Qwen/printed-anchor locator keeps
+    assigning question identity. Images are normalized to detector-sized JPEGs
+    and chunked under the service's 24 MB / 12-page request limits so multi-page
+    scans do not silently fall back because a single request was too large.
+    """
     if os.environ.get("MATH_FLORENCE_REGION_ENABLED", "0").strip().lower() not in {"1", "true", "yes", "on"}:
         return {}
     endpoint = os.environ.get("MATH_FLORENCE_REGION_URL", "http://127.0.0.1:18087/detect-answer-regions")
-    try:
-        async with httpx.AsyncClient(timeout=120) as client:
-            response = await client.post(endpoint, json={"images_base64": images})
-            response.raise_for_status()
-            payload = response.json()
-        output: dict[int, list[dict[str, Any]]] = {}
-        for page in payload.get("pages") or []:
-            page_no = int(page.get("page_no") or 0)
-            boxes = []
-            for item in page.get("regions") or []:
-                box = {key: float(item[key]) for key in ("x", "y", "width", "height")}
-                box["page_no"] = page_no
-                if (page_no > 0 and 0 <= box["x"] < 1 and 0 <= box["y"] < 1
-                        and 0 < box["width"] <= 1 and 0 < box["height"] <= 1
-                        and box["x"] + box["width"] <= 1.001
-                        and box["y"] + box["height"] <= 1.001):
-                    boxes.append(box)
-            output[page_no] = boxes
-        return output
-    except Exception:
-        # Existing Qwen question mapping remains the fallback if Florence is unavailable.
-        return {}
+    prepared: list[str] = []
+    for raw in images:
+        try:
+            with Image.open(io.BytesIO(base64.b64decode(raw))) as source:
+                source = source.convert("RGB")
+                source.thumbnail((2400, 2400), Image.Resampling.LANCZOS)
+                buffer = io.BytesIO()
+                source.save(buffer, format="JPEG", quality=88, optimize=True)
+                encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+                if len(encoded) > 20_000_000:
+                    source.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
+                    buffer = io.BytesIO()
+                    source.save(buffer, format="JPEG", quality=80, optimize=True)
+                    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+                prepared.append(encoded)
+        except Exception:
+            prepared.append(raw)
+    output: dict[int, list[dict[str, Any]]] = {}
+    async with httpx.AsyncClient(timeout=120) as client:
+        offset = 0
+        while offset < len(prepared):
+            batch, size = [], 0
+            while offset + len(batch) < len(prepared) and len(batch) < 12:
+                candidate = prepared[offset + len(batch)]
+                if batch and size + len(candidate) > 20_000_000:
+                    break
+                batch.append(candidate)
+                size += len(candidate)
+            try:
+                response = await client.post(endpoint, json={"images_base64": batch})
+                response.raise_for_status()
+                payload = response.json()
+            except Exception:
+                # Preserve the established safe fallback if the proposal service
+                # is unavailable; the worker still requires teacher review.
+                return {}
+            for page in payload.get("pages") or []:
+                local_page_no = int(page.get("page_no") or 0)
+                page_no = offset + local_page_no
+                boxes = []
+                for item in page.get("regions") or []:
+                    box = {key: float(item[key]) for key in ("x", "y", "width", "height")}
+                    box["page_no"] = page_no
+                    if (page_no > 0 and 0 <= box["x"] < 1 and 0 <= box["y"] < 1
+                            and 0 < box["width"] <= 1 and 0 < box["height"] <= 1
+                            and box["x"] + box["width"] <= 1.001
+                            and box["y"] + box["height"] <= 1.001):
+                        boxes.append(box)
+                output[page_no] = boxes
+            offset += len(batch)
+    return output
 
 
 def _refine_regions_with_florence(
