@@ -581,48 +581,38 @@ def _refine_regions_with_florence(
     regions: dict[tuple[int, str, int], dict[str, Any]],
     proposals: dict[int, list[dict[str, Any]]],
 ) -> dict[tuple[int, str, int], dict[str, Any]]:
-    """Use Florence geometry only when it overlaps a Qwen-assigned question region.
+    """Compare Florence geometry without changing any question assignment.
 
-    Qwen continues to assign question identity. The existing crop identity and
-    teacher-review gates still run after this geometry refinement.
+    The question-to-box mapping is the source of truth. Florence proposals do
+    not carry reliable question identity, so they may corroborate an existing
+    crop but must never replace its page or coordinates.
     """
     if not proposals:
         return regions
-    refined = dict(regions)
+    checked = dict(regions)
     for key, mapping in regions.items():
-        source_parts = expand_regions(mapping)
-        target_parts = []
-        used_florence = False
-        for source in source_parts:
+        comparisons = []
+        for source in expand_regions(mapping):
             try:
                 page_no = int(source.get("page_no") or mapping.get("page_no") or 0)
                 x, y, width, height = (float(source[name]) for name in ("x", "y", "width", "height"))
             except (TypeError, ValueError, KeyError):
-                target_parts.append(source)
                 continue
-            best = None
-            best_score = 0.0
+            source_area = width * height
+            best_iou = 0.0
             for candidate in proposals.get(page_no, []):
                 ix = max(0.0, min(x + width, candidate["x"] + candidate["width"]) - max(x, candidate["x"]))
                 iy = max(0.0, min(y + height, candidate["y"] + candidate["height"]) - max(y, candidate["y"]))
                 intersection = ix * iy
                 candidate_area = candidate["width"] * candidate["height"]
-                candidate_coverage = intersection / candidate_area if candidate_area else 0.0
-                if candidate_coverage >= 0.50 and candidate_coverage > best_score:
-                    best, best_score = candidate, candidate_coverage
-            if best is None:
-                target_parts.append(source)
-                continue
-            target_parts.append({**best, "page_no": page_no,
-                                 "florence_candidate_coverage": round(best_score, 4)})
-            used_florence = True
-        if used_florence and target_parts:
-            refined[key] = {
-                **mapping, **target_parts[0], "regions": target_parts,
-                "auto_photo_anchor": True,
-                "heading_source": "florence2_geometry_qwen_question_map",
-            }
-    return refined
+                union = source_area + candidate_area - intersection
+                if union > 0:
+                    best_iou = max(best_iou, intersection / union)
+            comparisons.append({"page_no": page_no, "best_iou": round(best_iou, 4),
+                                "agrees": best_iou >= 0.50})
+        if comparisons:
+            checked[key] = {**mapping, "florence_geometry_check": comparisons}
+    return checked
 
 
 async def _infer_photo_question_regions(file_path: str, questions: list[dict[str, Any]]) -> dict[tuple[int, str, int], dict[str, Any]]:
@@ -1935,12 +1925,9 @@ async def grade_submission(submission_id: int, only_question_id: int | None = No
         auto_photo_regions = await _infer_photo_question_regions(submission["file_path"], locator_questions)
     auto_regions = dict(auto_pdf_regions)
     for key, mapping in auto_photo_regions.items():
-        # Florence may refine the boundary of a Qwen-assigned question even
-        # when a PDF text anchor exists; otherwise retain the deterministic PDF box.
-        if mapping.get("heading_source") == "florence2_geometry_qwen_question_map":
-            auto_regions[key] = mapping
-        else:
-            auto_regions.setdefault(key, mapping)
+        # A generated-PDF text anchor has an explicit question identity. Keep
+        # it authoritative; photo/Florence proposals only fill missing anchors.
+        auto_regions.setdefault(key, mapping)
     prior_ai_regions = _prior_ai_suggested_regions(
         submission_id, questions, len(_submission_page_paths(submission["file_path"]))
     )

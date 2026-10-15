@@ -451,16 +451,18 @@ async def verify_crop_matches_problem(images, problem, ask=ask_local):
     """Fail closed unless the proposed crop visibly belongs to its target task."""
     if not images:
         return {"matches": False, "confidence": 0.0, "reason": "候选框为空"}
-    prompt = ('/no_think\n只核验“手写作答是否属于目标题”，不解题、不评分。'
-              '关键：忽略印刷体题干、页眉、题号和任何预印文字；只能依据学生手写的公式/推导/结论判定。'
-              '若框内虽然印有目标题目，但手写内容实际属于别题，必须 matches=false。'
-              '不得因为题目顺序、题号相似或目标提示就猜测匹配。'
-              '目标题可能有多个小问，可只完成其中一部分；若手写内容确实是目标题的一部分则 matches=true。'
-              '如果图片是别题答案、其他题的手写内容、只含印刷题面/无法关联的通用文字，或看不清/不能确定，matches=false。'
-              'handwriting_evidence必须逐字简述一个可见的手写公式、变量关系或推导，并说明它如何对应目标题；不能引用印刷题面作为证据。'
-              '跨页输入按顺序属于同一候选框。只输出JSON：'
-              '{"matches":true,"confidence":0.95,"handwriting_evidence":"手写公式/推导及其对应关系","reason":"简短理由"}\n目标题：'
-              + str(problem.get('problem_text') or '')[:1400])
+    target_label = str(problem.get("problem_no") or "").strip()
+    prompt = ('/no_think\n核验候选框是否对应目标题，不解题、不评分。'
+              '先查看框内清晰可见的印刷题号/题目标签；若它明确属于另一道题，必须 matches=false，不能让相似手写内容、页序或模型猜测覆盖这个明确标签。'
+              '若没有可读的印刷题号，再依据学生手写的公式/推导/结论判断归属。'
+              '若框内虽印有目标题目，但手写内容明确属于别题，仍须 matches=false。'
+              '目标题可能有多个小问，可只完成其中一部分；手写内容确属其中任意小问即可匹配。'
+              '只含印刷题面、其他题手写内容、无法关联或看不清时 matches=false。'
+              'handwriting_evidence须简述可见手写证据；printed_label_status只能为 same、different 或 not_visible。'
+              '若目标标签未提供，printed_label_status必须为 not_visible。跨页输入按顺序属于同一候选框。只输出JSON：'
+              '{"matches":true,"confidence":0.95,"printed_label_status":"same|different|not_visible",'
+              '"visible_question_label":"可读题号或空字符串","handwriting_evidence":"手写证据","reason":"简短理由"}\n目标题标签：'
+              + (target_label or "未提供") + '\n目标题：' + str(problem.get('problem_text') or '')[:1400])
     try:
         result = await ask(prompt, images, 500)
     except Exception as exc:
@@ -470,6 +472,13 @@ async def verify_crop_matches_problem(images, problem, ask=ask_local):
         confidence = float(result.get('confidence') or 0)
         evidence = str(result.get('handwriting_evidence') or '').strip()
         reason = str(result.get('reason') or '').strip()
+        printed_label_status = str(result.get('printed_label_status') or 'not_visible').strip().lower()
+        if target_label and printed_label_status == 'different':
+            return {"matches": False, "confidence": confidence,
+                    "printed_label_status": printed_label_status,
+                    "visible_question_label": str(result.get('visible_question_label') or '')[:80],
+                    "handwriting_evidence": evidence[:180],
+                    "reason": reason[:180] or "框内印刷题号与目标题标签不同"}
         matches = result.get('matches') is True and confidence >= .88 and bool(evidence and reason)
     except (TypeError, ValueError, AttributeError):
         return {"matches": False, "confidence": 0.0, "reason": "题区一致性核验结果格式无效"}
