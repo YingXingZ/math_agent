@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import re
 import sys
 from pathlib import Path
@@ -293,7 +294,14 @@ def _math_equal(student_answer: str, standard_answer: str) -> dict[str, Any]:
 
 
 def _render_pdf_pages(path: Path) -> list[Path]:
-    """Render a bounded PDF copy for Qwen while keeping the original upload."""
+    """Render PDF pages into a validated cache without exposing partial PNGs.
+
+    Concurrent retries for the same submission used to write the same
+    qwen_pages files at once. A grader could open a page while another worker
+    was replacing it and PIL would report an unidentified image. Use a
+    per-source interprocess lock, validate the whole cache, render to a private
+    temporary directory, then atomically publish complete pages.
+    """
     try:
         from pypdf import PdfReader
         page_count = len(PdfReader(str(path)).pages)
@@ -302,60 +310,95 @@ def _render_pdf_pages(path: Path) -> list[Path]:
     if page_count == 0:
         raise ValueError("PDF 没有可识别页面")
 
-    # 设计文档 3.1：大作业"自动分页渲染 + 跨页定位"，而非整份拒识。
-    # 渲染全部页面交给 VLM 的两遍定位器跨页匹配题号；仅在极端页数（>安全上限）
-    # 时才转人工，避免把真实多页作业误判为"无法识别"。
     SAFE_PAGE_CEILING = 80
     if page_count > SAFE_PAGE_CEILING:
         raise ValueError(
             f"PDF 共 {page_count} 页，超过安全上限 {SAFE_PAGE_CEILING} 页，已转入教师复核。"
         )
-    page_limit = page_count
+
     rendered_dir = path.parent / f"{path.stem}_qwen_pages"
-    rendered_dir.mkdir(parents=True, exist_ok=True)
-    prefix = rendered_dir / "page"
-    bundled_renderer = Path.home() / ".cache" / "codex-runtimes" / "codex-primary-runtime" / "dependencies" / "native" / "poppler" / "Library" / "bin" / "pdftoppm.exe"
-    renderer = (
-        settings.pdf_renderer_path
-        or os.environ.get("PDFTOPPM_PATH", "")
-        or (str(bundled_renderer) if bundled_renderer.is_file() else "")
-        or shutil.which("pdftoppm")
-    )
-    if not renderer:
-        # Production fallback: PyMuPDF ships with the agent environment, so
-        # PDF uploads remain gradeable even when the host has no Poppler binary.
-        try:
-            import fitz
+    lock_path = path.parent / f".{path.stem}_qwen_pages.lock"
 
-            document = fitz.open(str(path))
-            matrix = fitz.Matrix(settings.qwen_pdf_render_dpi / 72, settings.qwen_pdf_render_dpi / 72)
-            for page_index in range(page_limit):
-                pixmap = document.load_page(page_index).get_pixmap(matrix=matrix, alpha=False)
-                pixmap.save(str(rendered_dir / f"page-{page_index + 1}.png"))
-            document.close()
-        except Exception as exc:
-            raise ValueError(f"PDF 渲染组件不可用，已转入教师复核：{str(exc)[:100]}") from exc
+    def complete_cache() -> list[Path] | None:
         pages = sorted(rendered_dir.glob("page-*.png"), key=lambda item: int(item.stem.rsplit("-", 1)[-1]))
-        if not pages:
-            raise ValueError("PDF 未生成可识别页面")
-        return pages
-    command = [
-        renderer, "-png", "-r", str(settings.qwen_pdf_render_dpi),
-        "-f", "1", "-l", str(page_limit), str(path), str(prefix),
-    ]
-    try:
-        subprocess.run(command, check=True, capture_output=True, timeout=180)
-    except FileNotFoundError as exc:
-        raise ValueError("PDF 渲染组件不可用，已转入教师复核") from exc
-    except subprocess.CalledProcessError as exc:
-        raise ValueError(f"PDF 转图片失败：{exc.stderr.decode(errors='replace')[:120]}") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise ValueError("PDF 转图片超时，已转入教师复核") from exc
+        if len(pages) != page_count:
+            return None
+        try:
+            for page in pages:
+                with Image.open(page) as image:
+                    image.verify()
+            return pages
+        except Exception:
+            return None
 
-    pages = sorted(rendered_dir.glob("page-*.png"), key=lambda item: int(item.stem.rsplit("-", 1)[-1]))
-    if not pages:
-        raise ValueError("PDF 未生成可识别页面")
-    return pages
+    try:
+        import fcntl
+    except ImportError:
+        fcntl = None
+
+    with lock_path.open("a+b") as lock_file:
+        if fcntl is not None:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        cached = complete_cache()
+        if cached:
+            return cached
+
+        rendered_dir.mkdir(parents=True, exist_ok=True)
+        temp_dir = Path(tempfile.mkdtemp(prefix=f".{path.stem}_render_", dir=str(path.parent)))
+        try:
+            bundled_renderer = Path.home() / ".cache" / "codex-runtimes" / "codex-primary-runtime" / "dependencies" / "native" / "poppler" / "Library" / "bin" / "pdftoppm.exe"
+            renderer = (
+                settings.pdf_renderer_path
+                or os.environ.get("PDFTOPPM_PATH", "")
+                or (str(bundled_renderer) if bundled_renderer.is_file() else "")
+                or shutil.which("pdftoppm")
+            )
+            if not renderer:
+                try:
+                    import fitz
+
+                    document = fitz.open(str(path))
+                    matrix = fitz.Matrix(settings.qwen_pdf_render_dpi / 72, settings.qwen_pdf_render_dpi / 72)
+                    for page_index in range(page_count):
+                        pixmap = document.load_page(page_index).get_pixmap(matrix=matrix, alpha=False)
+                        pixmap.save(str(temp_dir / f"page-{page_index + 1}.png"))
+                    document.close()
+                except Exception as exc:
+                    raise ValueError(f"PDF 渲染组件不可用，已转入教师复核：{str(exc)[:100]}") from exc
+            else:
+                prefix = temp_dir / "page"
+                command = [
+                    renderer, "-png", "-r", str(settings.qwen_pdf_render_dpi),
+                    "-f", "1", "-l", str(page_count), str(path), str(prefix),
+                ]
+                try:
+                    subprocess.run(command, check=True, capture_output=True, timeout=180)
+                except FileNotFoundError as exc:
+                    raise ValueError("PDF 渲染组件不可用，已转入教师复核") from exc
+                except subprocess.CalledProcessError as exc:
+                    raise ValueError(f"PDF 转图片失败：{exc.stderr.decode(errors='replace')[:120]}") from exc
+                except subprocess.TimeoutExpired as exc:
+                    raise ValueError("PDF 转图片超时，已转入教师复核") from exc
+
+            pages = sorted(temp_dir.glob("page-*.png"), key=lambda item: int(item.stem.rsplit("-", 1)[-1]))
+            if len(pages) != page_count:
+                raise ValueError(f"PDF 仅生成 {len(pages)}/{page_count} 张完整页图")
+            for page in pages:
+                with Image.open(page) as image:
+                    image.verify()
+
+            expected_names = {page.name for page in pages}
+            for page in pages:
+                os.replace(page, rendered_dir / page.name)
+            for stale in rendered_dir.glob("page-*.png"):
+                if stale.name not in expected_names:
+                    stale.unlink(missing_ok=True)
+            complete = complete_cache()
+            if not complete:
+                raise ValueError("PDF 页图缓存校验失败")
+            return complete
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def _submission_page_paths(file_path: str) -> list[Path]:

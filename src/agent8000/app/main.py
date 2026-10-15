@@ -3999,6 +3999,10 @@ async def retry_grading(submission_id: int, background_tasks: BackgroundTasks, r
     """
     actor = require_roles(request, {"admin", "teacher"})
     with connection() as conn:
+        # Serialize retries before reading status. Without an immediate write
+        # transaction, two rapid clicks can both observe failed, set queued,
+        # and enqueue separate jobs for the same submission.
+        conn.execute("BEGIN IMMEDIATE")
         submission = conn.execute(
             """SELECT s.id,s.assignment_id,c.teacher_user_id FROM submissions s
                JOIN assignments a ON a.id=s.assignment_id JOIN classes c ON c.id=a.class_id
@@ -4026,14 +4030,25 @@ async def retry_grading(submission_id: int, background_tasks: BackgroundTasks, r
                 raise HTTPException(409, "该提交正在进行 AI 初评，请稍候")
             # A worker can be restarted after reserving a job.  Do not leave a
             # teacher permanently blocked by that orphaned 'running' state.
-            conn.execute(
-                "UPDATE grading_jobs SET status='failed',last_error=? WHERE id=?",
+            changed = conn.execute(
+                "UPDATE grading_jobs SET status='failed',last_error=? WHERE id=? AND status='running'",
                 ("已恢复超时的初评任务，现由教师重新发起。", job["id"]),
-            )
+            ).rowcount
+            if not changed:
+                raise HTTPException(409, "该提交状态已变化，请刷新后重试")
+            job_status = "failed"
+        else:
+            job_status = job["status"]
+        # Compare-and-set makes even simultaneous API requests idempotent.
+        changed = conn.execute(
+            "UPDATE grading_jobs SET status='queued',rq_job_id=NULL,last_error=NULL WHERE id=? AND status=?",
+            (job["id"], job_status),
+        ).rowcount
+        if not changed:
+            raise HTTPException(409, "该提交已由另一请求重新发起，请稍候刷新")
         # Keep the last candidate evidence while the replacement run is queued.
         # The grading pipeline can reuse its non-final AI crop proposals; a
         # successful run still atomically replaces this JSON with new evidence.
-        conn.execute("UPDATE grading_jobs SET status='queued',rq_job_id=NULL,last_error=NULL WHERE id=?", (job["id"],))
         conn.execute(
             "UPDATE submissions SET status='submitted', score=NULL, feedback='正在重新调用 AI 初评。', needs_review=1, handwriting_score=NULL WHERE id=?",
             (submission_id,),
