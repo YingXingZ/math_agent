@@ -4003,15 +4003,15 @@ async def retry_grading(submission_id: int, background_tasks: BackgroundTasks, r
         if scope is not None and submission["teacher_user_id"] != scope:
             raise HTTPException(404, "提交不存在")
         job = conn.execute(
-            "SELECT id,status,created_at,started_at FROM grading_jobs WHERE submission_id=?", (submission_id,)
+            "SELECT id,status,created_at,started_at,last_started_at FROM grading_jobs WHERE submission_id=?", (submission_id,)
         ).fetchone()
         if not job:
             raise HTTPException(409, "该提交没有可重试的初评任务")
         if job["status"] in {"queued", "running"}:
-            timestamp = job["started_at"] or job["created_at"]
+            timestamp = job["started_at"] or job["last_started_at"] or job["created_at"]
             stale = False
             try:
-                stale = datetime.now(timezone.utc) - datetime.fromisoformat(timestamp).astimezone(timezone.utc) > timedelta(minutes=30)
+                stale = datetime.now(timezone.utc) - datetime.fromisoformat(timestamp).astimezone(timezone.utc) > timedelta(seconds=max(1800, settings.rq_job_timeout_seconds + 300))
             except (TypeError, ValueError):
                 stale = job["status"] == "running"
             if not (job["status"] == "running" and stale):

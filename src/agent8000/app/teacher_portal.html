@@ -639,9 +639,11 @@ const rawStepScores=q.qwen?.step_scores||[];
         <label style="display:block;margin-top:10px"><b>教师确认分（满分 ${esc(q.max_score??0)}）</b><input class="teacher-score" type="number" min="0" max="${esc(q.max_score??0)}" step="0.5" value="${esc(scoreText(score))}" style="width:120px;margin-left:10px"></label>
         <label style="display:block;margin-top:8px"><b>本题反馈（可选）</b><textarea class="teacher-feedback" rows="2" style="width:100%;margin-top:4px;font:inherit" placeholder="例如：第 2 步换元正确，但上下限未同步">${esc(feedback)}</textarea></label>
       </article>`;
-    }).join('')||'<div class="notice">任务仍在处理中，暂未产生逐题证据。</div>';
+    }).join('')||(gradingPending?'<div class="notice">初评任务正在处理中，逐题证据尚未生成。</div>':(x.grading_status==='failed'?'<div class="notice">本次初评任务已失败。查看下方错误信息后，可重新发起初评。</div>':'<div class="notice">当前没有逐题初评证据。</div>'));
     const hasInvalidScore=allQuestions.some(q=>q.score_valid===false||q.score_status==='invalid');
-    const retry=(r.qwen_error||hasInvalidScore)?`<p class="notice"><b>${r.qwen_error?'AI 服务暂时不可用：'+esc(r.qwen_error):'存在未取得有效分数的题目。'}</b><br>重试会重新运行整份作业初评，原作业与评分证据会保留；已发布成绩不可重试。</p><button class="btn secondary" onclick="retryGrading(${id})" ${isReleased||gradingPending?'disabled':''}>重试整份初评</button>`:'';
+    const taskFailure=x.grading_status==='failed';
+    const taskError=String(r.error||x.feedback||'后台任务未完成');
+    const retry=(taskFailure||r.qwen_error||hasInvalidScore)?`<p class="notice"><b>${taskFailure?'本次初评失败：'+esc(taskError):(r.qwen_error?'AI 服务暂时不可用：'+esc(r.qwen_error):'存在未取得有效分数的题目。')}</b><br>重试会重新运行整份作业初评，原作业与评分证据会保留；已发布成绩不可重试。</p><button class="btn secondary" onclick="retryGrading(${id})" ${isReleased||gradingPending?'disabled':''}>重新初评</button>`:'';
     const overall=esc(r.teacher_review?.overall_feedback||x.feedback||'');
     const stableAction=stableQuestions.some(q=>!(q.teacher_decision||{}).stable_auto_accept)
       ? '<button class="btn secondary" onclick="confirmStableItems('+id+')">确认 '+stableQuestions.length+' 道低风险题</button>' : '';
@@ -650,24 +652,8 @@ const rawStepScores=q.qwen?.step_scores||[];
     if(gradingPending){
       document.querySelectorAll('#reviewList .teacher-score,#reviewList .teacher-feedback,#overallReviewFeedback,#reviewList select').forEach(node=>node.disabled=true);
       document.querySelectorAll('#reviewList button').forEach(button=>{if(/确认|发布给学生/.test(button.textContent||''))button.disabled=true});
-      const pollGradingStatus=async()=>{
-        if(activeReviewSubmissionId!==Number(id))return;
-        try{
-          const latest=await api(`/submissions/${id}/grading?fresh=${Date.now()}`);
-          if(activeReviewSubmissionId!==Number(id))return;
-          if(['queued','running'].includes(latest.grading_status)){
-            const notice=document.getElementById('gradingProgressNotice');
-            if(notice)notice.textContent='重新评分'+(latest.grading_status==='queued'?'排队中':'进行中')+'；原图和当前浏览位置保持不变。完成后将更新评分结果。';
-            reviewPollingTimer=setTimeout(pollGradingStatus,5000);
-          }else await showEvidence(id,exceptionsOnly,{preserveViewport:true});
-        }catch(error){
-          console.warn('评分状态自动刷新失败',error);
-          const notice=document.getElementById('gradingProgressNotice');
-          if(notice)notice.textContent='暂时无法读取评分状态，正在后台重试；页面不会跳动或重载原图。';
-          reviewPollingTimer=setTimeout(pollGradingStatus,5000);
-        }
-      };
-      reviewPollingTimer=setTimeout(pollGradingStatus,5000);
+      const notice=document.getElementById('gradingProgressNotice');
+      if(notice)notice.textContent='重新评分'+(x.grading_status==='queued'?'排队中':'进行中')+'；任务会在后台继续。本页不会自动轮询或重载，点击上方“刷新最新评分结果”查看进度。';
     }
     if(isReleased){
       const published=document.createElement('div');

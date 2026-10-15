@@ -25,9 +25,10 @@ def grade_submission_task(job_id: int) -> None:
             return
         if row["status"] == "completed":
             return
-        # RQ retries re-enter after the pipeline recorded failed. Re-arm the
-        # durable DB state before the atomic queued -> running claim.
-        if row["status"] == "failed":
+        # An RQ hard timeout can kill the worker before the pipeline records
+        # failure, leaving the durable row in running. RQ retries are serialized
+        # for this job, so re-arm that prior attempt before the next claim too.
+        if row["status"] == "failed" or (row["status"] == "running" and int(row["queue_attempts"] or 0) > 0):
             conn.execute("UPDATE grading_jobs SET status='queued',result_json=NULL WHERE id=?", (job_id,))
         conn.execute(
             "UPDATE grading_jobs SET queue_attempts=?,last_started_at=?,last_error=NULL WHERE id=?",

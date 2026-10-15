@@ -47,7 +47,7 @@ def enqueue_rq_grading_job(job_id: int) -> dict[str, Any]:
         job = queue.enqueue(
             "app.rq_tasks.grade_submission_task",
             job_id,
-            job_timeout=settings.rq_job_timeout_seconds,
+            job_timeout=max(settings.rq_job_timeout_seconds, 3600),
             result_ttl=7 * 24 * 3600,
             failure_ttl=30 * 24 * 3600,
             retry=Retry(max=settings.rq_retry_max, interval=[60, 300, 900]),
