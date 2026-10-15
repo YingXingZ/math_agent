@@ -710,8 +710,8 @@ function addRegionPiece(key){
   selectRegionPiece(key,item.regions.length-1);
 }
 function regionHasRectangle(item){return Number(item?.width)<.999||Number(item?.height)<.999}
-function regionIsApproved(item){return !regionRectangles(item).some(r=>r._pending)&&(Boolean(item?._autoPdfAnchor||item?._autoPhotoAnchor)||(regionHasRectangle(item)&&Boolean(item?._regionConfirmed||item?._aiAccepted)))}
-function regionMappingStatus(item){if(item?._aiLocationFailed)return '自动定位未通过：没有可用题区（未按整页冒充作答）';if(item?._autoCropProposal)return `AI 自动定位候选 ${regionRectangles(item).length} 区（评分使用同一候选，待复核）`;if(item?._autoPdfAnchor)return 'PDF 原题号自动裁切（待教师复核）';if(item?._autoPhotoAnchor)return 'AI 自动框选并初评（待教师复核）';if(item?._regionConfirmed)return '教师已框选区域';if(item?._aiAccepted)return '已采用 AI 建议（待保存）';if(item?._aiSuggestedRegion)return 'AI 建议题区（可调整后保存）';if(item?._aiSuggestedPage)return 'AI 建议页（尚未框选确认）';return '尚未框选区域'}
+function regionIsApproved(item){return !item?._excludedFromAuto&&!regionRectangles(item).some(r=>r._pending)&&(Boolean(item?._autoPdfAnchor||item?._autoPhotoAnchor)||(regionHasRectangle(item)&&Boolean(item?._regionConfirmed||item?._aiAccepted)))}
+function regionMappingStatus(item){if(item?._excludedFromAuto)return '已移除自动框；重新初评不复用此框，退回整页识别';if(item?._aiLocationFailed)return '自动定位未通过：没有可用题区（未按整页冒充作答）';if(item?._autoCropProposal)return `AI 自动定位候选 ${regionRectangles(item).length} 区（评分使用同一候选，待复核）`;if(item?._autoPdfAnchor)return 'PDF 原题号自动裁切（待教师复核）';if(item?._autoPhotoAnchor)return 'AI 自动框选并初评（待教师复核）';if(item?._regionConfirmed)return '教师已框选区域';if(item?._aiAccepted)return '已采用 AI 建议（待保存）';if(item?._aiSuggestedRegion)return 'AI 建议题区（可调整后保存）';if(item?._aiSuggestedPage)return 'AI 建议页（尚未框选确认）';return '尚未框选区域'}
 function normalizeSuggestedRegion(raw,pages){
   if(!raw||typeof raw!=='object')return null;
   const pageIndex=Number(raw.page_index),x=Number(raw.x),y=Number(raw.y),width=Number(raw.width),height=Number(raw.height);
@@ -742,11 +742,13 @@ async function renderRegionMapper(submissionId, questions){
   section.id='regionMapper';
   section.className='card';
   section.style.marginTop='18px';
-  section.innerHTML='<style>#regionMapper .region-layout{display:grid;grid-template-columns:minmax(250px,300px) minmax(0,1fr);gap:16px;align-items:start}#regionMapper .region-question-list{max-height:76vh;overflow:auto;position:sticky;top:12px}#regionMapper .region-question-list .item{display:block;padding:10px;margin-bottom:6px;cursor:pointer}#regionMapper .region-question-list .item.active{border:2px solid #4f46e5;background:#eef2ff}#regionMapper .region-question-list .item select{margin:8px 6px 0 0}#regionMapper #regionCanvas{min-width:0;overflow:auto;max-height:80vh}#regionMapper .region-overview-pages{display:flex;gap:12px;flex-wrap:wrap}#regionMapper .region-overview-page{width:min(100%,300px);position:relative;border:1px solid #cbd5e1;border-radius:8px;overflow:hidden;cursor:pointer}#regionMapper .region-overview-page img{display:block;width:100%}#regionMapper .region-overview-box{position:absolute;border:2px solid #f59e0b;background:#f59e0b28;box-sizing:border-box;font-size:12px;font-weight:700;color:#111827}#regionMapper .region-overview-box.active{border-color:#2563eb;background:#2563eb33}#regionMapper .region-overview-box span{background:#fff;padding:1px 3px}#regionMapper .region-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}@media(max-width:850px){#regionMapper .region-layout{grid-template-columns:1fr}#regionMapper .region-question-list{position:static;max-height:300px}}</style><h3>整份作业：题号 / 小问批量切分</h3><p class="hint">优先用打印题干定位题目边界，再自动切分作答区并进入待教师复核；普通手写页会退回语义定位。若自动候选仍不准，可在右侧调整后保存并重新初评。蓝框为当前题，橙框为其他题。</p>';
+  section.innerHTML='<style>#regionMapper .region-layout{display:grid;grid-template-columns:minmax(250px,300px) minmax(0,1fr);gap:16px;align-items:start}#regionMapper .region-question-list{max-height:76vh;overflow:auto;position:sticky;top:12px}#regionMapper .region-question-list .item{display:block;padding:10px;margin-bottom:6px;cursor:pointer}#regionMapper .region-question-list .item.active{border:2px solid #4f46e5;background:#eef2ff}#regionMapper .region-question-list .item select{margin:8px 6px 0 0}#regionMapper #regionCanvas{min-width:0;overflow:auto;max-height:80vh}#regionMapper .region-overview-pages{display:flex;gap:12px;flex-wrap:wrap}#regionMapper .region-overview-page{width:min(100%,300px);position:relative;border:1px solid #cbd5e1;border-radius:8px;overflow:hidden;cursor:pointer}#regionMapper .region-overview-page img{display:block;width:100%}#regionMapper .region-overview-box{position:absolute;border:2px solid #f59e0b;background:#f59e0b28;box-sizing:border-box;font-size:12px;font-weight:700;color:#111827}#regionMapper .region-overview-box.active{border-color:#2563eb;background:#2563eb33}#regionMapper .region-overview-box span{background:#fff;padding:1px 3px}#regionMapper .region-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}@media(max-width:850px){#regionMapper .region-layout{grid-template-columns:1fr}#regionMapper .region-question-list{position:static;max-height:300px}}</style><h3>整份作业：题号 / 小问批量切分</h3><p class="hint">优先使用教师确认的题区和打印题号锚点；没有打印锚点时再使用 AI 候选。橙框是自动候选、尚未人工确认，可在对应题目点击“移除本题框”；蓝框是当前编辑区域。清除后保存，重评不会再次套用该题的旧候选框。</p>';
   host.append(section);
   try{
     const data=await Promise.all([api('/submissions/'+submissionId+'/pages'),api('/submissions/'+submissionId+'/question-regions')]);
     const pageInfo=data[0], saved=data[1].mappings||[];
+    const excludedKeys=new Set((data[1].excluded_keys||[]).map(regionMappingKey));
+    const excludedRows=new Map((data[1].excluded_keys||[]).map(item=>[regionMappingKey(item),item]));
     const existing={};
     saved.forEach(item=>existing[regionMappingKey(item)]={...item,_regionConfirmed:true});
     const questionKeys=new Set((questions||[]).map(regionMappingKey));
@@ -770,6 +772,10 @@ async function renderRegionMapper(submissionId, questions){
       // The region API stores only geometry for some older submissions.  Always
       // restore the immutable question identity from the current review item;
       // otherwise a valid visual rectangle is rejected by the save endpoint.
+      if(excludedKeys.has(key)){
+        const pageNo=Number(excludedRows.get(key)?.page_no)||Number(existing[key]?.page_no)||1;
+        existing[key]={question_id:item.question_id,subpart_no:item.subpart_no||'',sort_order:item.sort_order,page_no:pageNo,x:0,y:0,width:1,height:1,regions:[{page_no:pageNo,x:0,y:0,width:1,height:1}],_excludedFromAuto:true};
+      }
       existing[key].question_id=Number(item.question_id);
       existing[key].subpart_no=String(item.subpart_no||'');
       existing[key].sort_order=Number(item.sort_order);
@@ -789,10 +795,11 @@ async function renderRegionMapper(submissionId, questions){
       const controls=document.createElement('div');controls.style.display='flex';controls.style.gap='8px';controls.style.flexWrap='wrap';
       const select=document.createElement('select');select.style.width='110px';select.style.marginTop='0';
       regionMapperState.pages.forEach(page=>{const opt=document.createElement('option');opt.value=page.page_no;opt.textContent='第 '+page.page_no+' 页';if(Number(mapping.page_no)===Number(page.page_no))opt.selected=true;select.append(opt)});
-      select.onchange=()=>{mapping.page_no=Number(select.value);mapping.x=0;mapping.y=0;mapping.width=1;mapping.height=1;mapping.regions[mapping._activeRegion||0]._pending=true;mapping._regionConfirmed=false;mapping._aiAccepted=false;mapping._aiSuggestedRegion=false;updateRegionStatus(key);openRegionCanvas(key,true)};
+      select.onchange=()=>{mapping.page_no=Number(select.value);mapping.x=0;mapping.y=0;mapping.width=1;mapping.height=1;mapping._excludedFromAuto=false;mapping.regions[mapping._activeRegion||0]._pending=true;mapping._regionConfirmed=false;mapping._aiAccepted=false;mapping._aiSuggestedRegion=false;updateRegionStatus(key);openRegionCanvas(key,true)};
       const button=document.createElement('button');button.className='btn secondary';button.type='button';button.textContent='框选区域';button.onclick=()=>openRegionCanvas(key,true);
       const add=document.createElement('button');add.className='btn secondary';add.textContent='+ 追加续页 / 区域';add.onclick=()=>addRegionPiece(key);
-      controls.append(select,button,add);row.append(title,controls);list.append(row);
+      const clear=document.createElement('button');clear.className='btn secondary';clear.type='button';clear.textContent='移除本题框';clear.onclick=()=>clearRegionMapping(key);
+      controls.append(select,button,add,clear);row.append(title,controls);list.append(row);
     });
     const continuous=document.createElement('button');continuous.className='btn secondary';continuous.style.margin='12px 0 0 8px';continuous.textContent='连续框选剩余题区';continuous.onclick=beginContinuousRegionSelection;
     const save=document.createElement('button');save.className='btn';save.style.margin='12px 0 0 8px';save.textContent='保存调整并重新初评';save.onclick=saveRegionMappings;
@@ -810,7 +817,17 @@ function beginContinuousRegionSelection(){
   const next=nextUnconfirmedRegionKey(null);
   if(!next){alert('所有题区都已确认或采用建议，可直接一次保存并批量重新初评。');return}
   openRegionCanvas(next,true);
-}function updateRegionStatus(key){
+}function clearRegionMapping(key){
+  const state=regionMapperState;if(!state)return;
+  const item=state.mappings[key];if(!item)return;
+  const pageNo=Number(item.page_no)||1;
+  item.regions=[{page_no:pageNo,x:0,y:0,width:1,height:1}];item._activeRegion=0;
+  Object.assign(item,item.regions[0]);
+  for(const flag of ['_regionConfirmed','_aiAccepted','_aiSuggestedRegion','_autoPdfAnchor','_autoPhotoAnchor','_autoCropProposal','_aiSuggestedPage','_aiLocationFailed'])delete item[flag];
+  item._excludedFromAuto=true;
+  updateRegionStatus(key);openRegionCanvas(key,true);
+}
+function updateRegionStatus(key){
   const state=regionMapperState;if(!state)return;
   const item=state.mappings[key],node=document.getElementById('regionStatus_'+key.replaceAll('|','_'));
   if(node)node.textContent=regionRectangles(item).length+' 个区域（页 '+regionRectangles(item).map(r=>r.page_no).join('、')+'），'+regionMappingStatus(item)+(regionRectangles(item).some(r=>r._pending)?'；有区域尚未框选':'');
@@ -860,6 +877,7 @@ function renderRegionOverview(){
   });
   frame.append(rect);root.append(note,frame);
   const paint=()=>{
+    rect.style.display=regionHasRectangle(mapping)?'block':'none';
     rect.style.left=(mapping.x*100)+'%';rect.style.top=(mapping.y*100)+'%';rect.style.width=(mapping.width*100)+'%';rect.style.height=(mapping.height*100)+'%';
   };
   paint();
@@ -869,6 +887,7 @@ function renderRegionOverview(){
   };
   frame.onpointermove=event=>{
     if(!start)return;const box=frame.getBoundingClientRect();const x=Math.max(0,Math.min(1,(event.clientX-box.left)/box.width));const y=Math.max(0,Math.min(1,(event.clientY-box.top)/box.height));
+    mapping._excludedFromAuto=false;
     mapping.x=Math.min(start.x,x);mapping.y=Math.min(start.y,y);mapping.width=Math.max(.01,Math.abs(x-start.x));mapping.height=Math.max(.01,Math.abs(y-start.y));paint();renderRegionOverview();
   };
   frame.onpointerup=event=>{if(start){start=null;mapping._regionConfirmed=true;mapping._aiAccepted=false;mapping._aiSuggestedRegion=false;mapping.regions[mapping._activeRegion||0]._pending=false;updateRegionStatus(key);frame.releasePointerCapture?.(event.pointerId)}};
@@ -885,12 +904,13 @@ async function saveRegionMappings(){
   const invalid=approved.filter(([,item])=>!Number.isInteger(Number(item.question_id))||Number(item.question_id)<=0||!Number.isInteger(Number(item.sort_order))||Number(item.sort_order)<1);
   if(invalid.length){alert('有 '+invalid.length+' 个题区缺少题目编号，已阻止保存以免丢失映射。请刷新本页后重新打开切分工具。');return}
   const mappings=approved.map(([,item])=>{const regions=regionRectangles(item).map(r=>({page_no:Number(r.page_no),x:Number(r.x),y:Number(r.y),width:Number(r.width),height:Number(r.height)}));return {question_id:Number(item.question_id),subpart_no:String(item.subpart_no||''),sort_order:Number(item.sort_order),...regions[0],regions}});
-  if(!mappings.length){alert('请先框选至少一道题；整页默认范围不会被当作已确认切分。');return}
+  const excluded_keys=Object.values(state.mappings).filter(item=>item._excludedFromAuto).map(item=>({question_id:Number(item.question_id),subpart_no:String(item.subpart_no||''),sort_order:Number(item.sort_order),page_no:Number(item.page_no)||1}));
+  if(!mappings.length&&!excluded_keys.length){alert('请先框选题区，或点击“移除本题框”明确清除错误的自动框。');return}
   state.saving=true;
   document.querySelectorAll('#regionMapper .region-actions button').forEach(button=>button.disabled=true);
   try{
-    const result=await api('/submissions/'+state.submissionId+'/question-regions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mappings})});
-    alert(result.message+'\n\n已保存切分，正在按已确认题区批量重新初评。未确认题目仍需教师复核。');
+    const result=await api('/submissions/'+state.submissionId+'/question-regions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mappings,excluded_keys})});
+    alert(result.message+'\n\n正在按已确认题区重新初评；被移除自动框的题目退回整页识别并进入教师复核。');
     await retryGrading(state.submissionId);
   }catch(error){alert('保存映射失败：'+error.message)}
   finally{state.saving=false;document.querySelectorAll('#regionMapper .region-actions button').forEach(button=>button.disabled=false)}

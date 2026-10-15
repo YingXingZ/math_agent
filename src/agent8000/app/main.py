@@ -247,8 +247,16 @@ class SubmissionRegionIn(AnswerRectangleIn):
     regions: list[AnswerRectangleIn] | None = Field(default=None, min_length=1, max_length=12)
 
 
+class SubmissionRegionKeyIn(BaseModel):
+    question_id: int = Field(gt=0)
+    subpart_no: str = Field(default="", max_length=30)
+    sort_order: int = Field(ge=1)
+    page_no: int = Field(default=1, ge=1)
+
+
 class SubmissionRegionBatchIn(BaseModel):
-    mappings: list[SubmissionRegionIn] = Field(min_length=1, max_length=100)
+    mappings: list[SubmissionRegionIn] = Field(default_factory=list, max_length=100)
+    excluded_keys: list[SubmissionRegionKeyIn] = Field(default_factory=list, max_length=100)
 
 
 class AssignmentUpdateIn(BaseModel):
@@ -4130,7 +4138,13 @@ def submission_question_regions(submission_id: int, request: Request):
                FROM submission_question_regions WHERE submission_id=? ORDER BY sort_order,subpart_no""",
             (submission_id,),
         ).fetchall()
-    return {"submission_id": submission_id, "mappings": [public_mapping(row) for row in rows]}
+        excluded = conn.execute(
+            """SELECT question_id,subpart_no,sort_order,page_no FROM submission_region_exclusions
+               WHERE submission_id=? ORDER BY sort_order,subpart_no""",
+            (submission_id,),
+        ).fetchall()
+    return {"submission_id": submission_id, "mappings": [public_mapping(row) for row in rows],
+            "excluded_keys": [dict(item) for item in excluded]}
 
 
 @app.post("/api/submissions/{submission_id}/question-regions")
@@ -4177,6 +4191,27 @@ def save_submission_question_regions(submission_id: int, payload: SubmissionRegi
         mapping.update(mapping['regions'][0])
         mapping["question_id"], mapping["subpart_no"], mapping["sort_order"] = key
         mappings.append(mapping)
+    exclusions = []
+    excluded_seen = set()
+    for item in payload.excluded_keys:
+        raw_key = (item.question_id, item.subpart_no or "", item.sort_order)
+        key = raw_key
+        if key not in known:
+            candidates = known_by_slot.get((raw_key[1], raw_key[2]), [])
+            if len(candidates) == 1:
+                key = candidates[0]
+            else:
+                skipped.append(f"第 {raw_key[2]} 题{raw_key[1] or ''}")
+                continue
+        if key in seen:
+            raise HTTPException(422, "同一题目不能同时保留框选并标记移除")
+        if key in excluded_seen:
+            raise HTTPException(422, "同一题目/小问重复提交清除标记")
+        if item.page_no > len(pages):
+            raise HTTPException(422, "清除标记中的页码超出作业页面范围")
+        excluded_seen.add(key)
+        exclusions.append({"question_id": key[0], "subpart_no": key[1],
+                           "sort_order": key[2], "page_no": item.page_no})
     rectangles = [{**mapping, **region} for mapping in mappings for region in mapping['regions']]
     for index, first in enumerate(rectangles):
         for second in rectangles[index + 1:]:
@@ -4197,11 +4232,12 @@ def save_submission_question_regions(submission_id: int, payload: SubmissionRegi
             larger_covered = overlap_area / larger_area if larger_area else 0.0
             if smaller_covered > .85 and larger_covered > .60:
                 raise HTTPException(422, f"第 {first['sort_order']} 与第 {second['sort_order']} 题的框选区域几乎完全重复；请保留其中一个题区或调整后再保存")
-    if not mappings:
-        detail = "；".join(skipped[:4]) or "当前页面数据已过期"
-        raise HTTPException(422, f"没有可保存的有效映射（{detail}）。请刷新本页后重新框选。")
+    if not mappings and not exclusions:
+        detail = "；".join(skipped[:4]) or "请至少保留一个框选，或明确移除一个题目的自动框"
+        raise HTTPException(422, f"没有可保存的有效调整（{detail}）。")
     with connection() as conn:
         conn.execute("DELETE FROM submission_question_regions WHERE submission_id=?", (submission_id,))
+        conn.execute("DELETE FROM submission_region_exclusions WHERE submission_id=?", (submission_id,))
         now = datetime.now(timezone.utc).isoformat()
         conn.executemany(
             """INSERT INTO submission_question_regions(submission_id,question_id,subpart_no,sort_order,page_no,x,y,width,height,confirmed_by,confirmed_at,regions_json)
@@ -4209,18 +4245,26 @@ def save_submission_question_regions(submission_id: int, payload: SubmissionRegi
             [(submission_id, item["question_id"], item["subpart_no"] or "", item["sort_order"], item["page_no"],
               item["x"], item["y"], item["width"], item["height"], actor["id"], now, json.dumps(item['regions'])) for item in mappings],
         )
+        conn.executemany(
+            """INSERT INTO submission_region_exclusions(submission_id,question_id,subpart_no,sort_order,page_no,created_by,created_at)
+               VALUES(?,?,?,?,?,?,?)""",
+            [(submission_id, item["question_id"], item["subpart_no"], item["sort_order"],
+              item["page_no"], actor["id"], now) for item in exclusions],
+        )
         by_key = {(item["question_id"], item["subpart_no"] or "", item["sort_order"]): item for item in mappings}
         for item in result_items:
+            item.pop("teacher_page_mapping", None)
             key = (int(item.get("question_id") or 0), str(item.get("subpart_no") or ""), int(item.get("sort_order") or 0))
             if key in by_key:
                 item["teacher_page_mapping"] = by_key[key]
         result["teacher_page_mapping_confirmed_at"] = now
         conn.execute("UPDATE grading_jobs SET result_json=? WHERE submission_id=?", (json.dumps(result, ensure_ascii=False), submission_id))
     audit(actor, "submission.question_regions", "submission", submission_id, row["teacher_user_id"],
-          {"mapping_count": len(mappings), "skipped_count": len(skipped)})
+          {"mapping_count": len(mappings), "excluded_count": len(exclusions), "skipped_count": len(skipped)})
     suffix = (f"；已跳过 {len(skipped)} 项过期映射，请刷新后再处理" if skipped else "")
-    return {"ok": True, "mapping_count": len(mappings), "skipped_count": len(skipped),
-            "message": "题号/小问与页图区域的教师确认已保存。后续重跑初评仍会保留这些映射。" + suffix}
+    return {"ok": True, "mapping_count": len(mappings), "excluded_count": len(exclusions),
+            "skipped_count": len(skipped),
+            "message": "教师框选已保存；移除的题目将不再复用自动候选框，重新初评时退回整页识别并待教师复核。" + suffix}
 
 @app.post("/api/submissions/{submission_id}/review")
 def confirm_review(submission_id: int, decision: ReviewDecisionIn, request: Request):

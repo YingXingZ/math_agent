@@ -7,6 +7,16 @@ def ensure_region_schema(conn):
     columns = {row[1] for row in conn.execute('PRAGMA table_info(submission_question_regions)')}
     if columns and 'regions_json' not in columns:
         conn.execute("ALTER TABLE submission_question_regions ADD COLUMN regions_json TEXT NOT NULL DEFAULT '[]'")
+    conn.execute("""CREATE TABLE IF NOT EXISTS submission_region_exclusions(
+        submission_id INTEGER NOT NULL,
+        question_id INTEGER NOT NULL,
+        subpart_no TEXT NOT NULL DEFAULT '',
+        sort_order INTEGER NOT NULL,
+        page_no INTEGER NOT NULL DEFAULT 1,
+        created_by INTEGER,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY(submission_id,question_id,subpart_no,sort_order)
+    )""")
 
 
 def expand_regions(mapping):

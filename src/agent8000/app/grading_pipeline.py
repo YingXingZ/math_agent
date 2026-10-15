@@ -1834,17 +1834,27 @@ async def grade_submission(submission_id: int, only_question_id: int | None = No
                FROM submission_question_regions WHERE submission_id=?""", (submission_id,)
         ).fetchall()]
     regions = {(item["question_id"], item["subpart_no"] or "", item["sort_order"]): public_mapping(item) for item in region_rows}
-    all_manual = all((item['question_id'], item.get('subpart_no') or '', item['sort_order']) in regions for item in questions)
-    auto_pdf_regions = {} if all_manual else _infer_pdf_question_regions(submission["file_path"], questions)
+    with connection() as conn:
+        exclusion_rows = conn.execute(
+            "SELECT question_id,subpart_no,sort_order FROM submission_region_exclusions WHERE submission_id=?",
+            (submission_id,),
+        ).fetchall()
+    excluded_region_keys = {(int(item["question_id"]), str(item["subpart_no"] or ""), int(item["sort_order"])) for item in exclusion_rows}
+    locator_questions = [
+        item for item in questions
+        if (int(item["question_id"]), str(item.get("subpart_no") or ""), int(item["sort_order"])) not in regions
+        and (int(item["question_id"]), str(item.get("subpart_no") or ""), int(item["sort_order"])) not in excluded_region_keys
+    ]
+    auto_pdf_regions = _infer_pdf_question_regions(submission["file_path"], locator_questions) if locator_questions else {}
     # A PDF text layer may expose only one or two question anchors.  Treat that
     # as a useful first pass, not a reason to skip photo/VLM segmentation for
     # every remaining handwritten answer.
-    expected_question_ids = {int(item["question_id"]) for item in questions}
+    expected_question_ids = {int(item["question_id"]) for item in locator_questions}
     covered_question_ids = {int(key[0]) for key in auto_pdf_regions}
     auto_photo_regions: dict[tuple[int, str, int], dict[str, Any]] = {}
     florence_enabled = os.environ.get("MATH_FLORENCE_REGION_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
-    if not all_manual and (covered_question_ids != expected_question_ids or florence_enabled):
-        auto_photo_regions = await _infer_photo_question_regions(submission["file_path"], questions)
+    if locator_questions and (covered_question_ids != expected_question_ids or florence_enabled):
+        auto_photo_regions = await _infer_photo_question_regions(submission["file_path"], locator_questions)
     auto_regions = dict(auto_pdf_regions)
     for key, mapping in auto_photo_regions.items():
         # Florence may refine the boundary of a Qwen-assigned question even
@@ -1856,6 +1866,9 @@ async def grade_submission(submission_id: int, only_question_id: int | None = No
     prior_ai_regions = _prior_ai_suggested_regions(
         submission_id, questions, len(_submission_page_paths(submission["file_path"]))
     )
+    for key in excluded_region_keys:
+        prior_ai_regions.pop(key, None)
+        auto_regions.pop(key, None)
     for key, mapping in auto_regions.items():
         existing = regions.get(key)
         if not existing:
