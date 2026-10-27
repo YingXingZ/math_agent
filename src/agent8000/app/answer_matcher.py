@@ -35,6 +35,20 @@ def match_key(section_no: object, question_no: object, sub_no: object = None) ->
     return f"{section}/{question}" + (f"({sub})" if sub else "")
 
 
+def latex_noise_issues(text: object) -> list[str]:
+    """Flag obvious repeated OCR tokens as a human-review signal."""
+    commands = re.findall(r"\\[A-Za-z]+", str(text or ""))
+    if not commands:
+        return []
+    counts: dict[str, int] = {}
+    for command in commands:
+        counts[command] = counts.get(command, 0) + 1
+    command, count = max(counts.items(), key=lambda pair: pair[1])
+    if count >= 24 and count / len(commands) >= 0.22:
+        return [f"REPEATED_LATEX_COMMAND:{command}:{count}"]
+    return []
+
+
 def answer_json_to_staged(payload: dict[str, Any]) -> dict[str, Any]:
     """Adapt server_answer_parse.py JSON to mineru_review.create_session contract."""
     if payload.get("status") != "ok" or not (payload.get("meta") or {}).get("found"):
@@ -62,6 +76,7 @@ def answer_json_to_staged(payload: dict[str, Any]) -> dict[str, Any]:
             quality_issues.append("EMPTY_ANSWER")
         if not problem.get("source_image"):
             quality_issues.append("NO_SOURCE_IMAGE")
+        quality_issues.extend(latex_noise_issues(candidate))
         score = max(0.0, 1.0 - 0.35 * len(quality_issues))
         no = canonical_no(problem.get("problem_no"))
         items.append({

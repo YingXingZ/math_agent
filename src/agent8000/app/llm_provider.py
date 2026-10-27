@@ -137,8 +137,9 @@ async def grade_homework(images: list[str], problems: list[dict[str, Any]]) -> l
             "只为下列题目逐题评分，不得把相邻题答案串入当前题，也不得根据标准答案补写学生作答。"
             "按题号/题干定位；无法确认归属、题目或笔迹不清时给 needs_review=true，不能猜。"
             "接受数学等价写法；依据标准答案、解题步骤和满分给部分分。"
-            "每个 problem_id 必须恰好返回一条结果；recognized_work 只转写图中实际可见的当前题作答；"
-            "step_scores 的 max_score 合计不得超过本题满分，score 必须在 0 到满分之间。"
+            "若题目资料含 scoring_rubric，必须逐点评估并返回对应step_scores；若没有则仍须生成清晰的分步评分候选。"
+            "每个 problem_id 必须恰好返回一条结果；recognized_work只转写图中实际可见的当前题作答；"
+            "step_scores的max_score合计必须等于本题满分，score合计等于建议总分；evidence只能引用学生实际笔迹。"
             '仅输出 JSON：{"results":[{"problem_id":"...","recognized_work":"...",'
             '"score":0,"max_score":1,"correct":false,"answer_present":null,'
             '"work_complete":false,"confidence":0,"feedback":"...","needs_review":true,'

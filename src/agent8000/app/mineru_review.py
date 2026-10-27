@@ -12,6 +12,7 @@ This module also handles the post-approval chain:
 from __future__ import annotations
 
 import json
+import asyncio
 from datetime import datetime, timezone
 from typing import Any
 
@@ -22,6 +23,7 @@ from .evidence_client import client as evidence_client, url as evidence_url
 from .db import connection
 from .knowledge_bridge import retrieve_problem, retrieve_section_problems
 from .question_validation import validate_question
+from .answer_matcher import latex_noise_issues
 
 
 def _same(value: Any, other: Any) -> bool:
@@ -49,11 +51,20 @@ def _summarize_session(session_id: int) -> dict[str, Any]:
             "SELECT COUNT(*) FROM mineru_review_items WHERE session_id=? AND status='rejected'", (session_id,)
         ).fetchone()[0]
         pending = total - approved - rejected
+        mapped, unique_targets = conn.execute(
+            """SELECT COUNT(source_problem_id), COUNT(DISTINCT source_problem_id)
+               FROM mineru_review_items WHERE session_id=?""",
+            (session_id,),
+        ).fetchone()
     return {
         "total": total,
         "approved": approved,
         "rejected": rejected,
         "pending": pending,
+        # Number matching is only a provisional link to a question-bank record.
+        "number_matched": int(mapped or 0),
+        "unmatched": max(0, total - int(mapped or 0)),
+        "unique_targets": int(unique_targets or 0),
         "completion_rate": round((approved + rejected) / max(1, total), 2),
     }
 
@@ -192,7 +203,17 @@ async def create_session(answer_book: dict) -> dict:
                 ),
                 None,
             )
-            score = float((item.get("quality") or {}).get("score", 0) or 0)
+            quality = dict(item.get("quality") or {})
+            issues = list(quality.get("issues") or [])
+            noise_issues = latex_noise_issues(item.get("text") or "")
+            for issue in noise_issues:
+                if issue not in issues:
+                    issues.append(issue)
+            if noise_issues:
+                quality["issues"] = issues
+                quality["score"] = min(float(quality.get("score", 1.0) or 0), 0.3)
+                quality["pass"] = False
+            score = float(quality.get("score", 0) or 0)
             confidence = round(score if target else 0.0, 2)
             evidence = {
                 "item_id": item.get("item_id"),
@@ -208,7 +229,7 @@ async def create_session(answer_book: dict) -> dict:
                 str(sub) if sub is not None else None,
                 str(item.get("text") or ""),
                 confidence,
-                json.dumps(item.get("quality") or {}, ensure_ascii=False),
+                json.dumps(quality, ensure_ascii=False),
                 json.dumps(evidence, ensure_ascii=False),
             ))
         conn.executemany(
@@ -231,21 +252,37 @@ def get_session(session_id: int) -> dict[str, Any]:
         row = conn.execute(
             "SELECT * FROM mineru_review_sessions WHERE id=?", (session_id,)
         ).fetchone()
+        duplicates = []
+        if row and row["document_name"]:
+            duplicates = [dict(x) for x in conn.execute(
+                """SELECT id, created_at, status FROM mineru_review_sessions
+                   WHERE document_name=? AND id<>? ORDER BY id DESC LIMIT 5""",
+                (row["document_name"], session_id),
+            ).fetchall()]
     if not row:
         raise LookupError("审核批次不存在")
     item = dict(row)
     item["summary"] = _update_session_status(session_id)
+    item["same_name_sessions"] = duplicates
     return item
 
 
-def list_items(session_id: int) -> list[dict]:
+def list_items(
+    session_id: int, *, limit: int | None = None, offset: int = 0,
+    status: str | None = None,
+) -> list[dict]:
+    clauses = ["session_id=?"]
+    args: list[Any] = [session_id]
+    if status in {"pending", "approved", "rejected"}:
+        clauses.append("status=?")
+        args.append(status)
+    sql = "SELECT * FROM mineru_review_items WHERE " + " AND ".join(clauses)
+    sql += " ORDER BY section_no, CAST(question_no AS INTEGER), subquestion_no, id"
+    if limit is not None:
+        sql += " LIMIT ? OFFSET ?"
+        args.extend([max(1, min(int(limit), 100)), max(0, int(offset))])
     with connection() as conn:
-        rows = conn.execute(
-            """SELECT * FROM mineru_review_items
-               WHERE session_id=?
-               ORDER BY section_no, CAST(question_no AS INTEGER), subquestion_no""",
-            (session_id,),
-        ).fetchall()
+        rows = conn.execute(sql, args).fetchall()
     result = []
     for row in rows:
         item = dict(row)
@@ -350,6 +387,121 @@ async def approve_item(
         "cache_sync": cache_result,
     }
 
+
+async def bulk_approve_items(session_id: int, item_ids: list[int]) -> dict[str, Any]:
+    """Write back only uniquely matched, clean OCR candidates.
+
+    A question number alone is not enough: answer books can repeat numbers across
+    exercise sets. The source problem stem must occur in exactly one pending
+    candidate for that target before the candidate can be imported.
+    """
+    if not item_ids or len(item_ids) > 50:
+        raise ValueError("每次批量确认需选择 1–50 条")
+    with connection() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM mineru_review_items WHERE session_id=? AND id IN ({','.join('?' for _ in item_ids)})",
+            [session_id, *item_ids],
+        ).fetchall()
+        target_ids = list({str(row["source_problem_id"]) for row in rows if row["source_problem_id"]})
+        pending_by_target: dict[str, list[str]] = {}
+        if target_ids:
+            placeholders = ",".join("?" for _ in target_ids)
+            pending_rows = conn.execute(
+                f"SELECT source_problem_id,candidate_text FROM mineru_review_items "
+                f"WHERE session_id=? AND status='pending' AND source_problem_id IN ({placeholders})",
+                [session_id, *target_ids],
+            ).fetchall()
+            for pending_row in pending_rows:
+                pending_by_target.setdefault(str(pending_row["source_problem_id"]), []).append(
+                    str(pending_row["candidate_text"] or "")
+                )
+    by_id = {int(row["id"]): dict(row) for row in rows}
+    semaphore = asyncio.Semaphore(4)
+
+    def normalized_match_text(value: str) -> str:
+        import unicodedata
+        normalized = unicodedata.normalize("NFKC", str(value or "")).lower()
+        return "".join(
+            char for char in normalized
+            if char.isalnum() or "\u3400" <= char <= "\u9fff"
+        )
+
+    def stem_matches(source_text: str, candidate_text: str) -> bool:
+        normalized_stem = normalized_match_text(source_text)
+        normalized_candidate = normalized_match_text(candidate_text)
+        if len(normalized_stem) >= 12 and normalized_stem in normalized_candidate:
+            return True
+        # Formula OCR often changes TeX spacing/commands while preserving the
+        # Chinese prompt. Use a conservative fuzzy check only for long prompts.
+        import difflib
+        import unicodedata
+        source_cjk = "".join(
+            char for char in unicodedata.normalize("NFKC", str(source_text or ""))
+            if "\u3400" <= char <= "\u9fff"
+        )
+        candidate_cjk = "".join(
+            char for char in unicodedata.normalize("NFKC", str(candidate_text or ""))
+            if "\u3400" <= char <= "\u9fff"
+        )
+        if len(source_cjk) < 20:
+            return False
+        candidate_prefix = candidate_cjk[:len(source_cjk) + 80]
+        for size in range(max(20, len(source_cjk) - 5), len(source_cjk) + 6):
+            for offset in range(max(1, len(candidate_prefix) - size + 1)):
+                if difflib.SequenceMatcher(
+                    None, source_cjk, candidate_prefix[offset:offset + size], autojunk=False
+                ).ratio() >= 0.90:
+                    return True
+        return False
+
+    async def one(item_id: int) -> dict[str, Any]:
+        item = by_id.get(item_id)
+        if not item:
+            return {"item_id": item_id, "ok": False, "error": "条目不存在或不属于此批次"}
+        quality = json.loads(item.get("quality_json") or "{}")
+        text = str(item.get("candidate_text") or "").strip()
+        if item.get("status") != "pending":
+            return {"item_id": item_id, "ok": False, "error": "条目已处理"}
+        if not item.get("source_problem_id"):
+            return {"item_id": item_id, "ok": False, "error": "题号未精确匹配"}
+        if not quality.get("pass") or float(quality.get("score") or 0) < 0.9:
+            return {"item_id": item_id, "ok": False, "error": "未通过 OCR 质量门槛"}
+        if latex_noise_issues(text):
+            return {"item_id": item_id, "ok": False, "error": "检测到重复公式命令，疑似 OCR 噪声"}
+        if not text or len(text) > 14000:
+            return {"item_id": item_id, "ok": False, "error": "答案为空或过长，需人工核对"}
+        async with semaphore:
+            try:
+                problem = await retrieve_problem(str(item["source_problem_id"]))
+                if not _same(problem.get("problem_no"), item.get("question_no")):
+                    return {"item_id": item_id, "ok": False, "error": "题号与题库记录不一致"}
+                source_sub = str(problem.get("sub_no") or "").strip()
+                candidate_sub = str(item.get("subquestion_no") or "").strip()
+                if source_sub != ("" if candidate_sub in {"", "0"} else candidate_sub):
+                    return {"item_id": item_id, "ok": False, "error": "小问编号与题库记录不一致"}
+                source_stem_text = str(problem.get("content_text") or "")
+                if not stem_matches(source_stem_text, text):
+                    return {"item_id": item_id, "ok": False, "error": "答案文本未包含原题题干，不能自动确认"}
+                target = str(item["source_problem_id"])
+                matching_candidates = sum(
+                    1 for candidate in pending_by_target.get(target, [])
+                    if stem_matches(source_stem_text, candidate)
+                )
+                if matching_candidates != 1:
+                    return {"item_id": item_id, "ok": False, "error": "同一题有多个题干匹配候选，需先处理冲突"}
+                result = await approve_item(item_id, text, "", "批量确认：题号精确匹配且通过 OCR 质量门槛")
+                return {"item_id": item_id, "ok": True, "result": result}
+            except Exception as exc:
+                return {"item_id": item_id, "ok": False, "error": str(exc)[:200]}
+
+    results = await asyncio.gather(*(one(int(item_id)) for item_id in dict.fromkeys(item_ids)))
+    return {
+        "session_id": session_id,
+        "approved": sum(bool(item["ok"]) for item in results),
+        "failed": sum(not item["ok"] for item in results),
+        "results": results,
+        "summary": _update_session_status(session_id),
+    }
 
 def reject_item(item_id: int, note: str = "") -> dict:
     with connection() as conn:

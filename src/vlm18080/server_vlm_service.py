@@ -512,6 +512,38 @@ def solve_from_problem_image(req: SolveImageRequest):
     return result
 
 
+
+@app.post("/transcribe-answer-image")
+def transcribe_answer_image(req: SolveImageRequest):
+    """Transcribe a teacher-provided answer/solution page without solving it."""
+    ensure_model()
+    try:
+        image = Image.open(io.BytesIO(base64.b64decode(req.image_base64))).convert("RGB")
+    except Exception as exc:
+        raise HTTPException(400, "invalid answer image") from exc
+    prompt = """图片是教材或教师提供的标准答案/解析页，不是待求解题目。
+请只忠实转写图片中已有的答案与推导，不要重新解题、不要补写图片没有的步骤，也不要把题干抄进答案。
+保留题号、小问编号、数学公式和原有结论；看不清的内容写[不清]，不要猜。
+只输出严格 JSON，不要 Markdown：
+{"answer_text":"最终答案，若图中没有单独列出则从原文已有结论摘录","solution_text":"图片中实际印出的推导/解析","confidence":0.0,"risks":[]}"""
+    raw = generate([{"role": "user", "content": [
+        {"type": "image", "image": image}, {"type": "text", "text": prompt}]}], 2200)
+    result = try_parse_json(raw) or {}
+    answer = str(result.get("answer_text") or "").strip()
+    solution = str(result.get("solution_text") or "").strip()
+    try:
+        confidence = max(0.0, min(1.0, float(result.get("confidence") or 0)))
+    except Exception:
+        confidence = 0.0
+    risks = result.get("risks") if isinstance(result.get("risks"), list) else []
+    if not answer and not solution:
+        solution = raw.strip()
+        confidence = min(confidence, 0.3)
+        risks = [*risks, "答案图片未按预期结构识别，请人工核对转写"]
+    return {"answer_text": answer, "solution_text": solution,
+            "confidence": confidence, "risks": [str(x) for x in risks],
+            "model": "Qwen2.5-VL-3B-Instruct", "needs_teacher_review": True}
+
 def _recover_stem_only(image, req, prev: dict) -> dict:
     """Retry with a prompt that asks only for the stem transcription."""
     prompt = f"""图片是教材原题截图（章节 {req.section_no}，第 {req.problem_no} 题）。

@@ -79,17 +79,25 @@ async def build_reference(problem, ask):
     if len(parts)<2: return None
     answers=[]
     for number,text in parts:
+        # Qwen independently answers every subquestion. For supported limit
+        # forms, keep the symbolic result alongside it as a separate check.
         symbolic=limit_answer(text)
-        if symbolic:
-            answers.append({'part_no':number,**symbolic,'solution':'由原题表达式独立进行符号极限/级数计算核验。'})
-            continue
         result=await ask('/no_think\n独立求解下面一个数学小问。不接收学生作答，不参考其他题答案。'
-            '不得猜测缺失题干；无把握时 complete=false。输出 JSON：'
+            '不得猜测缺失题干；无把握时 complete=false。答案必须覆盖本小问最终结论，solution给出必要推导。输出 JSON：'
             '{"complete":true,"answer":"","solution":"","risks":[]}。'
             +f'本题 {problem.get("problem_no")}，小问 ({number})：'+text,(),1800)
-        answers.append({'part_no':number,'answer':str(result.get('answer') or ''),'solution':str(result.get('solution') or ''),
-                        'verification':'model_generated_pending_review','complete':result.get('complete') is True and not result.get('risks')})
-    usable=(set(expected)=={r['part_no'] for r in answers} and all(r['answer'] and (r.get('complete') or r['verification']=='sympy_from_question_text') for r in answers))
+        qwen_answer=str(result.get('answer') or '').strip()
+        entry={'part_no':number,'answer':qwen_answer,'qwen_answer':qwen_answer,
+               'solution':str(result.get('solution') or ''),
+               'verification':'qwen_generated_pending_teacher_review',
+               'complete':result.get('complete') is True and bool(qwen_answer) and not result.get('risks')}
+        if symbolic:
+            entry['symbolic_answer']=symbolic['answer']
+            entry['symbolic_latex']=symbolic['latex']
+            entry['symbolic_verification']=symbolic['verification']
+            entry['verification']='qwen_generated_with_symbolic_check_pending_teacher_review'
+        answers.append(entry)
+    usable=(set(expected)=={r['part_no'] for r in answers} and all(r['answer'] and r.get('complete') for r in answers))
     return {'complete':usable,'usable':usable,'covered_parts':expected,'parts':answers,
             'answer':'\n'.join(f"({r['part_no']}) {r['answer']}" for r in answers),
             'solution':'\n'.join(f"({r['part_no']}) {r['solution']}" for r in answers),

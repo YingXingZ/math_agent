@@ -37,7 +37,7 @@ class TeachingTaskConfirmIn(BaseModel):
 
 
 _EXERCISE_RE = re.compile(
-    r"(?:P|第\s*)(?P<page>\d+)\s*(?:页)?\s*[,，]?\s*(?:EX|练习)\s*(?P<section>\d+\.\d+)\s*[:：]?\s*(?P<body>[^\n。；;]+)",
+    r"(?:P|第\s*)(?P<page>\d+)\s*(?:页)?\s*[,，]?\s*(?:EX|练习|习题)\s*(?P<section>\d+\.\d+)\s*[:：]?\s*(?P<body>[^\n。；;]+)",
     re.IGNORECASE,
 )
 
@@ -82,7 +82,7 @@ def _requested_problem_numbers(text: str) -> list[str]:
 def _parse_references(message: str) -> list[dict]:
     """Split at every page + exercise marker; never leak numbers across sections."""
     marker = re.compile(
-        r"(?:P|第\s*)(?P<page>\d+)\s*(?:页)?\s*[,，]?\s*(?:EX|练习)\s*(?P<section>\d+\.\d+)\s*[:：]?",
+        r"(?:P|第\s*)(?P<page>\d+)\s*(?:页)?\s*[,，]?\s*(?:EX|练习|习题)\s*(?P<section>\d+\.\d+)\s*[:：]?",
         re.IGNORECASE,
     )
     matches = list(marker.finditer(message))
@@ -96,13 +96,13 @@ def _parse_references(message: str) -> list[dict]:
     return items
 
 _CHINESE_NUMBERS = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
-_SIMPLE_EX_RE = re.compile(r"(?:EX|练习)\s*(?P<section>\d+\.\d+)\s*(?:第\s*)?(?P<numbers>[零一二三四五六七八九十\d、,，]+)\s*题", re.I)
+_SIMPLE_EX_RE = re.compile(r"(?:EX|练习|习题)\s*(?P<section>\d+\.\d+)\s*(?:第\s*)?(?P<numbers>[零一二三四五六七八九十\d、,，]+)\s*题", re.I)
 
 
 def _parse_simple_exercise_references(message: str) -> list[dict]:
     """Parse explicit exercise numbers even when page information is absent."""
     items = []
-    for match in re.finditer(r"(?:EX|练习)\s*(?P<section>\d+\.\d+)(?P<body>[^\n。；;]{0,160})", message, re.I):
+    for match in re.finditer(r"(?:EX|练习|习题)\s*(?P<section>\d+\.\d+)(?P<body>[^\n。；;]{0,160})", message, re.I):
         for number in _requested_problem_numbers(match.group("body")):
             items.append({"page": None, "section": match.group("section"),
                           "problem_no": number, "instruction": _instruction(message, number)})
@@ -537,7 +537,7 @@ def teacher_chat(payload: TeacherChatIn, request: Request):
     with connection() as conn:
         _class_for_actor(conn, payload.class_id, actor)
     message = payload.message.strip()
-    explicit_exercise_request = bool(_EXERCISE_RE.search(message) or re.search(r"(?:EX|练习)\s*\d+\.\d+", message, re.I))
+    explicit_exercise_request = bool(_EXERCISE_RE.search(message) or re.search(r"(?:EX|练习|习题)\s*\d+\.\d+", message, re.I))
     if explicit_exercise_request:
         drafts = _assignment_drafts(message)
         if len(drafts) > 1:
@@ -550,7 +550,7 @@ def teacher_chat(payload: TeacherChatIn, request: Request):
     if any(word in message for word in ("发布作业", "布置", "组题", "组一份", "出作业", "生成作业", "作业草稿", "练习草稿")):
         # Explicit numbering is authoritative. Never silently replace it with
         # a chapter-wide recommendation when parsing or matching is incomplete.
-        if re.search(r"(?:EX|练习)\s*\d+\.\d+.*?(?:第\s*)?\d+.*?题", message, re.I):
+        if re.search(r"(?:EX|练习|习题)\s*\d+\.\d+.*?(?:第\s*)?\d+.*?题", message, re.I):
             return {"intent": "help", "message": "已识别到明确题号，但未能完整解析。请按“Ex1.3 第7题和第8题”重试；系统不会用本章节其他题自动补齐。"}
         draft = _goal_assignment_draft(message)
         if draft is None:

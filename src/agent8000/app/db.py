@@ -258,6 +258,18 @@ CREATE TABLE IF NOT EXISTS textbook_documents (
   owner_teacher_id INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP,
   volume TEXT DEFAULT '', edition TEXT DEFAULT '', evidence_textbook_id TEXT
 );
+CREATE TABLE IF NOT EXISTS assignment_question_answer_overrides (
+  assignment_id INTEGER NOT NULL, question_id INTEGER NOT NULL, subpart_no TEXT NOT NULL,
+  answer TEXT NOT NULL, updated_by INTEGER, updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(assignment_id,question_id,subpart_no)
+);
+CREATE TABLE IF NOT EXISTS question_answer_overrides (
+  teacher_user_id INTEGER NOT NULL, question_id INTEGER NOT NULL, subpart_no TEXT NOT NULL,
+  answer TEXT NOT NULL, updated_by INTEGER, updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(teacher_user_id,question_id,subpart_no)
+);
+CREATE INDEX IF NOT EXISTS idx_question_answer_overrides_question
+  ON question_answer_overrides(teacher_user_id,question_id);
 CREATE TABLE IF NOT EXISTS assignment_question_rubric_overrides (
   assignment_id INTEGER NOT NULL, question_id INTEGER NOT NULL, rubric TEXT NOT NULL DEFAULT '',
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(assignment_id,question_id)

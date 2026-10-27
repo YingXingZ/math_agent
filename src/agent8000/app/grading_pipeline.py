@@ -1,16 +1,19 @@
 """Evidence-first grading pipeline for the teacher-facing agent."""
 from __future__ import annotations
 
+import asyncio
 import base64
 from difflib import SequenceMatcher
 import io
 import json
+import math
 import os
 import shutil
 import subprocess
 import tempfile
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +25,7 @@ from .db import connection, normalize_question_type
 from .agent_tools import run_tool_use
 from .llm_provider import grade_homework, model_runtime, recognize_formula
 from .region_sets import expand_regions, public_mapping
-from .crop_grading import complete_reference, grade_crops
+from .crop_grading import complete_reference, generate_rubric, grade_crops
 from .photo_semantic_locator import (orient_locator_pages, restore_region_coordinates,
                                     verify_crop_matches_problem, verify_recognized_work_matches_problem)
 from .reference_tools import scope_reference
@@ -319,15 +322,49 @@ def _render_pdf_pages(path: Path) -> list[Path]:
     rendered_dir = path.parent / f"{path.stem}_qwen_pages"
     lock_path = path.parent / f".{path.stem}_qwen_pages.lock"
 
+    cache_manifest = rendered_dir / ".render-cache.json"
+    source_stat = path.stat()
+    cache_identity = {
+        "source_size": source_stat.st_size,
+        "source_mtime_ns": source_stat.st_mtime_ns,
+        "dpi": settings.qwen_pdf_render_dpi,
+        "page_count": page_count,
+    }
+
+    def write_cache_manifest(pages: list[Path]) -> None:
+        manifest = dict(cache_identity)
+        manifest["pages"] = [{"name": page.name, "size": page.stat().st_size,
+                               "mtime_ns": page.stat().st_mtime_ns} for page in pages]
+        cache_manifest.write_text(json.dumps(manifest), encoding="utf-8")
+
     def complete_cache() -> list[Path] | None:
         pages = sorted(rendered_dir.glob("page-*.png"), key=lambda item: int(item.stem.rsplit("-", 1)[-1]))
         if len(pages) != page_count:
             return None
         try:
-            for page in pages:
-                with Image.open(page) as image:
-                    image.verify()
+            saved = json.loads(cache_manifest.read_text(encoding="utf-8"))
+            if any(saved.get(key) != value for key, value in cache_identity.items()):
+                return None
+            page_meta = saved.get("pages") or []
+            if len(page_meta) != len(pages):
+                return None
+            for page, meta in zip(pages, page_meta):
+                stat = page.stat()
+                if meta != {"name": page.name, "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}:
+                    return None
             return pages
+        except FileNotFoundError:
+            # Adopt complete legacy page caches once, then validate by cheap stat calls.
+            try:
+                if any(page.stat().st_mtime_ns < source_stat.st_mtime_ns for page in pages):
+                    return None
+                for page in pages:
+                    with Image.open(page) as image:
+                        image.verify()
+                write_cache_manifest(pages)
+                return pages
+            except Exception:
+                return None
         except Exception:
             return None
 
@@ -396,6 +433,7 @@ def _render_pdf_pages(path: Path) -> list[Path]:
             complete = complete_cache()
             if not complete:
                 raise ValueError("PDF 页图缓存校验失败")
+            write_cache_manifest(complete)
             return complete
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
@@ -425,9 +463,15 @@ def _load_images(file_path: str) -> list[str]:
         # the locator and cropper use raw pixels. Normalize once at ingestion
         # so all downstream normalized boxes refer to the same upright image.
         with Image.open(page) as source:
+            orientation = source.getexif().get(274)
+            if source.format == "PNG" and source.mode == "RGB" and orientation in (None, 1):
+                # PDF pages are already upright RGB PNGs. Re-encoding 20+ MP
+                # pages with PNG optimize=True burns CPU without changing pixels.
+                encoded.append(base64.b64encode(page.read_bytes()).decode("ascii"))
+                continue
             upright = ImageOps.exif_transpose(source).convert("RGB")
             buffer = io.BytesIO()
-            upright.save(buffer, format="PNG", optimize=True)
+            upright.save(buffer, format="PNG", compress_level=1)
         encoded.append(base64.b64encode(buffer.getvalue()).decode("ascii"))
     return encoded
 
@@ -581,11 +625,10 @@ def _refine_regions_with_florence(
     regions: dict[tuple[int, str, int], dict[str, Any]],
     proposals: dict[int, list[dict[str, Any]]],
 ) -> dict[tuple[int, str, int], dict[str, Any]]:
-    """Compare Florence geometry without changing any question assignment.
+    """Attach Florence geometry comparisons to already-mapped regions.
 
-    The question-to-box mapping is the source of truth. Florence proposals do
-    not carry reliable question identity, so they may corroborate an existing
-    crop but must never replace its page or coordinates.
+    Direct Florence fallback crops are created separately only for an exact
+    one-to-one set and still pass Qwen identity verification before grading.
     """
     if not proposals:
         return regions
@@ -615,6 +658,28 @@ def _refine_regions_with_florence(
     return checked
 
 
+def _prepare_qwen_full_page_previews(images: list[str]) -> list[str]:
+    """Bound photo-locator fallback payloads without altering source/crop pixels.
+
+    Unmapped full-page Qwen results are review-only. Small JPEG previews keep a
+    multi-page request inside the local model context and HTTP limits; every
+    confirmed crop continues to use the original-resolution upload.
+    """
+    prepared: list[str] = []
+    for encoded in images:
+        try:
+            raw = base64.b64decode(encoded)
+            with Image.open(io.BytesIO(raw)) as source:
+                page = source.convert("RGB")
+                page.thumbnail((1280, 1280), Image.Resampling.LANCZOS)
+                buffer = io.BytesIO()
+                page.save(buffer, format="JPEG", quality=88, optimize=False)
+                prepared.append(base64.b64encode(buffer.getvalue()).decode("ascii"))
+        except Exception:
+            prepared.append(encoded)
+    return prepared
+
+
 async def _infer_photo_question_regions(file_path: str, questions: list[dict[str, Any]]) -> dict[tuple[int, str, int], dict[str, Any]]:
     """Conservatively locate handwritten question headings on image-only pages.
 
@@ -638,16 +703,20 @@ async def _infer_photo_question_regions(file_path: str, questions: list[dict[str
         numbered.append((row, int(match.group(1))))
     if not numbered:
         return {}
+    phase_started = time.monotonic()
+    print(f"grading_trace photo_regions file={Path(file_path).name} stage=start", flush=True)
     images = _load_images(file_path)
+    print(f"grading_trace photo_regions stage=pages_loaded seconds={time.monotonic()-phase_started:.2f}", flush=True)
     # For printed worksheets, printed prompt boundaries are stronger than
     # semantic guesses over handwriting. A complete, validated anchor map is
     # segmented deterministically to the next printed problem; incomplete
     # anchors fall through to the existing content locator.
     from .photo_semantic_locator import (
         detect_two_column_regions, locate_by_content, locate_by_printed_prompts,
-        map_column_region_to_page,
+        map_column_region_to_page, map_florence_candidates_to_questions,
     )
     locator_images, page_rotations = await orient_locator_pages(images)
+    print(f"grading_trace photo_regions stage=orientation_done seconds={time.monotonic()-phase_started:.2f}", flush=True)
     # Whole-page locator requests are deliberately downscaled for model
     # stability. Keep an upright, original-resolution counterpart only for
     # the small two-column window fallback below: tiny handwritten `8.`/`a`
@@ -656,19 +725,73 @@ async def _infer_photo_question_regions(file_path: str, questions: list[dict[str
     hires_locator_images: list[str] = []
     for raw_image, angle in zip(images, page_rotations):
         try:
+            if not angle:
+                # No rotation means the original page bytes are already the
+                # exact Florence input; avoid another full-resolution encode.
+                hires_locator_images.append(raw_image)
+                continue
             with Image.open(io.BytesIO(base64.b64decode(raw_image))) as source:
-                source = source.convert("RGB")
-                if angle:
-                    source = source.rotate(-int(angle), expand=True)
+                source = source.convert("RGB").rotate(-int(angle), expand=True)
                 buffer = io.BytesIO()
-                source.save(buffer, format="PNG", optimize=True)
+                source.save(buffer, format="PNG", compress_level=1)
                 hires_locator_images.append(base64.b64encode(buffer.getvalue()).decode("ascii"))
         except Exception:
             hires_locator_images.append(raw_image)
+    print(f"grading_trace photo_regions stage=florence_start seconds={time.monotonic()-phase_started:.2f}", flush=True)
     florence_boxes = await _florence_page_regions(hires_locator_images)
+    print(f"grading_trace photo_regions stage=florence_done seconds={time.monotonic()-phase_started:.2f} boxes={sum(len(v) for v in florence_boxes.values())}", flush=True)
+
+    # Prefer Florence as the first segmentation route when no teacher box was
+    # supplied. Its unlabelled boxes are used only for an exact, non-overlapping
+    # one-to-one set; Qwen verifies every proposed crop against its question
+    # before it can produce a teacher-review score.
+    early_boxes = []
+    for page_no, boxes in florence_boxes.items():
+        for box in boxes:
+            area = float(box["width"]) * float(box["height"])
+            if 0.004 <= area <= 0.65 and float(box["width"]) < 0.98 and float(box["height"]) < 0.98:
+                early_boxes.append({**box, "page_no": int(page_no)})
+    early_boxes.sort(key=lambda item: (item["page_no"], item["y"], item["x"]))
+    early_unique = []
+    for candidate in early_boxes:
+        duplicate = False
+        for prior in early_unique:
+            if candidate["page_no"] != prior["page_no"]:
+                continue
+            ix = max(0.0, min(candidate["x"] + candidate["width"], prior["x"] + prior["width"])
+                     - max(candidate["x"], prior["x"]))
+            iy = max(0.0, min(candidate["y"] + candidate["height"], prior["y"] + prior["height"])
+                     - max(candidate["y"], prior["y"]))
+            inter = ix * iy
+            union = candidate["width"] * candidate["height"] + prior["width"] * prior["height"] - inter
+            if union > 0 and inter / union >= 0.45:
+                duplicate = True
+                break
+        if not duplicate:
+            early_unique.append(candidate)
+    if len(early_unique) == len(numbered):
+        florence_regions: dict[tuple[int, str, int], dict[str, Any]] = {}
+        for (row, _number), box in zip(numbered, early_unique):
+            qid = int(row["question_id"])
+            for part in questions:
+                if int(part["question_id"]) != qid:
+                    continue
+                key = (qid, str(part.get("subpart_no") or ""), int(part["sort_order"]))
+                region = {k: box[k] for k in ("page_no", "x", "y", "width", "height")}
+                florence_regions[key] = {
+                    **region, "regions": [region], "auto_florence_anchor": True,
+                    "location_confidence": 0.55,
+                    "location_evidence": "Florence 候选框按作业顺序暂配；须由 Qwen 核对题目归属",
+                    "anchor_label": part.get("problem_no"),
+                }
+        if len(florence_regions) == len(questions):
+            return restore_region_coordinates(florence_regions, page_rotations)
+
+    print(f"grading_trace photo_regions stage=printed_start seconds={time.monotonic()-phase_started:.2f}", flush=True)
     printed = await locate_by_printed_prompts(locator_images, parents)
+    print(f"grading_trace photo_regions stage=printed_done seconds={time.monotonic()-phase_started:.2f}", flush=True)
+    printed_regions: dict[tuple[int, str, int], dict[str, Any]] = {}
     if printed is not None:
-        printed_regions: dict[tuple[int, str, int], dict[str, Any]] = {}
         for part in questions:
             box = printed.get(int(part['question_id']))
             if box:
@@ -676,7 +799,78 @@ async def _infer_photo_question_regions(file_path: str, questions: list[dict[str
                 printed_regions[key] = {**box, 'anchor_label': part.get('problem_no')}
         if len(printed_regions) == len(questions):
             return restore_region_coordinates(_refine_regions_with_florence(printed_regions, florence_boxes), page_rotations)
-    semantic = await locate_by_content(locator_images, parents)
+
+    # When printed prompt boxes are incomplete, match each Florence candidate
+    # by its own handwriting. Do not force a one-to-one reading-order map. The
+    # later per-crop Qwen identity check remains mandatory before scoring.
+    florence_matches = {}
+    candidate_boxes = early_unique[:16]
+    candidate_images: list[str] = []
+    aligned_boxes: list[dict[str, Any]] = []
+    for box in candidate_boxes:
+        try:
+            page_no = int(box["page_no"])
+            if not 1 <= page_no <= len(hires_locator_images):
+                continue
+            with Image.open(io.BytesIO(base64.b64decode(hires_locator_images[page_no - 1]))) as source:
+                page = source.convert("RGB")
+                width, height = page.size
+                left = max(0, min(width - 1, round(float(box["x"]) * width)))
+                top = max(0, min(height - 1, round(float(box["y"]) * height)))
+                right = max(left + 1, min(width, round((float(box["x"]) + float(box["width"])) * width)))
+                bottom = max(top + 1, min(height, round((float(box["y"]) + float(box["height"])) * height)))
+                crop = page.crop((left, top, right, bottom))
+                if crop.width < 32 or crop.height < 32:
+                    continue
+                crop.thumbnail((1800, 1800), Image.Resampling.LANCZOS)
+                buffer = io.BytesIO()
+                crop.save(buffer, format="JPEG", quality=90, optimize=False)
+                candidate_images.append(base64.b64encode(buffer.getvalue()).decode("ascii"))
+                aligned_boxes.append(box)
+        except Exception:
+            continue
+    if candidate_images:
+        florence_matches = await map_florence_candidates_to_questions(candidate_images, parents)
+        mapped_by_question: dict[int, list[dict[str, Any]]] = {}
+        for candidate_id, match in florence_matches.items():
+            box = aligned_boxes[candidate_id - 1]
+            mapped_by_question.setdefault(int(match["question_id"]), []).append(
+                {key: box[key] for key in ("page_no", "x", "y", "width", "height")}
+            )
+        for part in questions:
+            qid = int(part["question_id"])
+            regions = mapped_by_question.get(qid)
+            key = (qid, str(part.get("subpart_no") or ""), int(part["sort_order"]))
+            if regions and key not in printed_regions:
+                first = regions[0]
+                best_confidence = min(florence_matches[cid]["confidence"] for cid in florence_matches
+                                      if int(florence_matches[cid]["question_id"]) == qid)
+                evidence = "; ".join(florence_matches[cid]["evidence"] for cid in florence_matches
+                                      if int(florence_matches[cid]["question_id"]) == qid)[:180]
+                printed_regions[key] = {**first, "regions": regions, "auto_florence_anchor": True,
+                    "location_confidence": min(best_confidence, .85),
+                    "location_evidence": "Florence候选经Qwen逐框按手写内容匹配；仍需逐题身份核验。 " + evidence,
+                    "anchor_label": part.get("problem_no")}
+        if florence_matches:
+            print(f"grading_trace photo_regions florence_candidate_matches={len(florence_matches)} mapped_questions={len(mapped_by_question)}", flush=True)
+
+    semantic = None
+    if printed_regions:
+        # Florence candidates have already been matched to question content by
+        # Qwen on candidate crops. Re-running a slow four-page joint locator
+        # cannot improve those candidates safely; retain them for the downstream
+        # crop identity/completeness gates and search only still-missing targets.
+        print(f"grading_trace photo_regions stage=semantic_skipped_candidate_matches count={len(printed_regions)} seconds={time.monotonic()-phase_started:.2f}", flush=True)
+    else:
+        print(f"grading_trace photo_regions stage=semantic_start seconds={time.monotonic()-phase_started:.2f}", flush=True)
+        try:
+            semantic = await asyncio.wait_for(
+                locate_by_content(locator_images, parents), timeout=75.0
+            )
+        except asyncio.TimeoutError:
+            semantic = None
+            print(f"grading_trace photo_regions stage=semantic_timeout seconds={time.monotonic()-phase_started:.2f}", flush=True)
+        print(f"grading_trace photo_regions stage=semantic_done seconds={time.monotonic()-phase_started:.2f}", flush=True)
     semantic_regions: dict[tuple[int, str, int], dict[str, Any]] = {}
     if semantic is not None:
         for part in questions:
@@ -687,6 +881,16 @@ async def _infer_photo_question_regions(file_path: str, questions: list[dict[str
         if len(semantic_regions) == len(questions):
             return restore_region_coordinates(_refine_regions_with_florence(semantic_regions, florence_boxes), page_rotations)
 
+    # Preserve validated printed-frame boxes first, then fill only missing
+    # questions from candidate-crop matching. If any such candidates exist,
+    # avoid another page-wide/target-wide locator pass: its output cannot be
+    # trusted as student evidence, and unresolved questions must stay review-only.
+    for key, mapping in printed_regions.items():
+        semantic_regions.setdefault(key, mapping)
+    if printed_regions:
+        print(f"grading_trace photo_regions stage=return_verified_candidate_crops count={len(printed_regions)} seconds={time.monotonic()-phase_started:.2f}", flush=True)
+        return restore_region_coordinates(_refine_regions_with_florence(semantic_regions, florence_boxes), page_rotations)
+
     # A multi-question prompt can overlook work when pages are dense or the
     # student uses nonstandard numbering. Give each still-missing target one
     # focused content search over every page, then retain it only if that
@@ -694,6 +898,12 @@ async def _infer_photo_question_regions(file_path: str, questions: list[dict[str
     # question's already-verified crop.
     known_question_ids = {key[0] for key in semantic_regions}
     fallback_eligible_ids: set[int] = set()
+    # Bound the expensive page/column recovery search. If it cannot confidently
+    # locate answers within this budget, the caller uses one full-page Qwen pass
+    # for review-only score candidates instead of scanning every tile forever.
+    fallback_request_limit = 24
+    fallback_request_count = 0
+    fallback_deadline = time.monotonic() + 180.0
     for target in parents:
         target_id = int(target['question_id'])
         if target_id in known_question_ids:
@@ -704,6 +914,9 @@ async def _infer_photo_question_regions(file_path: str, questions: list[dict[str
         page_candidates: list[dict[str, Any]] = []
         page_search_failed = False
         for page_index, page_image in enumerate(locator_images):
+            if fallback_request_count >= fallback_request_limit or time.monotonic() >= fallback_deadline:
+                page_search_failed = True
+                break
             # Tell the focused locator which regions have already been
             # assigned to neighboring questions. Otherwise it may repeatedly
             # return the visible q7/q8 answer for a missing q6, get rejected
@@ -716,10 +929,11 @@ async def _infer_photo_question_regions(file_path: str, questions: list[dict[str
                     if int(region.get('page_no') or 0) == page_index + 1:
                         neighbor_regions.append(region)
             try:
-                page_map = await locate_by_content(
+                fallback_request_count += 1
+                page_map = await asyncio.wait_for(locate_by_content(
                     [page_image], [target],
                     exclude_regions={target_id: neighbor_regions} if neighbor_regions else None,
-                )
+                ), timeout=min(35.0, max(1.0, fallback_deadline - time.monotonic())))
             except Exception:
                 page_map = None
             page_candidate = (page_map or {}).get(target_id)
@@ -756,6 +970,8 @@ async def _infer_photo_question_regions(file_path: str, questions: list[dict[str
                             # alone contains enough of its derivation to prove
                             # identity or requested-parameter completeness.
                             for y_start, y_end in ((.02, .38), (.32, .68), (.44, .82), (.62, .98)):
+                                if fallback_request_count >= fallback_request_limit or time.monotonic() >= fallback_deadline:
+                                    break
                                 bounds = {
                                     "x": float(column["x"]), "y": y_start,
                                     "width": float(column["width"]), "height": y_end - y_start,
@@ -770,7 +986,11 @@ async def _infer_photo_question_regions(file_path: str, questions: list[dict[str
                                 buffer = io.BytesIO()
                                 tile.save(buffer, format="PNG", optimize=True)
                                 tile_payload = base64.b64encode(buffer.getvalue()).decode("ascii")
-                                tile_map = await locate_by_content([tile_payload], [target])
+                                fallback_request_count += 1
+                                tile_map = await asyncio.wait_for(
+                                    locate_by_content([tile_payload], [target]),
+                                    timeout=min(35.0, max(1.0, fallback_deadline - time.monotonic())),
+                                )
                                 tile_candidate = (tile_map or {}).get(target_id)
                                 if not tile_candidate:
                                     continue
@@ -790,6 +1010,8 @@ async def _infer_photo_question_regions(file_path: str, questions: list[dict[str
                                     "location_confidence": tile_candidate.get("location_confidence"),
                                     "location_evidence": tile_candidate.get("location_evidence"),
                                 }))
+                            if fallback_request_count >= fallback_request_limit or time.monotonic() >= fallback_deadline:
+                                break
                         # Adjacent overlapping windows are independent views
                         # of the same handwriting. Merge the strongest
                         # connected cluster so a derivation straddling a band
@@ -917,6 +1139,54 @@ async def _infer_photo_question_regions(file_path: str, questions: list[dict[str
                          if int(row['question_id']) in fallback_eligible_ids]
     if not fallback_numbered:
         return restore_region_coordinates(_refine_regions_with_florence(semantic_regions, florence_boxes), page_rotations)
+
+    # Florence boxes are an actual crop fallback only when they form a
+    # one-to-one, non-overlapping set for this assignment. They do not carry
+    # question IDs, so map in assignment order and require Qwen to verify each
+    # crop against its question before grading. Ambiguous output is not guessed.
+    florence_ordered = []
+    for page_no, boxes in florence_boxes.items():
+        for box in boxes:
+            area = float(box["width"]) * float(box["height"])
+            if 0.004 <= area <= 0.65 and float(box["width"]) < 0.98 and float(box["height"]) < 0.98:
+                florence_ordered.append({**box, "page_no": int(page_no)})
+    florence_ordered.sort(key=lambda item: (item["page_no"], item["y"], item["x"]))
+    florence_unique = []
+    for candidate in florence_ordered:
+        duplicate = False
+        for prior in florence_unique:
+            if candidate["page_no"] != prior["page_no"]:
+                continue
+            ix = max(0.0, min(candidate["x"] + candidate["width"], prior["x"] + prior["width"])
+                     - max(candidate["x"], prior["x"]))
+            iy = max(0.0, min(candidate["y"] + candidate["height"], prior["y"] + prior["height"])
+                     - max(candidate["y"], prior["y"]))
+            inter = ix * iy
+            union = candidate["width"] * candidate["height"] + prior["width"] * prior["height"] - inter
+            if union > 0 and inter / union >= 0.45:
+                duplicate = True
+                break
+        if not duplicate:
+            florence_unique.append(candidate)
+    if len(florence_unique) == len(numbered):
+        for (row, _number), box in zip(numbered, florence_unique):
+            qid = int(row["question_id"])
+            for part in questions:
+                if int(part["question_id"]) != qid:
+                    continue
+                key = (qid, str(part.get("subpart_no") or ""), int(part["sort_order"]))
+                if key not in semantic_regions:
+                    region = {k: box[k] for k in ("page_no", "x", "y", "width", "height")}
+                    semantic_regions[key] = {
+                        **region, "regions": [region], "auto_florence_anchor": True,
+                        "location_confidence": 0.55,
+                        "location_evidence": "Florence 候选框按作业顺序暂配；须由 Qwen 核对题目归属",
+                        "anchor_label": part.get("problem_no"),
+                    }
+        if len(semantic_regions) == len(questions):
+            return restore_region_coordinates(
+                _refine_regions_with_florence(semantic_regions, florence_boxes), page_rotations
+            )
 
     endpoint = settings.qwen_grading_url.rsplit("/", 1)[0] + "/locate-homework"
     try:
@@ -1822,6 +2092,16 @@ async def _recover_auto_photo_crop_after_identity_failure(
         }
 
 
+def _qwen_score_is_usable(candidate: dict[str, Any], maximum: float) -> bool:
+    if not isinstance(candidate, dict) or candidate.get("score_status") == "invalid":
+        return False
+    try:
+        score = float(candidate.get("score"))
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(score) and 0 <= score <= maximum
+
+
 async def grade_submission(submission_id: int, only_question_id: int | None = None) -> dict[str, Any]:
     """Retrieve assignment evidence, call Qwen, then cross-check each calc answer."""
     with connection() as conn:
@@ -1836,6 +2116,25 @@ async def grade_submission(submission_id: int, only_question_id: int | None = No
                  ON ro.assignment_id=aq.assignment_id AND ro.question_id=aq.question_id
                WHERE aq.assignment_id=? ORDER BY aq.sort_order""",
             (submission["assignment_id"],),
+        ).fetchall()]
+        answer_override_rows = [dict(row) for row in conn.execute(
+            "SELECT question_id,subpart_no,answer FROM assignment_question_answer_overrides WHERE assignment_id=?",
+            (submission["assignment_id"],),
+        ).fetchall()]
+        class_row = conn.execute(
+            "SELECT c.teacher_user_id FROM assignments a JOIN classes c ON c.id=a.class_id WHERE a.id=?",
+            (submission["assignment_id"],),
+        ).fetchone()
+        teacher_user_id = int(class_row["teacher_user_id"] or 0) if class_row else 0
+        bank_answer_rows = [dict(row) for row in conn.execute(
+            "SELECT question_id,subpart_no,answer FROM question_answer_overrides WHERE teacher_user_id=?",
+            (teacher_user_id,),
+        ).fetchall()]
+        prior_experiences = [dict(row) for row in conn.execute(
+            """SELECT ge.evidence_json,ge.decision_json FROM grading_experiences ge
+               WHERE ge.assignment_id=? AND ge.submission_id<>?
+               ORDER BY ge.id DESC LIMIT 40""",
+            (submission["assignment_id"], submission_id),
         ).fetchall()]
         selected_parts = [dict(row) for row in conn.execute(
             """SELECT question_id,subpart_no,part_order,content,answer,rubric,score
@@ -1852,26 +2151,64 @@ async def grade_submission(submission_id: int, only_question_id: int | None = No
 
     if not parents:
         raise ValueError("该作业未关联题目")
+    answer_overrides: dict[int, dict[str, str]] = {}
+    for item in bank_answer_rows:
+        answer_overrides.setdefault(int(item["question_id"]), {})[str(item["subpart_no"])] = str(item["answer"])
+    # A teacher's correction in the current assignment remains the most specific
+    # value, while a shared question-bank correction is the default for every
+    # later assignment that uses the same question.
+    for item in answer_override_rows:
+        answer_overrides.setdefault(int(item["question_id"]), {})[str(item["subpart_no"])] = str(item["answer"])
+    teacher_examples: dict[tuple[int, str], list[dict[str, Any]]] = {}
+    for experience in prior_experiences:
+        try:
+            evidence = json.loads(experience.get("evidence_json") or "{}")
+            decision = json.loads(experience.get("decision_json") or "{}")
+        except (TypeError, ValueError):
+            continue
+        for adjudication in decision.get("question_decisions") or []:
+            qid = int(adjudication.get("question_id") or 0)
+            key = (qid, str(adjudication.get("subpart_no") or ""))
+            if qid <= 0 or len(teacher_examples.get(key, [])) >= 2:
+                continue
+            proof = next((item for item in evidence.get("results") or []
+                          if int(item.get("question_id") or 0) == qid
+                          and str(item.get("subpart_no") or "") == key[1]), None)
+            if not proof or not str(proof.get("recognized_work") or "").strip():
+                continue
+            teacher_examples.setdefault(key, []).append({
+                "student_work": str(proof.get("recognized_work") or "")[:600],
+                "confirmed_score": adjudication.get("confirmed_score"),
+                "max_score": adjudication.get("max_score") or proof.get("max_score"),
+                "teacher_feedback": str(adjudication.get("teacher_feedback") or "")[:300],
+            })
     parts_by_parent: dict[int, list[dict]] = {}
     for part in selected_parts:
         parts_by_parent.setdefault(part["question_id"], []).append(part)
     questions: list[dict] = []
     for parent in parents:
+        parent["teacher_answer_overrides"] = answer_overrides.get(int(parent["question_id"]), {})
         if parent.get("assignment_rubric"):
             parent["rubric"] = parent["assignment_rubric"]
         parts = parts_by_parent.get(parent["question_id"], [])
         if not parts:
+            shared_answer = answer_overrides.get(int(parent["question_id"]), {}).get("")
+            if shared_answer:
+                parent["answer"] = shared_answer
             parent["grading_key"] = str(parent["question_id"])
             parent["subpart_no"] = None
             parent["problem_no"] = str(parent["original_no"] or parent["sort_order"])
+            parent["teacher_examples"] = teacher_examples.get((int(parent["question_id"]), ""), [])
             questions.append(parent)
             continue
         for part in parts:
+            part_answer = answer_overrides.get(int(parent["question_id"]), {}).get(str(part["subpart_no"]), part.get("answer"))
             questions.append({
-                **parent, **part,
+                **parent, **part, "answer": part_answer,
                 "max_score": float(part["score"]),
                 "grading_key": f"{parent['question_id']}:{part['subpart_no']}",
                 "problem_no": f"{parent['original_no'] or parent['sort_order']}（{part['subpart_no']}）",
+                "teacher_examples": teacher_examples.get((int(parent["question_id"]), str(part["subpart_no"])), []),
             })
     rubric_audits: dict[str, dict[str, Any]] = {}
     for row in questions:
@@ -1889,9 +2226,42 @@ async def grade_submission(submission_id: int, only_question_id: int | None = No
             "std_answer": row["answer"] or "",
             "full_solution": rubric_audits[row["grading_key"]]["effective_solution"],
             "max_score": float(row["max_score"]),
+            "teacher_answer_overrides": row.get("teacher_answer_overrides") or {},
+            "teacher_examples": row.get("teacher_examples") or [],
         }
         for row in questions
     ]
+    # Reuse an existing structured teacher/textbook rubric. When only a final
+    # answer or worked solution exists, generate a separate teacher-review
+    # rubric so the scoring-reference panel never silently falls back to an
+    # answer string. The generated criteria are also passed into crop grading.
+    generated_rubrics: dict[str, dict[str, Any]] = {}
+    for problem in problems:
+        qid = str(problem["problem_id"])
+        source_rubric = next((str(row.get("rubric") or "").strip()
+                              for row in questions if row["grading_key"] == qid), "")
+        structured = False
+        if source_rubric.startswith("["):
+            try:
+                points = json.loads(source_rubric)
+                structured = bool(points) and all(
+                    isinstance(point, dict) and str(point.get("step") or point.get("desc") or "").strip()
+                    and float(point.get("weight") or point.get("max_score") or 0) > 0
+                    for point in points
+                )
+            except (TypeError, ValueError, json.JSONDecodeError):
+                structured = False
+        if structured:
+            continue
+        try:
+            candidate = await generate_rubric(problem)
+        except Exception as exc:
+            candidate = {"available": False, "source": "qwen_generated_pending_teacher_review",
+                         "issues": ["评分标准生成请求失败：" + type(exc).__name__ + ("：" + str(exc)[:140] if str(exc) else "")],
+                         "points": []}
+        generated_rubrics[qid] = candidate
+        if candidate.get("available"):
+            problem["scoring_rubric"] = json.dumps(candidate["points"], ensure_ascii=False)
 
     # A manual rectangle is strongest evidence, but an AI-detected photo
     # rectangle is enough for an initial candidate score.  Both remain subject
@@ -1913,7 +2283,10 @@ async def grade_submission(submission_id: int, only_question_id: int | None = No
         if (int(item["question_id"]), str(item.get("subpart_no") or ""), int(item["sort_order"])) not in regions
         and (int(item["question_id"]), str(item.get("subpart_no") or ""), int(item["sort_order"])) not in excluded_region_keys
     ]
+    trace_started = time.monotonic()
+    print(f"grading_trace submission={submission_id} stage=question_data_loaded", flush=True)
     auto_pdf_regions = _infer_pdf_question_regions(submission["file_path"], locator_questions) if locator_questions else {}
+    print(f"grading_trace submission={submission_id} stage=pdf_regions_done count={len(auto_pdf_regions)} seconds={time.monotonic()-trace_started:.2f}", flush=True)
     # A PDF text layer may expose only one or two question anchors.  Treat that
     # as a useful first pass, not a reason to skip photo/VLM segmentation for
     # every remaining handwritten answer.
@@ -1921,8 +2294,10 @@ async def grade_submission(submission_id: int, only_question_id: int | None = No
     covered_question_ids = {int(key[0]) for key in auto_pdf_regions}
     auto_photo_regions: dict[tuple[int, str, int], dict[str, Any]] = {}
     florence_enabled = os.environ.get("MATH_FLORENCE_REGION_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
-    if locator_questions and (covered_question_ids != expected_question_ids or florence_enabled):
+    if locator_questions and covered_question_ids != expected_question_ids:
+        print(f"grading_trace submission={submission_id} stage=photo_regions_start", flush=True)
         auto_photo_regions = await _infer_photo_question_regions(submission["file_path"], locator_questions)
+        print(f"grading_trace submission={submission_id} stage=photo_regions_done count={len(auto_photo_regions)} seconds={time.monotonic()-trace_started:.2f}", flush=True)
     auto_regions = dict(auto_pdf_regions)
     for key, mapping in auto_photo_regions.items():
         # A generated-PDF text anchor has an explicit question identity. Keep
@@ -1942,7 +2317,8 @@ async def grade_submission(submission_id: int, only_question_id: int | None = No
         if key not in regions:
             regions[key] = mapping
     is_photo_locator = any(
-        item.get("auto_photo_anchor") for item in (*auto_photo_regions.values(), *prior_ai_regions.values())
+        item.get("auto_photo_anchor") or item.get("auto_florence_anchor")
+        for item in (*auto_photo_regions.values(), *prior_ai_regions.values())
     )
     qwen_by_question: dict[str, dict[str, Any]] = {}
     qwen_context_by_question: dict[str, dict[str, Any]] = {}
@@ -1956,6 +2332,7 @@ async def grade_submission(submission_id: int, only_question_id: int | None = No
 
     for row, problem in zip(questions, problems):
         qid = row["grading_key"]
+        crop_payloads = []
         region_key = (row["question_id"], row.get("subpart_no") or "", row["sort_order"])
         mapping = regions.get(region_key)
         # A default full-page rectangle is only a UI placeholder, not proof
@@ -1975,109 +2352,87 @@ async def grade_submission(submission_id: int, only_question_id: int | None = No
             crop_context = {**pieces[0][1], 'regions': [piece[1] for piece in pieces],
                             'page_nos': [piece[1]['page_no'] for piece in pieces],
                             'region_count': len(pieces)}
-            if mapping.get('auto_photo_anchor'):
-                # A plausible box/heading is not proof that the handwriting is
-                # for this task. Verify task-specific content before OCR or
-                # grading; uncertainty must remain review-only.
+            crop_context.update({
+                'bound_question_id': int(row['question_id']),
+                'bound_subpart_no': str(row.get('subpart_no') or ''),
+                'bound_sort_order': int(row['sort_order']),
+                'binding_source': 'teacher_confirmed' if mapping.get('confirmed_at') else 'question_keyed_locator',
+            })
+            if mapping.get('auto_pdf_anchor'):
+                crop_context['mode'] = 'auto_pdf_text_crop'
+            elif mapping.get('auto_photo_anchor'):
+                crop_context['mode'] = 'auto_photo_heading_crop'
+            elif mapping.get('auto_florence_anchor'):
+                crop_context['mode'] = 'auto_florence_crop'
+            else:
+                crop_context['mode'] = 'teacher_confirmed_crop'
+            if mapping.get('auto_photo_anchor') or mapping.get('auto_florence_anchor'):
+                # The question-to-box key is authoritative. Verify it, but never
+                # replace the bound rectangle with a model-selected alternative.
                 match_audit = await verify_crop_matches_problem(crop_payloads, problem)
                 crop_context['location_match_audit'] = match_audit
                 if not match_audit.get('matches'):
-                    reference = await complete_reference(problem, rubric_audits[qid])
-                    replacement, replacement_context, replacement_payloads, retry_audit = (
-                        await _recover_auto_photo_crop_after_identity_failure(
-                            submission['file_path'], row, problem, mapping, reference
-                        )
-                    )
-                    if replacement is not None:
-                        replacement['alternative_search_audit'] = retry_audit
-                        replacement['previous_location_match_audit'] = match_audit
-                        qwen_by_question[qid] = replacement
-                        qwen_context_by_question[qid] = replacement_context or crop_context
-                        crop_payload_by_question[qid] = replacement_payloads or crop_payloads
-                    else:
-                        qwen_by_question[qid] = {
-                            'score': 0, 'max_score': float(row['max_score']),
-                            'correct': None, 'answer_present': None,
-                            'recognized_work': '', 'need_review': True, 'confidence': 0,
-                            'feedback': '候选题区与题干不一致，已排除该框并尝试语义及题号定位；仍无通过OCR核验的作答区。',
-                            'location_match_rejected': True,
-                            'alternative_search_audit': retry_audit,
-                        }
-                        crop_context['alternative_search_audit'] = retry_audit
-                        qwen_context_by_question[qid] = crop_context
-                        crop_payload_by_question[qid] = crop_payloads
+                    qwen_by_question[qid] = {
+                        'score': 0, 'max_score': float(row['max_score']),
+                        'score_status': 'invalid', 'score_valid': False,
+                        'correct': None, 'answer_present': None, 'recognized_work': '',
+                        'need_review': True, 'needs_review': True, 'confidence': 0,
+                        'feedback': '\u9898\u533a\u5185\u5bb9\u672a\u901a\u8fc7\u9898\u76ee\u5f52\u5c5e\u6838\u9a8c\uff1b\u7cfb\u7edf\u672a\u6539\u914d\u5176\u4ed6\u9898\u6846\uff0c\u8bf7\u8c03\u6574\u7ed1\u5b9a\u6846\u540e\u91cd\u8bc4\u3002' ,
+                        'location_match_rejected': True,
+                    }
+                    qwen_context_by_question[qid] = crop_context
+                    crop_payload_by_question[qid] = crop_payloads
                     continue
-            crop_notice = ("【照片题号自动定位：此图是当前题的候选作答区，须识别实际笔迹，不能凭参考答案补写。】\n"
-                           if mapping.get("auto_photo_anchor") else
-                           "【教师已确认：本图片仅包含当前题目/小问的作答区域；不要再猜测或匹配其他题号。】\n")
+            if mapping.get("auto_florence_anchor"):
+                crop_notice = "【Florence 候选答题区：Qwen 已核对题目归属；只识别图中笔迹，不要补写。】\n"
+            elif mapping.get("auto_photo_anchor"):
+                crop_notice = "【照片题号自动定位：此图是当前题的候选作答区，须识别实际笔迹，不能凭参考答案补写。】\n"
+            elif mapping.get("auto_pdf_anchor"):
+                crop_notice = "【PDF打印题号文本定位的本题区域：保留并逐一识别本题所有小问，只转写学生笔迹，不要根据参考答案补写。】\n"
+            else:
+                crop_notice = "【教师已确认：本图片仅包含当前题目/小问的作答区域；不要再猜测或匹配其他题号。】\n"
             confirmed_problem = {
                 **problem,
                 "problem_text": crop_notice + str(problem.get("problem_text") or ""),
             }
             # Teacher crops bypass a second locator. OCR is independent of the
             # reference and the fresh score always uses this exact OCR evidence.
-            if mapping.get('confirmed_at') or len(crop_payloads) > 1 or mapping.get('auto_photo_anchor'):
+            if (mapping.get('confirmed_at') or len(crop_payloads) > 1
+                    or mapping.get('auto_pdf_anchor') or mapping.get('auto_photo_anchor')
+                    or mapping.get('auto_florence_anchor')):
                 reference = await complete_reference(problem, rubric_audits[qid])
                 fresh = await grade_crops(crop_payloads, problem, reference)
+                if mapping.get('auto_florence_anchor'):
+                    fresh['need_review'] = True
+                    fresh['needs_review'] = True
+                    fresh['confidence'] = min(float(fresh.get('confidence') or 0.55), 0.65)
+                    fresh.setdefault('risks', []).append(
+                        'Florence 候选框仅经 Qwen 核对题目归属；分数仍为教师复核候选'
+                    )
                 if mapping.get('auto_photo_anchor'):
-                    first_work = str(fresh.get('recognized_work') or '').strip()
-                    first_text_audit = None
-                    first_scope_audit = None
-                    if first_work:
-                        first_text_audit = await verify_recognized_work_matches_problem(
-                            {"problem_text": str(row.get("content") or "")}, first_work
+                    work = str(fresh.get('recognized_work') or '').strip()
+                    if work:
+                        text_audit = await verify_recognized_work_matches_problem(
+                            {'problem_text': str(row.get('content') or '')}, work
                         )
                         from .photo_semantic_locator import verify_recognized_work_scope
-                        first_scope_audit = await verify_recognized_work_scope(
-                            {"problem_text": str(row.get("content") or "")}, first_work
+                        scope_audit = await verify_recognized_work_scope(
+                            {'problem_text': str(row.get('content') or '')}, work
                         )
-                    if (first_work and (first_text_audit or {}).get('matches')
-                            and (first_scope_audit or {}).get('matches')):
-                        extended, extended_context, extended_payloads, extension_attempts = (
-                            await _extend_auto_crop_for_completion(
-                                submission['file_path'], row, problem, mapping, reference, first_work
-                            )
-                        )
-                        if extended is not None:
-                            fresh = extended
-                            crop_context = extended_context or crop_context
-                            crop_payloads = extended_payloads or crop_payloads
-                            crop_payload = crop_payloads[0]
-                            first_work = str(fresh.get('recognized_work') or '').strip()
-                            first_text_audit = fresh.get('recognition_task_audit')
-                            first_scope_audit = fresh.get('recognition_scope_audit')
-                        elif extension_attempts:
-                            fresh['answer_completion_extension'] = extension_attempts
-                    replacement, replacement_context, replacement_payloads, retry_audit = (None, None, None, {})
-                    if (not first_work or not (first_text_audit or {}).get('matches')
-                            or not (first_scope_audit or {}).get('matches')):
-                        replacement, replacement_context, replacement_payloads, retry_audit = (
-                            await _recover_auto_photo_crop_after_identity_failure(
-                                submission['file_path'], row, problem, mapping, reference
-                            )
-                        )
-                    if retry_audit:
-                        fresh['alternative_search_audit'] = retry_audit
-                        fresh['recognition_task_audit'] = first_text_audit
-                        fresh['recognition_scope_audit'] = first_scope_audit
-                    if replacement is not None:
-                        fresh = replacement
-                        crop_context = replacement_context or crop_context
-                        crop_payloads = replacement_payloads or crop_payloads
-                        crop_payload = crop_payloads[0]
-                    elif retry_audit:
-                        fresh['score'] = 0
-                        fresh['step_scores'] = []
-                        fresh['correct'] = False if first_work else None
-                        fresh['answer_present'] = None
-                        fresh['need_review'] = True
-                        fresh['confidence'] = min(float(fresh.get('confidence') or 0), 0.60)
-                        if first_work:
+                        fresh['recognition_task_audit'] = text_audit
+                        fresh['recognition_scope_audit'] = scope_audit
+                        if not text_audit.get('matches') or not scope_audit.get('matches'):
+                            fresh['score'] = 0.0
+                            fresh['score_status'] = 'invalid'
+                            fresh['score_valid'] = False
+                            fresh['step_scores'] = []
+                            fresh['answer_present'] = None
+                            fresh['need_review'] = True
+                            fresh['needs_review'] = True
+                            fresh['confidence'] = min(float(fresh.get('confidence') or 0), 0.60)
                             fresh['recognized_work'] = ''
                             fresh['location_match_rejected'] = True
-                        fresh.setdefault('risks', []).append(
-                            '初始自动题区为空或与题目不符，已排除原框搜索替代区；仍需教师核对'
-                        )
+                            fresh['feedback'] = 'Assigned box text did not match this question; the box was not changed.'
                 qwen_by_question[qid] = fresh
                 qwen_context_by_question[qid] = crop_context
                 crop_payload_by_question[qid] = crop_payloads
@@ -2126,12 +2481,71 @@ async def grade_submission(submission_id: int, only_question_id: int | None = No
                         )
                 except Exception:
                     candidate.setdefault("risks", []).append("独立笔迹重读失败，仍需结合原图复核")
+            if not _qwen_score_is_usable(candidate, float(row["max_score"])):
+                initial_candidate = dict(candidate)
+                try:
+                    reference = await complete_reference(problem, rubric_audits[qid])
+                    rescored = await grade_crops(crop_payloads, problem, reference)
+                    if _qwen_score_is_usable(rescored, float(row["max_score"])):
+                        rescored["score_retry"] = {
+                            "attempted": True, "adopted": True,
+                            "previous_status": str(initial_candidate.get("score_status") or "missing"),
+                        }
+                        rescored["need_review"] = True
+                        rescored["needs_review"] = True
+                        rescored.setdefault("risks", []).append(
+                            "Initial score failed validation; an independent Qwen crop re-score was adopted."
+                        )
+                        candidate = rescored
+                    else:
+                        candidate = initial_candidate
+                        candidate["score_status"] = "invalid"
+                        candidate["score"] = 0.0
+                        candidate["max_score"] = float(row["max_score"])
+                        candidate["score_retry"] = {"attempted": True, "adopted": False}
+                        candidate["grading_error"] = str(
+                            rescored.get("grading_error") or "Qwen re-score did not return a valid numeric score."
+                        )[:400]
+                        candidate["need_review"] = True
+                        candidate["needs_review"] = True
+                        candidate.setdefault("risks", []).append(
+                            "Automatic Qwen re-score failed validation; no zero score was adopted."
+                        )
+                        qwen_errors.append(candidate["grading_error"])
+                except Exception as exc:
+                    candidate = initial_candidate
+                    candidate["score_status"] = "invalid"
+                    candidate["score"] = 0.0
+                    candidate["max_score"] = float(row["max_score"])
+                    candidate["score_retry"] = {"attempted": True, "adopted": False}
+                    candidate["grading_error"] = f"Qwen re-score failed: {type(exc).__name__}: {str(exc)[:240]}"
+                    candidate["need_review"] = True
+                    candidate["needs_review"] = True
+                    candidate.setdefault("risks", []).append(candidate["grading_error"])
+                    qwen_errors.append(candidate["grading_error"])
+            qwen_by_question[qid] = candidate
             qwen_context_by_question[qid] = crop_context
             crop_payload_by_question[qid] = crop_payloads
         except Exception as exc:
             crop_errors[qid] = str(exc)[:180]
+            if mapping and mapping.get('confirmed_at') and crop_payloads:
+                try:
+                    reference = await complete_reference(problem, rubric_audits[qid])
+                    rescored = await grade_crops(crop_payloads, problem, reference)
+                    if _qwen_score_is_usable(rescored, float(row['max_score'])):
+                        rescored['score_retry'] = {'attempted': True, 'adopted': True, 'trigger': 'initial_qwen_exception'}
+                        rescored['need_review'] = True
+                        rescored['needs_review'] = True
+                        rescored.setdefault('risks', []).append('Initial Qwen grading failed; an independent crop re-score was adopted.')
+                        qwen_by_question[qid] = rescored
+                        qwen_context_by_question[qid] = {'mode': 'teacher_confirmed_crop_qwen_retry', 'initial_error': str(exc)[:180]}
+                        crop_payload_by_question[qid] = crop_payloads
+                        crop_errors.pop(qid, None)
+                        continue
+                except Exception as retry_exc:
+                    exc = retry_exc
             if mapping and mapping.get('confirmed_at'):
-                qwen_by_question[qid] = {'score': 0, 'need_review': True, 'answer_present': None,
+                qwen_by_question[qid] = {'score': 0, 'score_status': 'invalid', 'need_review': True, 'needs_review': True, 'answer_present': None,
                     'recognized_work': '', 'feedback': '已确认题区识别/评分失败，请重试或由教师裁定。'}
                 qwen_context_by_question[qid] = {'mode': 'teacher_confirmed_crop', 'error': str(exc)[:180]}
                 continue
@@ -2140,34 +2554,65 @@ async def grade_submission(submission_id: int, only_question_id: int | None = No
             unconfirmed.append((row, problem))
 
     if unconfirmed and is_photo_locator:
-        # Full-page grading is discarded by the location guard anyway. Avoid a
-        # slow, misleading model pass; unresolved photo questions stay pending.
+        # Do not guess that handwriting anywhere on a photo belongs to an
+        # unresolved question. Keep the submission result finite and reviewable;
+        # already matched crops are still independently graded below.
         for row, _problem in unconfirmed:
             qid = row["grading_key"]
-            qwen_by_question[qid] = {}
-            qwen_context_by_question[qid] = {"mode": "full_page_locator", "detail": "题区未可靠定位"}
-    elif unconfirmed:
-        try:
-            image_payload = _load_images(submission["file_path"])
-            qwen_items = await request_qwen(image_payload, [item[1] for item in unconfirmed])
-            fallback_by_question = {str(item.get("problem_id")): item for item in qwen_items}
-            for row, _problem in unconfirmed:
-                qid = row["grading_key"]
-                qwen_by_question[qid] = fallback_by_question.get(qid, {})
-                qwen_context_by_question[qid] = {
-                    "mode": "full_page_locator_fallback" if qid in crop_errors else "full_page_locator",
-                    "page_count": len(image_payload),
-                }
-        except Exception as exc:
-            message = str(exc)[:180]
-            qwen_errors.append(message)
-            for row, _problem in unconfirmed:
-                qid = row["grading_key"]
-                qwen_by_question.setdefault(qid, {})
-                qwen_context_by_question.setdefault(qid, {
-                    "mode": "qwen_unavailable",
-                    "detail": message,
-                })
+            qwen_by_question[qid] = {"score": 0, "need_review": True, "needs_review": True,
+                "answer_present": None, "recognized_work": "", "confidence": 0,
+                "feedback": "题区未能可靠定位；未使用整页答案猜分，已保留教师复核。"}
+            qwen_context_by_question[qid] = {"mode": "location_unresolved", "location_review_required": True}
+    if unconfirmed and not is_photo_locator:
+        # Full-page routes cannot safely share a huge prompt across many tasks.
+        # Keep the locator result review-only and bound the image payload, then
+        # ask for at most two question candidates per model request so one bad
+        # response cannot erase every result in the submission.
+        original_pages = _load_images(submission["file_path"])
+        image_payload = _prepare_qwen_full_page_previews(original_pages)
+        for offset in range(0, len(unconfirmed), 2):
+            batch = unconfirmed[offset:offset + 2]
+            batch_problems = [problem for _row, problem in batch]
+            print(f"grading_trace full_page_qwen_batch_start submission={submission_id} items={len(batch)} pages={len(image_payload)} bytes={sum(len(i) for i in image_payload)}", flush=True)
+            try:
+                qwen_items = await request_qwen(image_payload, batch_problems)
+                fallback_by_question = {str(item.get("problem_id")): item for item in qwen_items}
+                print(f"grading_trace full_page_qwen_batch_done submission={submission_id} returned={len(fallback_by_question)}", flush=True)
+                for row, _problem in batch:
+                    qid = row["grading_key"]
+                    candidate = dict(fallback_by_question.get(qid, {}))
+                    if not candidate:
+                        candidate = {"score": 0, "need_review": True, "needs_review": True,
+                                     "answer_present": None, "recognized_work": "", "confidence": 0,
+                                     "feedback": "Qwen未返回本题的整页候选结果，已保留教师复核。"}
+                        mode = "qwen_unavailable"
+                    else:
+                        mode = "full_page_locator_fallback" if qid in crop_errors else "full_page_locator"
+                    if is_photo_locator:
+                        candidate["need_review"] = True
+                        candidate["needs_review"] = True
+                        candidate["location_match_unresolved"] = True
+                        candidate.setdefault("risks", []).append(
+                            "题区未可靠定位；采用整页 Qwen 候选评分，仅供教师核对原图后裁定"
+                        )
+                    qwen_by_question[qid] = candidate
+                    qwen_context_by_question[qid] = {
+                        "mode": mode,
+                        "page_count": len(image_payload),
+                        "location_review_required": bool(is_photo_locator),
+                    }
+            except Exception as exc:
+                message = f"{type(exc).__name__}: {str(exc)[:140]}"
+                qwen_errors.append(message)
+                print(f"grading_trace full_page_qwen_batch_failed submission={submission_id} error_type={type(exc).__name__}", flush=True)
+                for row, _problem in batch:
+                    qid = row["grading_key"]
+                    qwen_by_question[qid] = {"score": 0, "need_review": True, "needs_review": True,
+                        "answer_present": None, "recognized_work": "", "confidence": 0,
+                        "feedback": "Qwen整页候选请求失败，已保留教师复核。"}
+                    qwen_context_by_question[qid] = {"mode": "qwen_unavailable",
+                        "detail": f"{type(exc).__name__}: {str(exc)[:140]}",
+                        "page_count": len(image_payload), "location_review_required": bool(is_photo_locator)}
 
     qwen_error = "；".join(qwen_errors)
     formula_by_question: dict[str, dict[str, Any]] = {}
@@ -2191,73 +2636,38 @@ async def grade_submission(submission_id: int, only_question_id: int | None = No
         qwen = qwen_by_question.get(qid, {})
         formula_evidence = formula_by_question.get(qid, {"available": False})
         qwen_input = qwen_context_by_question.get(qid, {"mode": "unknown"})
-        if qwen_input.get("mode") == "auto_photo_heading_crop" and str(qwen.get("recognized_work") or "").strip():
-            first_audit = await verify_recognized_work_matches_problem(
-                {"problem_text": str(row.get("content") or "")}, str(qwen.get("recognized_work") or ""),
+        bound_question_id = qwen_input.get('bound_question_id')
+        bound_subpart_no = str(qwen_input.get('bound_subpart_no') or '')
+        bound_sort_order = qwen_input.get('bound_sort_order')
+        if bound_question_id is not None and (
+            int(bound_question_id) != int(row['question_id'])
+            or bound_subpart_no != str(row.get('subpart_no') or '')
+            or int(bound_sort_order or 0) != int(row['sort_order'])
+        ):
+            qwen['score'] = 0.0
+            qwen['score_status'] = 'invalid'
+            qwen['score_valid'] = False
+            qwen['need_review'] = True
+            qwen['needs_review'] = True
+            qwen['recognized_work'] = ''
+            qwen['mapping_binding_mismatch'] = True
+            qwen['feedback'] = '\u7ed1\u5b9a\u6846\u4e2d\u7684\u4f5c\u7b54\u4e0e\u9898\u76ee\u6587\u672c\u4e0d\u5339\u914d\uff1b\u7cfb\u7edf\u672a\u6539\u914d\u5176\u4ed6\u9898\u6846\uff0c\u8bf7\u6559\u5e08\u6838\u5bf9\u672c\u9898\u533a\u57df\u3002'
+            recognized = ''
+        if qwen_input.get('mode') in {'auto_photo_heading_crop', 'auto_florence_crop'} and str(qwen.get('recognized_work') or '').strip():
+            text_audit = await verify_recognized_work_matches_problem(
+                {'problem_text': str(row.get('content') or '')}, str(qwen.get('recognized_work') or ''),
             )
-            qwen["recognition_task_audit"] = first_audit
-            if not first_audit.get("matches"):
-                # OCR can reveal that an image-only locator accepted a nearby
-                # task. Search again excluding that exact crop, then require
-                # both independent image and OCR task checks before replacing it.
-                try:
-                    from .photo_semantic_locator import locate_by_content
-                    excluded = []
-                    for piece in qwen_input.get("regions") or []:
-                        region = piece.get("region") or {}
-                        if piece.get("page_no") and all(key in region for key in ("x", "y", "width", "height")):
-                            excluded.append({"page_no": piece["page_no"], **region})
-                    if not excluded and qwen_input.get("page_no") and qwen_input.get("region"):
-                        excluded = [{"page_no": qwen_input["page_no"], **qwen_input["region"]}]
-                    full_pages = _load_images(submission["file_path"])
-                    locator_pages, retry_rotations = await orient_locator_pages(full_pages)
-                    excluded_box = restore_region_coordinates(
-                        {"excluded": {"regions": excluded}},
-                        [(-angle) % 360 for angle in retry_rotations],
-                    )["excluded"]["regions"] if excluded else []
-                    alternate = await locate_by_content(
-                        locator_pages, [row],
-                        exclude_regions={int(row["question_id"]): excluded_box} if excluded_box else None,
-                    )
-                    alternate = restore_region_coordinates(alternate, retry_rotations)
-                    replacement = (alternate or {}).get(int(row["question_id"]))
-                    if replacement:
-                        replacement_pieces = [
-                            _crop_confirmed_region(submission["file_path"], {**replacement, **region})
-                            for region in expand_regions(replacement)
-                        ]
-                        replacement_images = [piece[0] for piece in replacement_pieces]
-                        image_audit = await verify_crop_matches_problem(replacement_images, {
-                            "problem_text": str(row.get("content") or "")
-                        })
-                        if image_audit.get("matches"):
-                            target_problem = next((item for item in problems if str(item.get("problem_id")) == str(qid)), None)
-                            if target_problem:
-                                reference = await complete_reference(target_problem, rubric_audits[qid])
-                                replacement_grade = await grade_crops(replacement_images, target_problem, reference)
-                                replacement_work = str(replacement_grade.get("recognized_work") or "")
-                                text_audit = await verify_recognized_work_matches_problem(
-                                    {"problem_text": str(row.get("content") or "")}, replacement_work,
-                                )
-                                if text_audit.get("matches"):
-                                    qwen = replacement_grade
-                                    qwen["recognition_task_audit"] = text_audit
-                                    qwen["location_match_audit"] = image_audit
-                                    qwen["previous_candidate_rejected"] = True
-                                    qwen_by_question[qid] = qwen
-                                    qwen_input = {
-                                        **replacement_pieces[0][1],
-                                        "regions": [piece[1] for piece in replacement_pieces],
-                                        "page_nos": [piece[1]["page_no"] for piece in replacement_pieces],
-                                        "region_count": len(replacement_pieces),
-                                        "previous_candidate_rejected": True,
-                                    }
-                                    qwen_context_by_question[qid] = qwen_input
-                                    crop_payload_by_question[qid] = replacement_images
-                                else:
-                                    qwen["alternative_search_audit"] = text_audit
-                except Exception as retry_exc:
-                    qwen["alternative_search_error"] = type(retry_exc).__name__
+            qwen['recognition_task_audit'] = text_audit
+            if not text_audit.get('matches'):
+                qwen['score'] = 0.0
+                qwen['score_status'] = 'invalid'
+                qwen['score_valid'] = False
+                qwen['need_review'] = True
+                qwen['needs_review'] = True
+                qwen['location_match_rejected'] = True
+                qwen['recognized_work'] = ''
+                qwen['feedback'] = '\u7ed1\u5b9a\u6846\u4e2d\u7684\u4f5c\u7b54\u4e0e\u9898\u76ee\u6587\u672c\u4e0d\u5339\u914d\uff1b\u7cfb\u7edf\u672a\u6539\u914d\u5176\u4ed6\u9898\u6846\uff0c\u8bf7\u6559\u5e08\u6838\u5bf9\u672c\u9898\u533a\u57df\u3002'
+                recognized = ''
         standard_answer = row["answer"] or ""
         is_proof = normalize_question_type(row["question_type"]) == "proof"
         rubric_audit = rubric_audits[qid]
@@ -2448,6 +2858,11 @@ async def grade_submission(submission_id: int, only_question_id: int | None = No
         if qwen.get('location_match_rejected'):
             match_audit = qwen.get('recognition_task_audit') or qwen_input.get('location_match_audit') or {}
             review_reasons.append('自动题区/识别文本与目标题干一致性未通过，已阻止评分：' + str(match_audit.get('reason') or '证据不足'))
+        generated_rubric = generated_rubrics.get(qid)
+        if generated_rubric and generated_rubric.get("available"):
+            review_reasons.append("Qwen生成的评分标准尚未由教师确认")
+        elif generated_rubric:
+            review_reasons.append("Qwen评分标准生成未通过校验：" + "；".join(generated_rubric.get("issues") or []))
         if not rubric_audit["valid"]:
             review_reasons.append("评分标准异常，已回退标准答案：" + "；".join(rubric_audit["issues"]))
         if normalize_question_type(row["question_type"]) != "calc":
@@ -2510,9 +2925,25 @@ async def grade_submission(submission_id: int, only_question_id: int | None = No
         if unconfirmed_full_page:
             recognized = ""
             qwen["recognized_work"] = ""
-            qwen["score"] = 0.0
+            # Preserve a numeric Qwen score as a teacher-only candidate even
+            # when the page-to-question mapping is unresolved. The review gate
+            # below still blocks automatic release and the evidence remains
+            # explicitly marked as location-unconfirmed.
+            try:
+                location_candidate_score = float(qwen.get("score"))
+            except (TypeError, ValueError):
+                location_candidate_score = float("nan")
+            location_candidate_valid = (math.isfinite(location_candidate_score)
+                                        and 0 <= location_candidate_score <= float(row["max_score"]))
+            if location_candidate_valid:
+                qwen["score"] = location_candidate_score
+                qwen["score_status"] = "valid"
+                qwen["location_unconfirmed_candidate"] = True
+            else:
+                qwen["score"] = 0.0
+                qwen["score_status"] = "invalid"
             qwen["max_score"] = float(row["max_score"])
-            qwen["correct"] = False
+            qwen["correct"] = None
             qwen["answer_present"] = None
             answer_present = None
             qwen["work_complete"] = False
@@ -2592,6 +3023,7 @@ async def grade_submission(submission_id: int, only_question_id: int | None = No
                 "standard_answer": standard_answer,
                 "rubric": rubric_audit["effective_solution"],
                 "rubric_source": row["rubric"] or "",
+                "rubric_candidate": generated_rubrics.get(qid),
                 "source": json.loads(row["source_evidence_json"] or "{}"),
             },
             "risks": risks,
@@ -2650,6 +3082,28 @@ async def run_grading_job(job_id: int) -> None:
             return
     try:
         result = await grade_submission(job["submission_id"])
+        question_results = result.get("results") or []
+        invalid_question_results = [item for item in question_results if item.get("score_valid") is not True]
+        if not question_results or invalid_question_results:
+            invalid_orders = ", ".join(str(item.get("problem_no") or item.get("sort_order") or "?")
+                                         for item in invalid_question_results)
+            result["total_score"] = None
+            result["score_valid"] = False
+            result["grading_failure"] = (
+                f"Qwen 自动补评后仍有 {len(invalid_question_results)} 道题未通过评分校验；"
+                f"Question IDs needing Qwen rescoring: {invalid_orders or 'none'}. No total score was saved; release is blocked."
+            )
+            with connection() as conn:
+                conn.execute(
+                    "UPDATE grading_jobs SET status='failed',result_json=?,last_error=?,finished_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (json.dumps(result, ensure_ascii=False), result["grading_failure"], job_id),
+                )
+                conn.execute(
+                    "UPDATE submissions SET status='review_required',score=NULL,quality_score=NULL,"
+                    "quality_max_score=?,needs_review=1,feedback=? WHERE id=? AND released_at IS NULL",
+                    (result.get("quality_max_score"), result["grading_failure"], job["submission_id"]),
+                )
+            return
         with connection() as conn:
             conn.execute("UPDATE grading_jobs SET status='completed', result_json=? WHERE id=?", (json.dumps(result, ensure_ascii=False), job_id))
             conn.execute(

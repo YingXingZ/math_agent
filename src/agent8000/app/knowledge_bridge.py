@@ -73,7 +73,7 @@ async def list_evidence_sections(textbook_id: str | None = None) -> list[dict[st
                     sections.append({"section_no": section_no, "title": str(section.get("title") or ""),
                                      "textbook_id": str(textbook_id or textbook.get("id") or ""),
                                      "textbook_name": str(textbook.get("name") or "")})
-    return sorted(sections, key=lambda item: (item["textbook_name"], tuple(int(part) if part.isdigit() else part for part in item["section_no"].split("."))))
+    return sorted(sections, key=lambda item: (item["textbook_name"].casefold(), tuple((0, int(part)) if part.isdigit() else (1, part.casefold()) for part in item["section_no"].split("."))))
 
 
 async def _gather(client: httpx.AsyncClient, base: str):

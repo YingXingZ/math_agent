@@ -29,7 +29,7 @@ def grade_submission_task(job_id: int) -> None:
         # failure, leaving the durable row in running. RQ retries are serialized
         # for this job, so re-arm that prior attempt before the next claim too.
         if row["status"] == "failed" or (row["status"] == "running" and int(row["queue_attempts"] or 0) > 0):
-            conn.execute("UPDATE grading_jobs SET status='queued',result_json=NULL WHERE id=?", (job_id,))
+            conn.execute("UPDATE grading_jobs SET status='queued' WHERE id=?", (job_id,))
         conn.execute(
             "UPDATE grading_jobs SET queue_attempts=?,last_started_at=?,last_error=NULL WHERE id=?",
             (int(row["queue_attempts"] or 0) + 1, datetime.now(timezone.utc).isoformat(), job_id),

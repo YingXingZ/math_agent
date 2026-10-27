@@ -139,25 +139,55 @@ def calculator(*, student_expression: str, standard_expression: str) -> dict[str
         raise ValueError("expression exceeds limit")
     if not student or not standard:
         return {"available": False, "equal": None, "confidence": 0, "method": "缺少可判等表达式"}
-    from pathlib import Path
-    import sys
-    project_root = str(Path(__file__).resolve().parents[2])
-    if project_root not in sys.path:
-        sys.path.insert(0, project_root)
-    from grading_engine import expr_equal
-    equal, confidence, method = expr_equal(student, standard)
-    if not equal:
-        raw = student.replace("＝", "=")
-        if raw.count("=") == 1 and not any(token in raw for token in ("<", ">", "≤", "≥", "≠", "∈", "∉")):
-            left, rhs = raw.split("=", 1)
-            if left.strip() and rhs.strip():
-                rhs_equal, rhs_confidence, rhs_method = expr_equal(rhs.strip(), standard)
-                if rhs_equal:
-                    return {
-                        "available": True, "equal": True, "confidence": rhs_confidence,
-                        "method": f"等式右端与标准答案一致（{rhs_method}）",
-                    }
-    return {"available": True, "equal": bool(equal), "confidence": float(confidence), "method": str(method)}
+
+    # SymPy simplification can take unbounded CPU on noisy OCR. The RQ grading
+    # workhorse runs in the main thread on Linux, so an interval timer safely
+    # interrupts symbolic work. A timeout is inconclusive, never a wrong or
+    # zero score; the Qwen candidate remains available for teacher review.
+    import signal
+    import time
+    from threading import current_thread, main_thread
+    if current_thread() is not main_thread() or not hasattr(signal, "setitimer"):
+        return {"available": False, "equal": None, "confidence": 0,
+                "method": "当前执行线程不支持有界符号判等，保留 Qwen 候选并转教师复核"}
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    previous_timer = signal.getitimer(signal.ITIMER_REAL)
+    started = time.monotonic()
+
+    def timeout_handler(_signum, _frame):
+        raise TimeoutError("SymPy 判等超过 8 秒")
+
+    try:
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.setitimer(signal.ITIMER_REAL, 8.0)
+        from pathlib import Path
+        import sys
+        project_root = str(Path(__file__).resolve().parents[2])
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
+        from grading_engine import expr_equal
+        equal, confidence, method = expr_equal(student, standard)
+        if not equal:
+            raw = student.replace("＝", "=")
+            if raw.count("=") == 1 and not any(token in raw for token in ("<", ">", "≤", "≥", "≠", "∈", "∉")):
+                left, rhs = raw.split("=", 1)
+                if left.strip() and rhs.strip():
+                    rhs_equal, rhs_confidence, rhs_method = expr_equal(rhs.strip(), standard)
+                    if rhs_equal:
+                        return {
+                            "available": True, "equal": True, "confidence": rhs_confidence,
+                            "method": f"等式右端与标准答案一致（{rhs_method}）",
+                        }
+        return {"available": True, "equal": bool(equal), "confidence": float(confidence), "method": str(method)}
+    except TimeoutError:
+        return {"available": False, "equal": None, "confidence": 0,
+                "method": "符号判等超过 8 秒，保留 Qwen 候选并转教师复核"}
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+        if previous_timer[0] > 0:
+            remaining = max(0.001, previous_timer[0] - (time.monotonic() - started))
+            signal.setitimer(signal.ITIMER_REAL, remaining, previous_timer[1])
 
 
 class ToolUseState(TypedDict, total=False):

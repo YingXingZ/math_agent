@@ -3,17 +3,18 @@ from datetime import datetime, timezone
 import logging, time
 from .config import settings
 from .db import init_db, queue_due_grading
-from .queueing import enqueue_pending_grading_jobs
+from .queueing import enqueue_pending_grading_jobs, expire_stale_grading_jobs
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 def main() -> None:
     settings.prepare_dirs(); init_db()
     while True:
+        expired = expire_stale_grading_jobs()
         count = queue_due_grading(datetime.now(timezone.utc).isoformat())
         dispatch = enqueue_pending_grading_jobs()
-        if count or dispatch["enqueued"]:
-            logging.info("queued due=%s dispatched=%s", count, dispatch["enqueued"])
+        if expired or count or dispatch["enqueued"]:
+            logging.info("expired_stale=%s queued_due=%s dispatched=%s", expired, count, dispatch["enqueued"])
         time.sleep(60)
 
 if __name__ == "__main__": main()

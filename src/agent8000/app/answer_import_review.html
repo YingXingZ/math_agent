@@ -6,6 +6,7 @@
 <style>
 :root{--ink:#17233d;--muted:#64748b;--blue:#2563eb;--green:#16a34a;--red:#dc2626;--bg:#f5f8fc;--line:#dbe5f0}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);font:16px 'Microsoft YaHei',sans-serif;color:var(--ink)}
+.hidden{display:none!important}
 main{max-width:1180px;margin:36px auto;background:#fff;padding:34px;border-radius:18px;box-shadow:0 8px 28px #1e3a5f12}
 textarea,input{width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:9px;padding:10px;font:14px ui-monospace,Consolas}
 textarea{height:170px;resize:vertical}
@@ -28,16 +29,26 @@ button:disabled{opacity:.55;cursor:not-allowed}
 .log-entry:last-child{border-bottom:0}
 code{background:#f1f5f9;padding:2px 6px;border-radius:5px;font-size:13px}
 .crop{max-width:420px;max-height:280px;border:1px solid var(--line);border-radius:8px}
+.math-preview{padding:15px;background:#fbfdff;border:1px solid var(--line);border-radius:10px;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.85;max-height:560px;overflow:auto}
+.ocr-warning{margin:10px 0;padding:11px 13px;border:1px solid #fed7aa;background:#fff7ed;border-radius:9px;color:#9a3412;line-height:1.6}
+.ocr-raw{margin-top:10px}.ocr-raw pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:360px;overflow:auto;background:#f8fafc;padding:12px;border-radius:8px;font:13px ui-monospace,Consolas}
+.pager{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px 0}.pager select{padding:9px;border:1px solid var(--line);border-radius:8px;background:white;color:var(--ink)}
+.math-fallback{padding:12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:9px;color:#9a3412}
+.workflow{margin:14px 0;padding:15px 17px;border:1px solid #bfdbfe;border-radius:12px;background:#eff6ff;line-height:1.7}.workflow b{color:#1d4ed8}.match-stats{margin:12px 0;padding:13px 15px;border:1px solid var(--line);border-radius:10px;background:#f8fafc;line-height:1.7}.match-stats strong{color:#1d4ed8}.match-stats .warning{color:#9a3412}
 </style>
+<script>window.MathJax={tex:{inlineMath:[['$','$'],['\\(','\\)']],displayMath:[['$$','$$'],['\\[','\\]']]},svg:{fontCache:'global'},startup:{typeset:false}};</script>
+<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" onerror="var s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-svg.min.js';s.onerror=function(){window.mathJaxFailed=true};document.head.appendChild(s)"></script>
 <main>
   <h1>答案导入审核</h1>
-  <p class="muted">导入 MinerU 生成的 <code>answer_book_staged.json</code> 内容。此页先建立本地审核队列；只有点击“确认并写回 8014”才会修改正式答案库。</p>
+  <p class="muted">答案 PDF 上传后会先解析成候选答案。审核批次中的条目数是解析出的答案片段数，不是已入库题数。</p>
+  <div class="workflow"><b>按这个顺序操作：</b><br>① 确认当前教材正文已完成 OCR、章节确认和习题拆分。<br>② 上传同一版次、同一册的答案 PDF，并打开系统生成的审核批次。<br>③ “题号匹配”只表示系统找到一道可能对应的原题，<b>不代表答案已经核实或写入题库</b>。先点“自动筛选并批量入库”；系统会再核对原题题干、题号、小问、OCR 质量，并跳过冲突项和已核实答案。<br>④ 只有计数里的“已写入正式题库”增加，才表示答案已经入库。未匹配、OCR 异常或多候选冲突的条目再单独处理。</div>
 
   <textarea id="json" placeholder="粘贴 answer_book_staged.json 的完整内容"></textarea>
   <div class="toolbar">
     <button onclick="start()">建立审核队列</button>
     <input id="sid" style="width:160px" placeholder="审核批次 ID">
     <button class="alt" onclick="loadItems()">打开批次</button>
+    <button class="success" id="bulkBtn" onclick="bulkApproveSafe()" disabled>自动筛选并批量入库</button>
     <button class="success" onclick="syncSession()" id="syncBtn" disabled>同步已确认章节到本地缓存</button>
     <button class="alt" onclick="toggleAudit()">查看操作日志</button>
   </div>
@@ -45,13 +56,21 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:5px;font-size:13px}
   <div id="notice"></div>
 
   <section id="summary" class="summary hidden">
-    <div class="cell"><div class="num" id="sTotal">0</div><div class="muted">总数</div></div>
-    <div class="cell"><div class="num" id="sApproved">0</div><div class="muted">已确认</div></div>
+    <div class="cell"><div class="num" id="sTotal">0</div><div class="muted">解析候选总数</div></div>
+    <div class="cell"><div class="num" id="sApproved">0</div><div class="muted">已写入正式题库</div></div>
     <div class="cell"><div class="num" id="sRejected">0</div><div class="muted">已拒绝</div></div>
     <div class="cell"><div class="num" id="sPending">0</div><div class="muted">待审核</div></div>
   </section>
+  <div id="matchStats" class="match-stats hidden"></div>
 
   <section id="audit" class="hidden" style="margin-top:18px"></section>
+  <div id="pager" class="pager hidden">
+    <label>每页 <select id="pageSize" onchange="changePageSize()"><option>10</option><option selected>20</option><option>50</option></select> 条</label>
+    <label>状态 <select id="statusFilter" onchange="changeStatus()"><option value="">全部</option><option value="pending">待审核</option><option value="approved">已确认</option><option value="rejected">已拒绝</option></select></label>
+    <button class="alt" id="prevBtn" onclick="turnPage(-1)">上一页</button><span id="pageInfo" class="muted"></span>
+    <button class="alt" id="nextBtn" onclick="turnPage(1)">下一页</button>
+  </div>
+  <div id="bulkProgress" class="muted"></div>
   <section id="items"></section>
 </main>
 <script>
@@ -64,12 +83,29 @@ async function api(url,opt={}){
 }
 function esc(s){let d=document.createElement('div');d.textContent=s??'';return d.innerHTML}
 function setNotice(msg,type=''){$('notice').innerHTML=msg?`<div style="padding:12px 14px;border-radius:10px;margin:10px 0;background:${type==='error'?'#fee2e2':type==='success'?'#dcfce7':'#eef6ff'}">${esc(msg)}</div>`:''}
+function ocrWarnings(text){
+  const warnings=[];const commands=String(text||'').match(/\\[A-Za-z]+/g)||[];const counts=new Map();for(const command of commands)counts.set(command,(counts.get(command)||0)+1);
+  const [common,count]=[...counts.entries()].sort((a,b)=>b[1]-a[1])[0]||[];
+  if(count>=24&&count/Math.max(commands.length,1)>.22)warnings.push(`检测到 ${common} 重复 ${count} 次，疑似公式 OCR 噪声或数组误识别。请结合原始答案页核对，不能仅凭公式渲染结果确认。`);
+  if(String(text||'').length>14000)warnings.push('OCR 候选文本过长，可能包含串页或重复识别；预览已截断，原文可展开查看。');
+  return warnings;
+}
+function candidateWarnings(item){
+  const stored=(item.quality?.issues||[]).map(issue=>`OCR质量门禁：${String(issue).replaceAll('_',' ')}`);
+  return [...new Set([...stored,...ocrWarnings(item.candidate_text)])];
+}
+function ocrScoreLabel(item){return candidateWarnings(item).length?'需人工复核':Number(item.confidence||0).toFixed(2)}
+function typesetAnswerPreviews(){
+  const nodes=[...document.querySelectorAll('.math-preview')];if(!nodes.length)return;
+  let tries=0;const run=()=>{if(window.MathJax?.startup?.promise){window.MathJax.startup.promise.then(()=>window.MathJax.typesetPromise(nodes)).catch(e=>showMathFallback(e));return}if(window.mathJaxFailed||++tries>=40){showMathFallback();return}setTimeout(run,250)};run();
+}
+function showMathFallback(){if(document.querySelector('.math-fallback'))return;const n=document.createElement('div');n.className='math-fallback';n.textContent='公式渲染组件未能加载，当前显示的是 OCR 原文；请检查网络是否允许访问 cdn.jsdelivr.net 后刷新页面。';$('items').prepend(n)}
 
 async function start(){
   try{
     let x=await api('/api/mineru/review-sessions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({answer_book:JSON.parse($('json').value)})});
     $('sid').value=x.session_id;
-    setNotice(`已建立审核队列：${x.item_count} 条，精确匹配 8014 原题 ${x.matched_count} 条。`);
+    setNotice(`已建立审核批次 ${x.session_id}：解析出 ${x.item_count} 条候选；按题号关联到原题 ${x.matched_count} 条。它们尚未自动写入正式题库，请点“自动筛选并批量入库”。`);
     loadItems();
   }catch(e){setNotice(e.message,'error')}
 }
@@ -84,28 +120,42 @@ async function loadSession(){
     $('sApproved').textContent=x.summary.approved;
     $('sRejected').textContent=x.summary.rejected;
     $('sPending').textContent=x.summary.pending;
+    const matched=Number(x.summary.number_matched||0),unique=Number(x.summary.unique_targets||0),unmatched=Number(x.summary.unmatched||0);
+    $('matchStats').classList.remove('hidden');
+    const duplicates=x.same_name_sessions||[];
+    const duplicateHint=duplicates.length?`<br><span class="warning">发现同文件名的历史批次：${duplicates.map(d=>'#'+esc(d.id)).join('、')}。这可能是重复上传；请先检查旧批次已入库结果，避免重复审核。文件名相同不代表内容必然相同。</span>`:'';
+    $('matchStats').innerHTML=`<b>匹配进度（与入库进度分开统计）</b><br><strong>${matched}</strong> 条候选按题号关联到题库，涉及 <strong>${unique}</strong> 道不同原题；<span class="warning">${unmatched} 条尚未匹配原题</span>。<br>题号关联仍是候选关系；只有通过“自动筛选并批量入库”并计入“已写入正式题库”的答案，才可供后续批改和组卷使用。${duplicateHint}`;
     $('syncBtn').disabled = x.summary.approved === 0;
     return x;
   }catch(e){setNotice(e.message,'error')}
 }
 
+let pageOffset=0,pageTotal=0,loadingItems=false;
+function pageSize(){return Number($('pageSize').value)||20}
 async function loadItems(){
   let sid=$('sid').value;
   if(!sid){setNotice('请先输入审核批次 ID','error');return;}
+  if(loadingItems)return;loadingItems=true;
   try{
-    let [rows,session]=await Promise.all([api('/api/mineru/review-sessions/'+sid+'/items'),loadSession()]);
+    const size=pageSize(),status=$('statusFilter').value;
+    const query=new URLSearchParams({limit:String(size),offset:String(pageOffset)});if(status)query.set('status',status);
+    let [data,session]=await Promise.all([api('/api/mineru/review-sessions/'+sid+'/items?'+query.toString()),loadSession()]);
+    const rows=data.items||[];pageTotal=data.total||0;
+    $('pager').classList.remove('hidden');$('pageInfo').textContent=pageTotal?`第 ${Math.floor(pageOffset/size)+1} / ${Math.ceil(pageTotal/size)} 页 · 共 ${pageTotal} 条`:'当前筛选无条目';
+    $('prevBtn').disabled=pageOffset<=0;$('nextBtn').disabled=pageOffset+size>=pageTotal;
+    $('bulkBtn').disabled=!session?.summary?.pending;
     $('items').innerHTML=rows.map(x=>{
       let crop=x.evidence.question_crop_image_path;
-      let img=crop?`<p><b>原题截图（经内部代理）</b><br><img class="crop" src="/api/evidence/images/${encodeURI(crop)}"></p>`:'';
+      let img=crop?`<p><b>8014 原题截图</b><br><img class="crop" src="http://127.0.0.1:8014/api/images/${encodeURI(crop)}"></p>`:'';
       let badge = x.status==='approved'?'<span class="badge approved">已确认</span>':x.status==='rejected'?'<span class="badge rejected">已拒绝</span>':'<span class="badge pending">待审核</span>';
       let disabled = x.source_problem_id?'':'';
       return `<article class="item ${x.status||''} ${x.source_problem_id?'':'bad'}">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
           <b>${esc(x.section_no)}/${esc(x.question_no)}${x.subquestion_no?'('+esc(x.subquestion_no)+')':''}</b>
-          <span>${badge} <span class="muted">${x.source_problem_id?'已匹配 8014 #'+esc(x.source_problem_id):'未匹配，禁止写回'} · 置信度 ${x.confidence}</span></span>
+          <span>${badge} <span class="muted">${x.source_problem_id?'按题号关联到原题候选 #'+esc(x.source_problem_id)+'（答案仍待核实）':'未关联到原题，不能写回'} · OCR质量 ${ocrScoreLabel(x)}（不代表答案正确）</span></span>
         </div>
         ${img}
-        <p><b>MinerU 候选文本</b><br>${esc(x.candidate_text)}</p>
+        <section><b>MinerU 候选文本 · LaTeX 预览</b>${candidateWarnings(x).map(w=>`<div class="ocr-warning">⚠ ${esc(w)}</div>`).join('')}<div class="math-preview" id="mathPreview${x.id}">${esc(String(x.candidate_text||'').slice(0,14000))}</div><details class="ocr-raw"><summary>查看 OCR 原文</summary><pre>${esc(x.candidate_text)}</pre></details></section>
         <div class="row">
           <label>标准答案（确认后写回）<textarea id="a${x.id}">${esc(x.status==='approved'?x.candidate_text:'')}</textarea></label>
           <label>完整解答（可选）<textarea id="s${x.id}"></textarea></label>
@@ -117,7 +167,30 @@ async function loadItems(){
         </div>
       </article>`;
     }).join('');
-  }catch(e){setNotice(e.message,'error')}
+    typesetAnswerPreviews();
+  }catch(e){setNotice(e.message,'error')}finally{loadingItems=false}
+}
+
+function turnPage(direction){pageOffset=Math.max(0,pageOffset+direction*pageSize());loadItems()}
+function changePageSize(){pageOffset=0;loadItems()}
+function changeStatus(){pageOffset=0;loadItems()}
+
+async function bulkApproveSafe(){
+  const sid=$('sid').value;if(!sid)return;
+  if($('statusFilter').value&&$('statusFilter').value!=='pending'){setNotice('请先把状态筛选切换为“待审核”或“全部”。','error');return}
+  const btn=$('bulkBtn');btn.disabled=true;$('bulkProgress').textContent='正在筛选教材范围、题号、小问、原题题干和 OCR 质量均可唯一确认的候选…';
+  try{
+    const size=50,eligible=[];let offset=0,total=0;
+    do{const q=new URLSearchParams({limit:String(size),offset:String(offset),status:'pending'});const page=await api(`/api/mineru/review-sessions/${sid}/items?${q}`);total=page.total||0;
+      for(const x of page.items||[]){if(x.source_problem_id&&x.quality?.pass&&Number(x.quality?.score)>=.9&&!candidateWarnings(x).length&&String(x.candidate_text||'').trim().length<=14000)eligible.push(x.id)}offset+=size;
+    }while(offset<total);
+    if(!eligible.length){setNotice('没有满足 OCR 质量门槛的已关联候选。未匹配、题干冲突或答案残缺项会保留待处理。');return}
+    const ok=confirm(`找到 ${eligible.length} 条通过前端 OCR 质量筛选的候选。继续自动核对并批量写入？\n\n服务器还会核对题库原题题干：只有题干在唯一候选中匹配、章节题号小问一致的答案才会写入；同题冲突、题干不匹配、OCR 异常或已有已核实答案的项目会跳过。`);if(!ok)return;
+    let done=0,approved=0,failed=0;const chunk=50,errors=[];
+    for(let i=0;i<eligible.length;i+=chunk){const result=await api(`/api/mineru/review-sessions/${sid}/bulk-approve`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item_ids:eligible.slice(i,i+chunk)})});approved+=result.approved;failed+=result.failed;errors.push(...(result.results||[]).filter(x=>!x.ok));done+=Math.min(chunk,eligible.length-i);$('bulkProgress').textContent=`批量处理 ${done}/${eligible.length} 条：写回 ${approved}，跳过/失败 ${failed}；仍在继续…`;await loadSession();}
+    const reasons=[...new Set(errors.map(x=>x.error))].slice(0,6);$('bulkProgress').textContent=`批量处理完成：写回 ${approved} 条，跳过/失败 ${failed} 条。${reasons.length?'常见原因：'+reasons.join('；'):''} 失败项保留待审核，可筛选后逐条核对。`;setNotice(`批量处理完成：成功写回 ${approved} 条；${failed} 条未写回或被保护。`,'success');pageOffset=0;await loadItems();
+  }catch(e){$('bulkProgress').textContent='批量操作已中断；已成功写回的项目保留，其余可继续处理。';setNotice(e.message,'error')}
+  finally{btn.disabled=false}
 }
 
 async function approve(id){
